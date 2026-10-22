@@ -1,0 +1,58 @@
+#version 430
+// M8: the two extra pictures FSR 3.1 needs besides colour, made from what the path tracer
+// already knows about each pixel (how far its camera ray went):
+//   depth:          1 - near / (distance along the view axis), so 0 is at the camera and 1 is
+//                   infinitely far (the sky). FSR uses it to spot things coming out from behind
+//                   other things.
+//   motion vectors: where this pixel's point was on screen last frame, as an offset in screen
+//                   fractions (0..1): the point seen through last frame's camera, moved back
+//                   by how far its mob moved, if it's on a mob. FSR follows these to line up its
+//                   memory of earlier frames with the new one.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(r32f,  binding = 0) uniform readonly image2D uDist;      // ray distance, < 0 for sky
+layout(r32f,  binding = 1) uniform writeonly image2D outDepth;
+layout(rg16f, binding = 2) uniform writeonly image2D outMotion;
+layout(rgba16f, binding = 3) uniform readonly image2D uGeom;    // w = 2 + index of the mob seen, if any
+layout(std430, binding = 0) readonly buffer EntMotion { vec4 entMotion[]; }; // how far each mob moved since last frame
+uniform int uEntMotionCount;
+
+uniform ivec2 uResolution;
+uniform vec3  uCamForward, uCamRight, uCamUp;
+uniform float uTanHalfFov;
+uniform vec2  uJitter;          // this frame's sub-pixel nudge, pixels
+uniform vec3  uPrevForward, uPrevRight, uPrevUp;
+uniform float uPrevTanHalfFov;
+uniform vec3  uEyeDelta;        // this frame's eye position minus last frame's
+uniform float uNear;
+
+void main() {
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    if (px.x >= uResolution.x || px.y >= uResolution.y) return;
+    float aspect = float(uResolution.x) / float(uResolution.y);
+    vec2 uv = (vec2(px) + 0.5 + uJitter) / vec2(uResolution);
+    vec2 ndc = uv * 2.0 - 1.0;
+    vec3 d = normalize(uCamForward + ndc.x * uTanHalfFov * aspect * uCamRight + ndc.y * uTanHalfFov * uCamUp);
+    float t = imageLoad(uDist, px).r;
+
+    vec3 prevPos;  // relative to last frame's eye
+    float depth;
+    if (t < 0.0) {
+        prevPos = d;                       // sky: a direction, so only turning moves it
+        depth = 1.0;
+    } else {
+        prevPos = d * t + uEyeDelta;
+        int e = int(imageLoad(uGeom, px).w + 0.5) - 2;
+        if (e >= 0 && e < uEntMotionCount) prevPos -= entMotion[e].xyz; // a mob moves on its own too
+        float z = t * dot(d, uCamForward);
+        depth = clamp(1.0 - uNear / max(z, uNear), 0.0, 1.0);
+    }
+    vec2 motion = vec2(0.0);
+    float pz = dot(prevPos, uPrevForward);
+    if (pz > 1e-4) {
+        vec2 pndc = vec2(dot(prevPos, uPrevRight) / (pz * uPrevTanHalfFov * aspect),
+                         dot(prevPos, uPrevUp) / (pz * uPrevTanHalfFov));
+        motion = (pndc * 0.5 + 0.5) - uv;
+    }
+    imageStore(outDepth, px, vec4(depth));
+    imageStore(outMotion, px, vec4(motion, 0.0, 0.0));
+}

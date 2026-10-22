@@ -1,0 +1,89 @@
+#version 460
+// M8b probe: the same kinds of rays as the OpenGL path tracer (camera ray, sun shadow ray,
+// one bounce and its sun ray), but traced by the GPU's ray-tracing hardware against a
+// triangle mesh of the world. Only flat block colours, no textures: this measures how fast
+// the hardware finds what a ray hits, which is most of what the path tracer spends.
+#extension GL_EXT_ray_query : require
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform accelerationStructureEXT uScene;
+layout(binding = 1, rgba8) uniform writeonly image2D uOut;
+layout(binding = 2, std430) readonly buffer TriInfo { uint triInfo[]; };
+layout(push_constant) uniform Push {
+    vec4 pos;     // xyz camera, w = tan(half vertical fov)
+    vec4 fwd;     // w = max ray distance
+    vec4 right;
+    vec4 up;
+    vec4 sun;     // xyz direction to the sun
+    ivec4 info;   // x = mode (0: camera + sun, 1: + bounce + its sun ray, 2: camera ray only) + 16 for OpenGL row order, y = frame, z = width, w = height
+} pc;
+
+const vec3 NORMALS[6] = vec3[](vec3(-1, 0, 0), vec3(1, 0, 0), vec3(0, -1, 0), vec3(0, 1, 0), vec3(0, 0, -1), vec3(0, 0, 1));
+
+uint rng;
+uint pcg(uint v) { uint s = v * 747796405u + 2891336453u; uint w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u; return (w >> 22u) ^ w; }
+float rand() { rng = pcg(rng); return float(rng) / 4294967296.0; }
+
+// closest hit: returns t (< 0 for a miss) and the triangle's info word
+float closest(vec3 o, vec3 d, float tmax, out uint info) {
+    rayQueryEXT q;
+    rayQueryInitializeEXT(q, uScene, gl_RayFlagsOpaqueEXT, 0xFF, o, 0.0, d, tmax);
+    while (rayQueryProceedEXT(q)) {}
+    if (rayQueryGetIntersectionTypeEXT(q, true) == gl_RayQueryCommittedIntersectionTriangleEXT) {
+        info = triInfo[rayQueryGetIntersectionPrimitiveIndexEXT(q, true)];
+        return rayQueryGetIntersectionTEXT(q, true);
+    }
+    info = 0u;
+    return -1.0;
+}
+
+// any hit at all (shadow rays): stops at the first triangle found
+bool blocked(vec3 o, vec3 d, float tmax) {
+    rayQueryEXT q;
+    rayQueryInitializeEXT(q, uScene, gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT, 0xFF, o, 0.0, d, tmax);
+    while (rayQueryProceedEXT(q)) {}
+    return rayQueryGetIntersectionTypeEXT(q, true) != gl_RayQueryCommittedIntersectionNoneEXT;
+}
+
+vec3 unpackColor(uint info) { return pow(vec3((info >> 16) & 255u, (info >> 8) & 255u, info & 255u) / 255.0, vec3(2.2)); }
+
+void main() {
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    if (px.x >= pc.info.z || px.y >= pc.info.w) return;
+    rng = pcg(uint(px.x) * 1973u + uint(px.y) * 9277u + uint(pc.info.y) * 26699u) | 1u;
+    vec2 ndc = (vec2(px) + 0.5) / vec2(pc.info.zw) * 2.0 - 1.0;
+    int mode = pc.info.x & 15;
+    if ((pc.info.x & 16) == 0) ndc.y = -ndc.y; // image file rows go down; OpenGL's go up
+    float aspect = float(pc.info.z) / float(pc.info.w);
+    vec3 d = normalize(pc.fwd.xyz + ndc.x * pc.pos.w * aspect * pc.right.xyz + ndc.y * pc.pos.w * pc.up.xyz);
+    vec3 sky = vec3(0.45, 0.62, 1.0);
+    uint info;
+    float t = closest(pc.pos.xyz, d, pc.fwd.w, info);
+    vec3 col = sky;
+    if (t >= 0.0) {
+        vec3 n = NORMALS[min(info >> 24, 5u)];
+        vec3 p = pc.pos.xyz + d * t + n * 1e-3;
+        vec3 albedo = unpackColor(info);
+        float ndl = max(dot(n, pc.sun.xyz), 0.0);
+        vec3 light = vec3(0.25) * sky;
+        if (mode != 2 && ndl > 0.0 && !blocked(p, pc.sun.xyz, 256.0)) light += vec3(1.0, 0.95, 0.85) * ndl;
+        if (mode == 1) {
+            // one cosine-weighted bounce, lit by the sun if it can see it
+            float r1 = rand(), r2 = rand();
+            vec3 a = abs(n.x) > 0.5 ? vec3(0, 1, 0) : vec3(1, 0, 0);
+            vec3 tx = normalize(cross(a, n)), ty = cross(n, tx);
+            float phi = 6.2831853 * r1, r = sqrt(r2);
+            vec3 bd = normalize(tx * r * cos(phi) + ty * r * sin(phi) + n * sqrt(max(0.0, 1.0 - r2)));
+            uint binfo;
+            float bt = closest(p, bd, 96.0, binfo);
+            if (bt < 0.0) light += sky * 0.5;
+            else {
+                vec3 bn = NORMALS[min(binfo >> 24, 5u)];
+                vec3 bp = p + bd * bt + bn * 1e-3;
+                float bndl = max(dot(bn, pc.sun.xyz), 0.0);
+                if (bndl > 0.0 && !blocked(bp, pc.sun.xyz, 256.0)) light += unpackColor(binfo) * bndl * 0.8;
+            }
+        }
+        col = albedo * light;
+    }
+    imageStore(uOut, px, vec4(pow(clamp(col, 0.0, 1.0), vec3(1.0 / 2.2)), 1.0));
+}

@@ -1,0 +1,78 @@
+#version 430
+// M2 debug view: a top-down map drawn purely from the GPU's copy of the world.
+// For each pixel we look straight down from the top of the world (or from just above
+// the player in cutaway mode) and colour the first block we hit. If this matches the
+// terrain around you, and changes the moment you break or place a block, the voxel
+// copy is correct and M3 can start tracing real rays through it.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(rgba8, binding = 0) uniform writeonly image2D outImage;
+layout(binding = 1) uniform usampler3D uVoxels;          // id | meta << 8, wrapped at 512
+layout(std430, binding = 1) readonly buffer Palette { vec4 palette[]; };  // [id * 16 + meta]
+layout(std430, binding = 2) readonly buffer Slots { ivec2 slotChunk[]; }; // which chunk each slot holds
+
+uniform ivec2 uResolution;
+uniform vec3 uCamPos;
+uniform vec2 uCamDirXZ;      // horizontal look direction, for the player arrow
+uniform float uBlocksPerPixel;
+uniform int uStartY;         // 127 for surface view, eye level + 1 for cutaway
+
+const int SIZE = 512;
+const int SLOTS = 32;
+
+bool chunkLoaded(int bx, int bz) {
+    ivec2 c = ivec2(bx >> 4, bz >> 4);
+    int slot = (c.x & (SLOTS - 1)) + (c.y & (SLOTS - 1)) * SLOTS;
+    return slotChunk[slot] == c;
+}
+
+uint blockAt(int x, int y, int z) {
+    return texelFetch(uVoxels, ivec3(x & (SIZE - 1), y, z & (SIZE - 1)), 0).r;
+}
+
+void main() {
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    if (px.x >= uResolution.x || px.y >= uResolution.y) return;
+
+    // North (-Z) is up on screen, east (+X) is right.
+    vec2 offset = (vec2(px) + 0.5 - vec2(uResolution) * 0.5) * uBlocksPerPixel;
+    vec2 world = uCamPos.xz + vec2(offset.x, -offset.y);
+    int bx = int(floor(world.x)), bz = int(floor(world.y));
+
+    vec3 col = vec3(0.08);
+    if (chunkLoaded(bx, bz)) {
+        col = vec3(0.0, 0.0, 0.05); // loaded but nothing found (void)
+        vec3 waterTint = vec3(1.0);
+        float waterDepth = 0.0;
+        for (int y = uStartY; y >= 0; y--) {
+            uint v = blockAt(bx, y, bz);
+            uint id = v & 4095u;
+            if (id == 0u) continue;
+            vec4 c = palette[id * 16u + (v >> 12)];
+            if (id == 8u || id == 9u) { // water: tint what's underneath, show depth
+                waterDepth += 1.0;
+                if (waterDepth > 12.0) { col = c.rgb * 0.5; break; }
+                continue;
+            }
+            if (c.a == 0.0) continue; // fully transparent texture
+            float height = float(y) / 127.0;
+            col = c.rgb * (0.55 + 0.6 * height);
+            // simple relief: darker if the block to the north-west is taller
+            uint nw = blockAt(bx - 1, y + 1, bz - 1) & 4095u;
+            if (nw != 0u && nw != 8u && nw != 9u) col *= 0.8;
+            break;
+        }
+        if (waterDepth > 0.0) col = mix(col, vec3(0.15, 0.3, 0.8), clamp(0.35 + waterDepth * 0.06, 0.0, 0.9));
+        // chunk grid, faint
+        if ((bx & 15) == 0 || (bz & 15) == 0) col *= 0.85;
+    }
+
+    // player marker: white dot with a short line showing where you're looking
+    vec2 d = vec2(offset.x, -offset.y);
+    vec2 dir = normalize(uCamDirXZ + 1e-6);
+    float along = dot(d, dir);
+    float across = abs(d.x * dir.y - d.y * dir.x);
+    if (length(d) < 1.6 || (along > 0.0 && along < 8.0 && across < 0.35)) col = vec3(1.0);
+
+    imageStore(outImage, px, vec4(col, 1.0));
+}

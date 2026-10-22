@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "alphapt",
+  "version": "${version}",
+  "name": "Alpha Path Tracer",
+  "description": "Path-traced rendering for Minecraft Alpha 1.1.2_01.",
+  "authors": [
+    "Alex McClellan"
+  ],
+  "license": "MIT",
+  "icon": "assets/betapt/icon.png",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.alexmcclellan.betapt.BetaPT"
+    ]
+  },
+  "mixins": [
+    "betapt.mixins.json"
+  ],
+  "depends": {
+    "minecraft": "1.0.0-alpha.1.2.1",
+    "java": ">=17"
+  }
+}

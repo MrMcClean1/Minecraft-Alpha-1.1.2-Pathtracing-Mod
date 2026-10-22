@@ -1,0 +1,1635 @@
+
+#version 450
+// FidelityFX Super Resolution 3.1 upscaler, pass "prepare_inputs", ported to OpenGL for betapt.
+// Generated from AMD FidelityFX SDK v1.1.4 (MIT licence, see FSR3-LICENSE.txt) by scripts/fsr3gl/convert.py
+
+         float ffxSqrt(float x);
+           vec2 ffxSqrt(vec2 x);
+           vec3 ffxSqrt(vec3 x);
+           vec4 ffxSqrt(vec4 x);
+         float ffxAsFloat(uint x)
+{
+    return uintBitsToFloat(x);
+}
+           vec2 ffxAsFloat(uvec2 x)
+{
+    return uintBitsToFloat(x);
+}
+           vec3 ffxAsFloat(uvec3 x)
+{
+    return uintBitsToFloat(x);
+}
+           vec4 ffxAsFloat(uvec4 x)
+{
+    return uintBitsToFloat(x);
+}
+        uint ffxAsUInt32(float x)
+{
+    return floatBitsToUint(x);
+}
+          uvec2 ffxAsUInt32(vec2 x)
+{
+    return floatBitsToUint(x);
+}
+          uvec3 ffxAsUInt32(vec3 x)
+{
+    return floatBitsToUint(x);
+}
+          uvec4 ffxAsUInt32(vec4 x)
+{
+    return floatBitsToUint(x);
+}
+        uint ffxPackHalf2x16(vec2 value)
+{
+    return packHalf2x16(value);
+}
+        uint ffxF32ToF16(float value)
+{
+    return packHalf2x16(vec2(value, 0.0));
+}
+           vec2 ffxBroadcast2(float value)
+{
+    return vec2(value, value);
+}
+           vec3 ffxBroadcast3(float value)
+{
+    return vec3(value, value, value);
+}
+           vec4 ffxBroadcast4(float value)
+{
+    return vec4(value, value, value, value);
+}
+         ivec2 ffxBroadcast2(int value)
+{
+    return ivec2(value, value);
+}
+         ivec3 ffxBroadcast3(int value)
+{
+    return ivec3(value, value, value);
+}
+         ivec4 ffxBroadcast4(int value)
+{
+    return ivec4(value, value, value, value);
+}
+          uvec2 ffxBroadcast2(uint value)
+{
+    return uvec2(value, value);
+}
+          uvec3 ffxBroadcast3(uint value)
+{
+    return uvec3(value, value, value);
+}
+          uvec4 ffxBroadcast4(uint value)
+{
+    return uvec4(value, value, value, value);
+}
+        uint ffxBitfieldExtract(uint src, uint off, uint bits)
+{
+    return bitfieldExtract(src, int(off), int(bits));
+}
+        uint ffxBitfieldInsert(uint src, uint ins, uint mask)
+{
+    return(ins & mask)|(src &(~ mask));
+}
+        uint ffxBitfieldInsertMask(uint src, uint ins, uint bits)
+{
+    return bitfieldInsert(src, ins, 0, int(bits));
+}
+         float ffxLerp(float x, float y, float t)
+{
+    return mix(x, y, t);
+}
+           vec2 ffxLerp(vec2 x, vec2 y, float t)
+{
+    return mix(x, y, t);
+}
+           vec2 ffxLerp(vec2 x, vec2 y, vec2 t)
+{
+    return mix(x, y, t);
+}
+           vec3 ffxLerp(vec3 x, vec3 y, float t)
+{
+    return mix(x, y, t);
+}
+           vec3 ffxLerp(vec3 x, vec3 y, vec3 t)
+{
+    return mix(x, y, t);
+}
+           vec4 ffxLerp(vec4 x, vec4 y, float t)
+{
+    return mix(x, y, t);
+}
+           vec4 ffxLerp(vec4 x, vec4 y, vec4 t)
+{
+    return mix(x, y, t);
+}
+         float ffxMax3(float x, float y, float z)
+{
+    return max(x, max(y, z));
+}
+           vec2 ffxMax3(vec2 x, vec2 y, vec2 z)
+{
+    return max(x, max(y, z));
+}
+           vec3 ffxMax3(vec3 x, vec3 y, vec3 z)
+{
+    return max(x, max(y, z));
+}
+           vec4 ffxMax3(vec4 x, vec4 y, vec4 z)
+{
+    return max(x, max(y, z));
+}
+        uint ffxMax3(uint x, uint y, uint z)
+{
+    return max(x, max(y, z));
+}
+          uvec2 ffxMax3(uvec2 x, uvec2 y, uvec2 z)
+{
+    return max(x, max(y, z));
+}
+          uvec3 ffxMax3(uvec3 x, uvec3 y, uvec3 z)
+{
+    return max(x, max(y, z));
+}
+          uvec4 ffxMax3(uvec4 x, uvec4 y, uvec4 z)
+{
+    return max(x, max(y, z));
+}
+         float ffxMed3(float x, float y, float z)
+{
+    return max(min(x, y), min(max(x, y), z));
+}
+           vec2 ffxMed3(vec2 x, vec2 y, vec2 z)
+{
+    return max(min(x, y), min(max(x, y), z));
+}
+           vec3 ffxMed3(vec3 x, vec3 y, vec3 z)
+{
+    return max(min(x, y), min(max(x, y), z));
+}
+           vec4 ffxMed3(vec4 x, vec4 y, vec4 z)
+{
+    return max(min(x, y), min(max(x, y), z));
+}
+       int ffxMed3(int x, int y, int z)
+{
+    return max(min(x, y), min(max(x, y), z));
+}
+         ivec2 ffxMed3(ivec2 x, ivec2 y, ivec2 z)
+{
+    return max(min(x, y), min(max(x, y), z));
+}
+         ivec3 ffxMed3(ivec3 x, ivec3 y, ivec3 z)
+{
+    return max(min(x, y), min(max(x, y), z));
+}
+         ivec4 ffxMed3(ivec4 x, ivec4 y, ivec4 z)
+{
+    return max(min(x, y), min(max(x, y), z));
+}
+         float ffxMin3(float x, float y, float z)
+{
+    return min(x, min(y, z));
+}
+           vec2 ffxMin3(vec2 x, vec2 y, vec2 z)
+{
+    return min(x, min(y, z));
+}
+           vec3 ffxMin3(vec3 x, vec3 y, vec3 z)
+{
+    return min(x, min(y, z));
+}
+           vec4 ffxMin3(vec4 x, vec4 y, vec4 z)
+{
+    return min(x, min(y, z));
+}
+        uint ffxMin3(uint x, uint y, uint z)
+{
+    return min(x, min(y, z));
+}
+          uvec2 ffxMin3(uvec2 x, uvec2 y, uvec2 z)
+{
+    return min(x, min(y, z));
+}
+          uvec3 ffxMin3(uvec3 x, uvec3 y, uvec3 z)
+{
+    return min(x, min(y, z));
+}
+          uvec4 ffxMin3(uvec4 x, uvec4 y, uvec4 z)
+{
+    return min(x, min(y, z));
+}
+         float ffxReciprocal(float x)
+{
+    return float(1.0)/ x;
+}
+           vec2 ffxReciprocal(vec2 x)
+{
+    return ffxBroadcast2(1.0)/ x;
+}
+           vec3 ffxReciprocal(vec3 x)
+{
+    return ffxBroadcast3(1.0)/ x;
+}
+           vec4 ffxReciprocal(vec4 x)
+{
+    return ffxBroadcast4(1.0)/ x;
+}
+         float ffxRsqrt(float x)
+{
+    return float(1.0)/ ffxSqrt(x);
+}
+           vec2 ffxRsqrt(vec2 x)
+{
+    return ffxBroadcast2(1.0)/ ffxSqrt(x);
+}
+           vec3 ffxRsqrt(vec3 x)
+{
+    return ffxBroadcast3(1.0)/ ffxSqrt(x);
+}
+           vec4 rsqrt(vec4 x)
+{
+    return ffxBroadcast4(1.0)/ ffxSqrt(x);
+}
+         float ffxSaturate(float x)
+{
+    return clamp(x, float(0.0), float(1.0));
+}
+           vec2 ffxSaturate(vec2 x)
+{
+    return clamp(x, ffxBroadcast2(0.0), ffxBroadcast2(1.0));
+}
+           vec3 ffxSaturate(vec3 x)
+{
+    return clamp(x, ffxBroadcast3(0.0), ffxBroadcast3(1.0));
+}
+           vec4 ffxSaturate(vec4 x)
+{
+    return clamp(x, ffxBroadcast4(0.0), ffxBroadcast4(1.0));
+}
+         float ffxFract(float x)
+{
+    return fract(x);
+}
+           vec2 ffxFract(vec2 x)
+{
+    return fract(x);
+}
+           vec3 ffxFract(vec3 x)
+{
+    return fract(x);
+}
+           vec4 ffxFract(vec4 x)
+{
+    return fract(x);
+}
+         float ffxRound(float x)
+{
+    return roundEven(x);
+}
+           vec2 ffxRound(vec2 x)
+{
+    return roundEven(x);
+}
+           vec3 ffxRound(vec3 x)
+{
+    return roundEven(x);
+}
+           vec4 ffxRound(vec4 x)
+{
+    return roundEven(x);
+}
+        uint ffxAShrSU1(uint a, uint b)
+{
+    return uint(int(a)>> int(b));
+}
+        uint ffxPackF32(vec2 v){
+    return packHalf2x16(v);
+}
+           vec2 ffxUnpackF32(uint u){
+    return unpackHalf2x16(u);
+}
+          uvec2 ffxPackF32x2(vec4 v){
+ return uvec2(ffxPackF32(v . xy), ffxPackF32(v . zw));
+}
+           vec4 ffxUnpackF32x2(uvec2 a){
+    return vec4(ffxUnpackF32(a . x), ffxUnpackF32(a . y));
+}
+         float ffxInvertSafe(float v){
+             float s = sign(v);
+             float s2 = s * s;
+    return s2 /(v + s2 - 1.0);
+}
+           vec2 ffxInvertSafe(vec2 v){
+               vec2 s = sign(v);
+               vec2 s2 = s * s;
+    return s2 /(v + s2 - vec2(1.0, 1.0));
+}
+           vec3 ffxInvertSafe(vec3 v){
+               vec3 s = sign(v);
+               vec3 s2 = s * s;
+    return s2 /(v + s2 - vec3(1.0, 1.0, 1.0));
+}
+           vec4 ffxInvertSafe(vec4 v){
+               vec4 s = sign(v);
+               vec4 s2 = s * s;
+    return s2 /(v + s2 - vec4(1.0, 1.0, 1.0, 1.0));
+}
+           const float FFX_FP16_MIN = 6.10e-05f;
+           const float FFX_FP16_MAX = 65504.0f;
+           const float FFX_TONEMAP_EPSILON = 1.0f / FFX_FP16_MAX;
+         float ffxMin(float x, float y)
+{
+    return min(x, y);
+}
+           vec2 ffxMin(vec2 x, vec2 y)
+{
+    return min(x, y);
+}
+           vec3 ffxMin(vec3 x, vec3 y)
+{
+    return min(x, y);
+}
+           vec4 ffxMin(vec4 x, vec4 y)
+{
+    return min(x, y);
+}
+       int ffxMin(int x, int y)
+{
+    return min(x, y);
+}
+         ivec2 ffxMin(ivec2 x, ivec2 y)
+{
+    return min(x, y);
+}
+         ivec3 ffxMin(ivec3 x, ivec3 y)
+{
+    return min(x, y);
+}
+         ivec4 ffxMin(ivec4 x, ivec4 y)
+{
+    return min(x, y);
+}
+        uint ffxMin(uint x, uint y)
+{
+    return min(x, y);
+}
+          uvec2 ffxMin(uvec2 x, uvec2 y)
+{
+    return min(x, y);
+}
+          uvec3 ffxMin(uvec3 x, uvec3 y)
+{
+    return min(x, y);
+}
+          uvec4 ffxMin(uvec4 x, uvec4 y)
+{
+    return min(x, y);
+}
+         float ffxMax(float x, float y)
+{
+    return max(x, y);
+}
+           vec2 ffxMax(vec2 x, vec2 y)
+{
+    return max(x, y);
+}
+           vec3 ffxMax(vec3 x, vec3 y)
+{
+    return max(x, y);
+}
+           vec4 ffxMax(vec4 x, vec4 y)
+{
+    return max(x, y);
+}
+       int ffxMax(int x, int y)
+{
+    return max(x, y);
+}
+         ivec2 ffxMax(ivec2 x, ivec2 y)
+{
+    return max(x, y);
+}
+         ivec3 ffxMax(ivec3 x, ivec3 y)
+{
+    return max(x, y);
+}
+         ivec4 ffxMax(ivec4 x, ivec4 y)
+{
+    return max(x, y);
+}
+        uint ffxMax(uint x, uint y)
+{
+    return max(x, y);
+}
+          uvec2 ffxMax(uvec2 x, uvec2 y)
+{
+    return max(x, y);
+}
+          uvec3 ffxMax(uvec3 x, uvec3 y)
+{
+    return max(x, y);
+}
+          uvec4 ffxMax(uvec4 x, uvec4 y)
+{
+    return max(x, y);
+}
+         float ffxPow(float x, float y)
+{
+    return pow(x, y);
+}
+           vec2 ffxPow(vec2 x, vec2 y)
+{
+    return pow(x, y);
+}
+           vec3 ffxPow(vec3 x, vec3 y)
+{
+    return pow(x, y);
+}
+           vec4 ffxPow(vec4 x, vec4 y)
+{
+    return pow(x, y);
+}
+         float ffxSqrt(float x)
+{
+    return sqrt(x);
+}
+           vec2 ffxSqrt(vec2 x)
+{
+    return sqrt(x);
+}
+           vec3 ffxSqrt(vec3 x)
+{
+    return sqrt(x);
+}
+           vec4 ffxSqrt(vec4 x)
+{
+    return sqrt(x);
+}
+         float ffxCopySignBit(float d, float s)
+{
+    return ffxAsFloat(ffxAsUInt32(d)|(ffxAsUInt32(s)& uint(0x80000000u)));
+}
+           vec2 ffxCopySignBit(vec2 d, vec2 s)
+{
+    return ffxAsFloat(ffxAsUInt32(d)|(ffxAsUInt32(s)& ffxBroadcast2(0x80000000u)));
+}
+           vec3 ffxCopySignBit(vec3 d, vec3 s)
+{
+    return ffxAsFloat(ffxAsUInt32(d)|(ffxAsUInt32(s)& ffxBroadcast3(0x80000000u)));
+}
+           vec4 ffxCopySignBit(vec4 d, vec4 s)
+{
+    return ffxAsFloat(ffxAsUInt32(d)|(ffxAsUInt32(s)& ffxBroadcast4(0x80000000u)));
+}
+         float ffxIsSigned(float m)
+{
+    return ffxSaturate(m * float(ffxAsFloat(0xff800000u)));
+}
+           vec2 ffxIsSigned(vec2 m)
+{
+    return ffxSaturate(m * ffxBroadcast2(ffxAsFloat(0xff800000u)));
+}
+           vec3 ffxIsSigned(vec3 m)
+{
+    return ffxSaturate(m * ffxBroadcast3(ffxAsFloat(0xff800000u)));
+}
+           vec4 ffxIsSigned(vec4 m)
+{
+    return ffxSaturate(m * ffxBroadcast4(ffxAsFloat(0xff800000u)));
+}
+         float ffxIsGreaterThanZero(float m)
+{
+    return ffxSaturate(m * float(ffxAsFloat(0x7f800000u)));
+}
+           vec2 ffxIsGreaterThanZero(vec2 m)
+{
+    return ffxSaturate(m * ffxBroadcast2(ffxAsFloat(0x7f800000u)));
+}
+           vec3 ffxIsGreaterThanZero(vec3 m)
+{
+    return ffxSaturate(m * ffxBroadcast3(ffxAsFloat(0x7f800000u)));
+}
+           vec4 ffxIsGreaterThanZero(vec4 m)
+{
+    return ffxSaturate(m * ffxBroadcast4(ffxAsFloat(0x7f800000u)));
+}
+        uint ffxFloatToSortableInteger(uint value)
+{
+    return value ^((ffxAShrSU1(value, uint(31)))| uint(0x80000000));
+}
+        uint ffxSortableIntegerToFloat(uint value)
+{
+    return value ^((~ ffxAShrSU1(value, uint(31)))| uint(0x80000000));
+}
+         float ffxApproximateSqrt(float value)
+{
+    return ffxAsFloat((ffxAsUInt32(value)>> uint(1))+ uint(0x1fbc4639));
+}
+         float ffxApproximateReciprocal(float value)
+{
+    return ffxAsFloat(uint(0x7ef07ebb)- ffxAsUInt32(value));
+}
+         float ffxApproximateReciprocalMedium(float value)
+{
+             float b = ffxAsFloat(uint(0x7ef19fff)- ffxAsUInt32(value));
+    return b *(- b * value + float(2.0));
+}
+         float ffxApproximateReciprocalSquareRoot(float value)
+{
+    return ffxAsFloat(uint(0x5f347d74)-(ffxAsUInt32(value)>> uint(1)));
+}
+           vec2 ffxApproximateSqrt(vec2 value)
+{
+    return ffxAsFloat((ffxAsUInt32(value)>> ffxBroadcast2(1u))+ ffxBroadcast2(0x1fbc4639u));
+}
+           vec2 ffxApproximateReciprocal(vec2 value)
+{
+    return ffxAsFloat(ffxBroadcast2(0x7ef07ebbu)- ffxAsUInt32(value));
+}
+           vec2 ffxApproximateReciprocalMedium(vec2 value)
+{
+               vec2 b = ffxAsFloat(ffxBroadcast2(0x7ef19fffu)- ffxAsUInt32(value));
+    return b *(- b * value + ffxBroadcast2(2.0f));
+}
+           vec2 ffxApproximateReciprocalSquareRoot(vec2 value)
+{
+    return ffxAsFloat(ffxBroadcast2(0x5f347d74u)-(ffxAsUInt32(value)>> ffxBroadcast2(1u)));
+}
+           vec3 ffxApproximateSqrt(vec3 value)
+{
+    return ffxAsFloat((ffxAsUInt32(value)>> ffxBroadcast3(1u))+ ffxBroadcast3(0x1fbc4639u));
+}
+           vec3 ffxApproximateReciprocal(vec3 value)
+{
+    return ffxAsFloat(ffxBroadcast3(0x7ef07ebbu)- ffxAsUInt32(value));
+}
+           vec3 ffxApproximateReciprocalMedium(vec3 value)
+{
+               vec3 b = ffxAsFloat(ffxBroadcast3(0x7ef19fffu)- ffxAsUInt32(value));
+    return b *(- b * value + ffxBroadcast3(2.0f));
+}
+           vec3 ffxApproximateReciprocalSquareRoot(vec3 value)
+{
+    return ffxAsFloat(ffxBroadcast3(0x5f347d74u)-(ffxAsUInt32(value)>> ffxBroadcast3(1u)));
+}
+           vec4 ffxApproximateSqrt(vec4 value)
+{
+    return ffxAsFloat((ffxAsUInt32(value)>> ffxBroadcast4(1u))+ ffxBroadcast4(0x1fbc4639u));
+}
+           vec4 ffxApproximateReciprocal(vec4 value)
+{
+    return ffxAsFloat(ffxBroadcast4(0x7ef07ebbu)- ffxAsUInt32(value));
+}
+           vec4 ffxApproximateReciprocalMedium(vec4 value)
+{
+               vec4 b = ffxAsFloat(ffxBroadcast4(0x7ef19fffu)- ffxAsUInt32(value));
+    return b *(- b * value + ffxBroadcast4(2.0f));
+}
+           vec4 ffxApproximateReciprocalSquareRoot(vec4 value)
+{
+    return ffxAsFloat(ffxBroadcast4(0x5f347d74u)-(ffxAsUInt32(value)>> ffxBroadcast4(1u)));
+}
+         float ffxDot2(vec2 a, vec2 b)
+{
+    return dot(a, b);
+}
+         float ffxDot3(vec3 a, vec3 b)
+{
+    return dot(a, b);
+}
+         float ffxDot4(vec4 a, vec4 b)
+{
+    return dot(a, b);
+}
+         float ffxApproximatePQToGamma2Medium(float a)
+{
+    return a * a * a * a;
+}
+         float ffxApproximatePQToLinear(float a)
+{
+    return a * a * a * a * a * a * a * a;
+}
+         float ffxApproximateGamma2ToPQ(float a)
+{
+    return ffxAsFloat((ffxAsUInt32(a)>> uint(2))+ uint(0x2F9A4E46));
+}
+         float ffxApproximateGamma2ToPQMedium(float a)
+{
+             float b = ffxAsFloat((ffxAsUInt32(a)>> uint(2))+ uint(0x2F9A4E46));
+             float b4 = b * b * b * b;
+    return b - b *(b4 - a)/(float(4.0)* b4);
+}
+         float ffxApproximateGamma2ToPQHigh(float a)
+{
+    return ffxSqrt(ffxSqrt(a));
+}
+         float ffxApproximateLinearToPQ(float a)
+{
+    return ffxAsFloat((ffxAsUInt32(a)>> uint(3))+ uint(0x378D8723));
+}
+         float ffxApproximateLinearToPQMedium(float a)
+{
+             float b = ffxAsFloat((ffxAsUInt32(a)>> uint(3))+ uint(0x378D8723));
+             float b8 = b * b * b * b * b * b * b * b;
+    return b - b *(b8 - a)/(float(8.0)* b8);
+}
+         float ffxApproximateLinearToPQHigh(float a)
+{
+    return ffxSqrt(ffxSqrt(ffxSqrt(a)));
+}
+           vec2 ffxApproximatePQToGamma2Medium(vec2 a)
+{
+    return a * a * a * a;
+}
+           vec2 ffxApproximatePQToLinear(vec2 a)
+{
+    return a * a * a * a * a * a * a * a;
+}
+           vec2 ffxApproximateGamma2ToPQ(vec2 a)
+{
+    return ffxAsFloat((ffxAsUInt32(a)>> ffxBroadcast2(2u))+ ffxBroadcast2(0x2F9A4E46u));
+}
+           vec2 ffxApproximateGamma2ToPQMedium(vec2 a)
+{
+               vec2 b = ffxAsFloat((ffxAsUInt32(a)>> ffxBroadcast2(2u))+ ffxBroadcast2(0x2F9A4E46u));
+               vec2 b4 = b * b * b * b;
+    return b - b *(b4 - a)/(float(4.0)* b4);
+}
+           vec2 ffxApproximateGamma2ToPQHigh(vec2 a)
+{
+    return ffxSqrt(ffxSqrt(a));
+}
+           vec2 ffxApproximateLinearToPQ(vec2 a)
+{
+    return ffxAsFloat((ffxAsUInt32(a)>> ffxBroadcast2(3u))+ ffxBroadcast2(0x378D8723u));
+}
+           vec2 ffxApproximateLinearToPQMedium(vec2 a)
+{
+               vec2 b = ffxAsFloat((ffxAsUInt32(a)>> ffxBroadcast2(3u))+ ffxBroadcast2(0x378D8723u));
+               vec2 b8 = b * b * b * b * b * b * b * b;
+    return b - b *(b8 - a)/(float(8.0)* b8);
+}
+           vec2 ffxApproximateLinearToPQHigh(vec2 a)
+{
+    return ffxSqrt(ffxSqrt(ffxSqrt(a)));
+}
+           vec3 ffxApproximatePQToGamma2Medium(vec3 a)
+{
+    return a * a * a * a;
+}
+           vec3 ffxApproximatePQToLinear(vec3 a)
+{
+    return a * a * a * a * a * a * a * a;
+}
+           vec3 ffxApproximateGamma2ToPQ(vec3 a)
+{
+    return ffxAsFloat((ffxAsUInt32(a)>> ffxBroadcast3(2u))+ ffxBroadcast3(0x2F9A4E46u));
+}
+           vec3 ffxApproximateGamma2ToPQMedium(vec3 a)
+{
+               vec3 b = ffxAsFloat((ffxAsUInt32(a)>> ffxBroadcast3(2u))+ ffxBroadcast3(0x2F9A4E46u));
+               vec3 b4 = b * b * b * b;
+    return b - b *(b4 - a)/(float(4.0)* b4);
+}
+           vec3 ffxApproximateGamma2ToPQHigh(vec3 a)
+{
+    return ffxSqrt(ffxSqrt(a));
+}
+           vec3 ffxApproximateLinearToPQ(vec3 a)
+{
+    return ffxAsFloat((ffxAsUInt32(a)>> ffxBroadcast3(3u))+ ffxBroadcast3(0x378D8723u));
+}
+           vec3 ffxApproximateLinearToPQMedium(vec3 a)
+{
+               vec3 b = ffxAsFloat((ffxAsUInt32(a)>> ffxBroadcast3(3u))+ ffxBroadcast3(0x378D8723u));
+               vec3 b8 = b * b * b * b * b * b * b * b;
+    return b - b *(b8 - a)/(float(8.0)* b8);
+}
+           vec3 ffxApproximateLinearToPQHigh(vec3 a)
+{
+    return ffxSqrt(ffxSqrt(ffxSqrt(a)));
+}
+           vec4 ffxApproximatePQToGamma2Medium(vec4 a)
+{
+    return a * a * a * a;
+}
+           vec4 ffxApproximatePQToLinear(vec4 a)
+{
+    return a * a * a * a * a * a * a * a;
+}
+           vec4 ffxApproximateGamma2ToPQ(vec4 a)
+{
+    return ffxAsFloat((ffxAsUInt32(a)>> ffxBroadcast4(2u))+ ffxBroadcast4(0x2F9A4E46u));
+}
+           vec4 ffxApproximateGamma2ToPQMedium(vec4 a)
+{
+               vec4 b = ffxAsFloat((ffxAsUInt32(a)>> ffxBroadcast4(2u))+ ffxBroadcast4(0x2F9A4E46u));
+               vec4 b4 = b * b * b * b * b * b * b * b;
+    return b - b *(b4 - a)/(float(4.0)* b4);
+}
+           vec4 ffxApproximateGamma2ToPQHigh(vec4 a)
+{
+    return ffxSqrt(ffxSqrt(a));
+}
+           vec4 ffxApproximateLinearToPQ(vec4 a)
+{
+    return ffxAsFloat((ffxAsUInt32(a)>> ffxBroadcast4(3u))+ ffxBroadcast4(0x378D8723u));
+}
+           vec4 ffxApproximateLinearToPQMedium(vec4 a)
+{
+               vec4 b = ffxAsFloat((ffxAsUInt32(a)>> ffxBroadcast4(3u))+ ffxBroadcast4(0x378D8723u));
+               vec4 b8 = b * b * b * b * b * b * b * b;
+    return b - b *(b8 - a)/(float(8.0)* b8);
+}
+           vec4 ffxApproximateLinearToPQHigh(vec4 a)
+{
+    return ffxSqrt(ffxSqrt(ffxSqrt(a)));
+}
+         float ffxParabolicSin(float value)
+{
+    return value * abs(value)- value;
+}
+           vec2 ffxParabolicSin(vec2 x)
+{
+    return x * abs(x)- x;
+}
+         float ffxParabolicCos(float x)
+{
+    x = ffxFract(x * float(0.5)+ float(0.75));
+    x = x * float(2.0)- float(1.0);
+    return ffxParabolicSin(x);
+}
+           vec2 ffxParabolicCos(vec2 x)
+{
+    x = ffxFract(x * ffxBroadcast2(0.5f)+ ffxBroadcast2(0.75f));
+    x = x * ffxBroadcast2(2.0f)- ffxBroadcast2(1.0f);
+    return ffxParabolicSin(x);
+}
+           vec2 ffxParabolicSinCos(float x)
+{
+             float y = ffxFract(x * float(0.5)+ float(0.75));
+    y = y * float(2.0)- float(1.0);
+    return ffxParabolicSin(vec2(x, y));
+}
+        uint ffxZeroOneAnd(uint x, uint y)
+{
+    return min(x, y);
+}
+          uvec2 ffxZeroOneAnd(uvec2 x, uvec2 y)
+{
+    return min(x, y);
+}
+          uvec3 ffxZeroOneAnd(uvec3 x, uvec3 y)
+{
+    return min(x, y);
+}
+          uvec4 ffxZeroOneAnd(uvec4 x, uvec4 y)
+{
+    return min(x, y);
+}
+        uint ffxZeroOneAnd(uint x)
+{
+    return x ^ uint(1);
+}
+          uvec2 ffxZeroOneAnd(uvec2 x)
+{
+    return x ^ ffxBroadcast2(1u);
+}
+          uvec3 ffxZeroOneAnd(uvec3 x)
+{
+    return x ^ ffxBroadcast3(1u);
+}
+          uvec4 ffxZeroOneAnd(uvec4 x)
+{
+    return x ^ ffxBroadcast4(1u);
+}
+        uint ffxZeroOneOr(uint x, uint y)
+{
+    return max(x, y);
+}
+          uvec2 ffxZeroOneOr(uvec2 x, uvec2 y)
+{
+    return max(x, y);
+}
+          uvec3 ffxZeroOneOr(uvec3 x, uvec3 y)
+{
+    return max(x, y);
+}
+          uvec4 ffxZeroOneOr(uvec4 x, uvec4 y)
+{
+    return max(x, y);
+}
+        uint ffxZeroOneAndToU1(float x)
+{
+    return uint(float(1.0)- x);
+}
+          uvec2 ffxZeroOneAndToU2(vec2 x)
+{
+    return uvec2(ffxBroadcast2(1.0)- x);
+}
+          uvec3 ffxZeroOneAndToU3(vec3 x)
+{
+    return uvec3(ffxBroadcast3(1.0)- x);
+}
+          uvec4 ffxZeroOneAndToU4(vec4 x)
+{
+    return uvec4(ffxBroadcast4(1.0)- x);
+}
+         float ffxZeroOneAndOr(float x, float y, float z)
+{
+    return ffxSaturate(x * y + z);
+}
+           vec2 ffxZeroOneAndOr(vec2 x, vec2 y, vec2 z)
+{
+    return ffxSaturate(x * y + z);
+}
+           vec3 ffxZeroOneAndOr(vec3 x, vec3 y, vec3 z)
+{
+    return ffxSaturate(x * y + z);
+}
+           vec4 ffxZeroOneAndOr(vec4 x, vec4 y, vec4 z)
+{
+    return ffxSaturate(x * y + z);
+}
+         float ffxZeroOneIsGreaterThanZero(float x)
+{
+    return ffxSaturate(x * float(ffxAsFloat(0x7f800000u)));
+}
+           vec2 ffxZeroOneIsGreaterThanZero(vec2 x)
+{
+    return ffxSaturate(x * ffxBroadcast2(ffxAsFloat(0x7f800000u)));
+}
+           vec3 ffxZeroOneIsGreaterThanZero(vec3 x)
+{
+    return ffxSaturate(x * ffxBroadcast3(ffxAsFloat(0x7f800000u)));
+}
+           vec4 ffxZeroOneIsGreaterThanZero(vec4 x)
+{
+    return ffxSaturate(x * ffxBroadcast4(ffxAsFloat(0x7f800000u)));
+}
+         float ffxZeroOneAnd(float x)
+{
+    return float(1.0)- x;
+}
+           vec2 ffxZeroOneAnd(vec2 x)
+{
+    return ffxBroadcast2(1.0)- x;
+}
+           vec3 ffxZeroOneAnd(vec3 x)
+{
+    return ffxBroadcast3(1.0)- x;
+}
+           vec4 ffxZeroOneAnd(vec4 x)
+{
+    return ffxBroadcast4(1.0)- x;
+}
+         float ffxZeroOneOr(float x, float y)
+{
+    return max(x, y);
+}
+           vec2 ffxZeroOneOr(vec2 x, vec2 y)
+{
+    return max(x, y);
+}
+           vec3 ffxZeroOneOr(vec3 x, vec3 y)
+{
+    return max(x, y);
+}
+           vec4 ffxZeroOneOr(vec4 x, vec4 y)
+{
+    return max(x, y);
+}
+         float ffxZeroOneSelect(float x, float y, float z)
+{
+             float r =(- x)* z + z;
+    return x * y + r;
+}
+           vec2 ffxZeroOneSelect(vec2 x, vec2 y, vec2 z)
+{
+               vec2 r =(- x)* z + z;
+    return x * y + r;
+}
+           vec3 ffxZeroOneSelect(vec3 x, vec3 y, vec3 z)
+{
+               vec3 r =(- x)* z + z;
+    return x * y + r;
+}
+           vec4 ffxZeroOneSelect(vec4 x, vec4 y, vec4 z)
+{
+               vec4 r =(- x)* z + z;
+    return x * y + r;
+}
+         float ffxZeroOneIsSigned(float x)
+{
+    return ffxSaturate(x * float(ffxAsFloat(0xff800000u)));
+}
+           vec2 ffxZeroOneIsSigned(vec2 x)
+{
+    return ffxSaturate(x * ffxBroadcast2(ffxAsFloat(0xff800000u)));
+}
+           vec3 ffxZeroOneIsSigned(vec3 x)
+{
+    return ffxSaturate(x * ffxBroadcast3(ffxAsFloat(0xff800000u)));
+}
+           vec4 ffxZeroOneIsSigned(vec4 x)
+{
+    return ffxSaturate(x * ffxBroadcast4(ffxAsFloat(0xff800000u)));
+}
+         float ffxRec709FromLinear(float color)
+{
+               vec3 j = vec3(0.018 * 4.5, 4.5, 0.45);
+               vec2 k = vec2(1.099, - 0.099);
+    return clamp(j . x, color * j . y, pow(color, j . z)* k . x + k . y);
+}
+           vec2 ffxRec709FromLinear(vec2 color)
+{
+               vec3 j = vec3(0.018 * 4.5, 4.5, 0.45);
+               vec2 k = vec2(1.099, - 0.099);
+    return clamp(j . xx, color * j . yy, pow(color, j . zz)* k . xx + k . yy);
+}
+           vec3 ffxRec709FromLinear(vec3 color)
+{
+               vec3 j = vec3(0.018 * 4.5, 4.5, 0.45);
+               vec2 k = vec2(1.099, - 0.099);
+    return clamp(j . xxx, color * j . yyy, pow(color, j . zzz)* k . xxx + k . yyy);
+}
+         float ffxLinearFromRec709(float color)
+{
+               vec3 j = vec3(0.081 / 4.5, 1.0 / 4.5, 1.0 / 0.45);
+               vec2 k = vec2(1.0 / 1.099, 0.099 / 1.099);
+    return ffxZeroOneSelect(ffxZeroOneIsSigned(color - j . x), color * j . y, pow(color * k . x + k . y, j . z));
+}
+           vec2 ffxLinearFromRec709(vec2 color)
+{
+               vec3 j = vec3(0.081 / 4.5, 1.0 / 4.5, 1.0 / 0.45);
+               vec2 k = vec2(1.0 / 1.099, 0.099 / 1.099);
+    return ffxZeroOneSelect(ffxZeroOneIsSigned(color - j . xx), color * j . yy, pow(color * k . xx + k . yy, j . zz));
+}
+           vec3 ffxLinearFromRec709(vec3 color)
+{
+               vec3 j = vec3(0.081 / 4.5, 1.0 / 4.5, 1.0 / 0.45);
+               vec2 k = vec2(1.0 / 1.099, 0.099 / 1.099);
+    return ffxZeroOneSelect(ffxZeroOneIsSigned(color - j . xxx), color * j . yyy, pow(color * k . xxx + k . yyy, j . zzz));
+}
+         float ffxGammaFromLinear(float value, float power)
+{
+    return pow(value, float(power));
+}
+           vec2 ffxGammaFromLinear(vec2 value, float power)
+{
+    return pow(value, ffxBroadcast2(power));
+}
+           vec3 ffxGammaFromLinear(vec3 value, float power)
+{
+    return pow(value, ffxBroadcast3(power));
+}
+         float ffxLinearFromGamma(float color, float power)
+{
+    return pow(color, float(power));
+}
+           vec2 ffxLinearFromGamma(vec2 color, float power)
+{
+    return pow(color, ffxBroadcast2(power));
+}
+           vec3 ffxLinearFromGamma(vec3 color, float power)
+{
+    return pow(color, ffxBroadcast3(power));
+}
+         float ffxPQFromLinear(float value)
+{
+             float p = pow(value, float(0.159302));
+    return pow((float(0.835938)+ float(18.8516)* p)/(float(1.0)+ float(18.6875)* p), float(78.8438));
+}
+           vec2 ffxPQFromLinear(vec2 value)
+{
+               vec2 p = pow(value, ffxBroadcast2(0.159302));
+    return pow((ffxBroadcast2(0.835938)+ ffxBroadcast2(18.8516)* p)/(ffxBroadcast2(1.0)+ ffxBroadcast2(18.6875)* p), ffxBroadcast2(78.8438));
+}
+           vec3 ffxPQFromLinear(vec3 value)
+{
+               vec3 p = pow(value, ffxBroadcast3(0.159302));
+    return pow((ffxBroadcast3(0.835938)+ ffxBroadcast3(18.8516)* p)/(ffxBroadcast3(1.0)+ ffxBroadcast3(18.6875)* p), ffxBroadcast3(78.8438));
+}
+         float ffxLinearFromPQ(float value)
+{
+             float p = pow(value, float(0.0126833));
+    return pow(ffxSaturate(p - float(0.835938))/(float(18.8516)- float(18.6875)* p), float(6.27739));
+}
+           vec2 ffxLinearFromPQ(vec2 value)
+{
+               vec2 p = pow(value, ffxBroadcast2(0.0126833));
+    return pow(ffxSaturate(p - ffxBroadcast2(0.835938))/(ffxBroadcast2(18.8516)- ffxBroadcast2(18.6875)* p), ffxBroadcast2(6.27739));
+}
+           vec3 ffxLinearFromPQ(vec3 value)
+{
+               vec3 p = pow(value, ffxBroadcast3(0.0126833));
+    return pow(ffxSaturate(p - ffxBroadcast3(0.835938))/(ffxBroadcast3(18.8516)- ffxBroadcast3(18.6875)* p), ffxBroadcast3(6.27739));
+}
+         float ffxSrgbFromLinear(float value)
+{
+               vec3 j = vec3(0.0031308 * 12.92, 12.92, 1.0 / 2.4);
+               vec2 k = vec2(1.055, - 0.055);
+    return clamp(j . x, value * j . y, pow(value, j . z)* k . x + k . y);
+}
+           vec2 ffxSrgbFromLinear(vec2 value)
+{
+               vec3 j = vec3(0.0031308 * 12.92, 12.92, 1.0 / 2.4);
+               vec2 k = vec2(1.055, - 0.055);
+    return clamp(j . xx, value * j . yy, pow(value, j . zz)* k . xx + k . yy);
+}
+           vec3 ffxSrgbFromLinear(vec3 value)
+{
+               vec3 j = vec3(0.0031308 * 12.92, 12.92, 1.0 / 2.4);
+               vec2 k = vec2(1.055, - 0.055);
+    return clamp(j . xxx, value * j . yyy, pow(value, j . zzz)* k . xxx + k . yyy);
+}
+         float ffxLinearFromSrgb(float value)
+{
+               vec3 j = vec3(0.04045, 1.0 / 12.92, 2.4);
+               vec2 k = vec2(1.0 / 1.055, 0.055 / 1.055);
+    return ffxZeroOneSelect(ffxZeroOneIsSigned(value - j . x), value * j . y, pow(value * k . x + k . y, j . z));
+}
+           vec2 ffxLinearFromSrgb(vec2 value)
+{
+               vec3 j = vec3(0.04045, 1.0 / 12.92, 2.4);
+               vec2 k = vec2(1.0 / 1.055, 0.055 / 1.055);
+    return ffxZeroOneSelect(ffxZeroOneIsSigned(value - j . xx), value * j . yy, pow(value * k . xx + k . yy, j . zz));
+}
+           vec3 ffxLinearFromSrgb(vec3 value)
+{
+               vec3 j = vec3(0.04045, 1.0 / 12.92, 2.4);
+               vec2 k = vec2(1.0 / 1.055, 0.055 / 1.055);
+    return ffxZeroOneSelect(ffxZeroOneIsSigned(value - j . xxx), value * j . yyy, pow(value * k . xxx + k . yyy, j . zzz));
+}
+          uvec2 ffxRemapForQuad(uint a)
+{
+    return uvec2(ffxBitfieldExtract(a, 1u, 3u), ffxBitfieldInsertMask(ffxBitfieldExtract(a, 3u, 3u), a, 1u));
+}
+          uvec2 ffxRemapForWaveReduction(uint a)
+{
+    return uvec2(ffxBitfieldInsertMask(ffxBitfieldExtract(a, 2u, 3u), a, 1u), ffxBitfieldInsertMask(ffxBitfieldExtract(a, 3u, 3u), ffxBitfieldExtract(a, 1u, 2u), 2u));
+}
+void ffxOpAAddOneF3(out vec3 d, vec3 a, float b)
+{
+    d = a + ffxBroadcast3(b);
+}
+void ffxOpACpyF3(out vec3 d, vec3 a)
+{
+    d = a;
+}
+void ffxOpAMulF3(out vec3 d, vec3 a, vec3 b)
+{
+    d = a * b;
+}
+void ffxOpAMulOneF3(out vec3 d, vec3 a, float b)
+{
+    d = a * b;
+}
+void ffxOpARcpF3(out vec3 d, vec3 a)
+{
+    d = ffxReciprocal(a);
+}
+    layout(binding = 8, std140)uniform cbFSR3UPSCALER_t
+    {
+                 ivec2 iRenderSize;
+                 ivec2 iPreviousFrameRenderSize;
+                 ivec2 iUpscaleSize;
+                 ivec2 iPreviousFrameUpscaleSize;
+                 ivec2 iMaxRenderSize;
+                 ivec2 iMaxUpscaleSize;
+                   vec4 fDeviceToViewDepth;
+                   vec2 fJitter;
+                   vec2 fPreviousFrameJitter;
+                   vec2 fMotionVectorScale;
+                   vec2 fDownscaleFactor;
+                   vec2 fMotionVectorJitterCancellation;
+                 float fTanHalfFOV;
+                 float fJitterSequenceLength;
+                 float fDeltaTime;
+                 float fDeltaPreExposure;
+                 float fViewSpaceToMetersFactor;
+                 float fFrameIndex;
+                 float fVelocityFactor;
+                 float fReactivenessScale;
+                 float fShadingChangeScale;
+                 float fAccumulationAddedPerFrame;
+                 float fMinDisocclusionAccumulation;
+ } cbFSR3Upscaler;
+         ivec2 RenderSize()
+{
+    return cbFSR3Upscaler . iRenderSize;
+}
+         ivec2 PreviousFrameRenderSize()
+{
+    return cbFSR3Upscaler . iPreviousFrameRenderSize;
+}
+         ivec2 MaxRenderSize()
+{
+    return cbFSR3Upscaler . iMaxRenderSize;
+}
+         ivec2 UpscaleSize()
+{
+    return cbFSR3Upscaler . iUpscaleSize;
+}
+         ivec2 PreviousFrameUpscaleSize()
+{
+    return cbFSR3Upscaler . iPreviousFrameUpscaleSize;
+}
+         ivec2 MaxUpscaleSize()
+{
+    return cbFSR3Upscaler . iMaxUpscaleSize;
+}
+           vec2 Jitter()
+{
+    return cbFSR3Upscaler . fJitter;
+}
+           vec2 PreviousFrameJitter()
+{
+    return cbFSR3Upscaler . fPreviousFrameJitter;
+}
+           vec4 DeviceToViewSpaceTransformFactors()
+{
+    return cbFSR3Upscaler . fDeviceToViewDepth;
+}
+           vec2 MotionVectorScale()
+{
+    return cbFSR3Upscaler . fMotionVectorScale;
+}
+           vec2 DownscaleFactor()
+{
+    return cbFSR3Upscaler . fDownscaleFactor;
+}
+           vec2 MotionVectorJitterCancellation()
+{
+    return cbFSR3Upscaler . fMotionVectorJitterCancellation;
+}
+         float TanHalfFoV()
+{
+    return cbFSR3Upscaler . fTanHalfFOV;
+}
+         float JitterSequenceLength()
+{
+    return cbFSR3Upscaler . fJitterSequenceLength;
+}
+         float DeltaTime()
+{
+    return cbFSR3Upscaler . fDeltaTime;
+}
+         float DeltaPreExposure()
+{
+    return cbFSR3Upscaler . fDeltaPreExposure;
+}
+         float ViewSpaceToMetersFactor()
+{
+    return cbFSR3Upscaler . fViewSpaceToMetersFactor;
+}
+         float FrameIndex()
+{
+    return cbFSR3Upscaler . fFrameIndex;
+}
+         float VelocityFactor()
+{
+    return cbFSR3Upscaler . fVelocityFactor;
+}
+         float AccumulationAddedPerFrame()
+{
+    return cbFSR3Upscaler . fAccumulationAddedPerFrame;
+}
+         float MinDisocclusionAccumulation()
+{
+    return cbFSR3Upscaler . fMinDisocclusionAccumulation;
+}
+layout(binding = 1)uniform sampler2D r_input_depth;
+         float LoadInputDepth(ivec2 iPxPos)
+{
+ return texelFetch(r_input_depth, iPxPos, 0). r;
+}
+         float SampleInputDepth(vec2 fUV)
+{
+    return textureLod(r_input_depth, fUV, 0.0). x;
+}
+layout(binding = 2)uniform sampler2D r_input_color_jittered;
+           vec3 LoadInputColor(ivec2 iPxPos)
+{
+ return texelFetch(r_input_color_jittered, iPxPos, 0). rgb;
+}
+           vec3 SampleInputColor(vec2 fUV)
+{
+ return textureLod(r_input_color_jittered, fUV, 0.0). rgb;
+}
+layout(binding = 0)uniform sampler2D r_input_motion_vectors;
+           vec2 LoadInputMotionVector(ivec2 iPxDilatedMotionVectorPos)
+{
+            vec2 fSrcMotionVector = texelFetch(r_input_motion_vectors, iPxDilatedMotionVectorPos, 0). xy;
+            vec2 fUvMotionVector = fSrcMotionVector * MotionVectorScale();
+ return fUvMotionVector;
+}
+layout(binding = 6, r16f)uniform image2D rw_farthest_depth;
+void StoreFarthestDepth(ivec2 iPxPos, float fDepth)
+{
+    imageStore(rw_farthest_depth, iPxPos, vec4(fDepth, 0.0, 0.0, 0.0));
+}
+layout(binding = 7, r16f)uniform image2D rw_current_luma;
+void StoreCurrentLuma(ivec2 iPxPos, float fLuma)
+{
+    imageStore(rw_current_luma, iPxPos, vec4(fLuma, 0.0, 0.0, 0.0));
+}
+layout(binding = 5, r32ui)uniform uimage2D rw_reconstructed_previous_nearest_depth;
+void StoreReconstructedDepth(ivec2 iPxSample, float fDepth)
+{
+         uint uDepth = floatBitsToUint(fDepth);
+  imageAtomicMin(rw_reconstructed_previous_nearest_depth, iPxSample, uDepth);
+}
+void SetReconstructedDepth(ivec2 iPxSample, uint uValue)
+{
+ imageStore(rw_reconstructed_previous_nearest_depth, iPxSample, uvec4(uValue, 0, 0, 0));
+}
+layout(binding = 4, r32f)writeonly uniform image2D rw_dilated_depth;
+void StoreDilatedDepth(in ivec2 iPxPos, in float fDepth)
+{
+ imageStore(rw_dilated_depth, iPxPos, vec4(fDepth, 0.0, 0.0, 0.0));
+}
+layout(binding = 3, rg16f)writeonly uniform image2D rw_dilated_motion_vectors;
+void StoreDilatedMotionVector(in ivec2 iPxPos, in vec2 fMotionVector)
+{
+ imageStore(rw_dilated_motion_vectors, iPxPos, vec4(fMotionVector, 0.0, 0.0));
+}
+         float SampleLanczos2Weight(float x)
+{
+    return 0.f;
+}
+           const float FSR3UPSCALER_FP16_MIN = 6.10e-05f;
+           const float FSR3UPSCALER_FP16_MAX = 65504.0f;
+           const float FSR3UPSCALER_EPSILON = FSR3UPSCALER_FP16_MIN;
+           const float FSR3UPSCALER_TONEMAP_EPSILON = FSR3UPSCALER_FP16_MIN;
+           const float FSR3UPSCALER_FP32_MAX = 3.402823466e+38f;
+           const float FSR3UPSCALER_FP32_MIN = 1.175494351e-38f;
+           const float fReconstructedDepthBilinearWeightThreshold = FSR3UPSCALER_EPSILON * 10;
+         float ReconstructedDepthMvPxThreshold(float fNearestDepthInMeters)
+{
+    return ffxLerp(0.25f, 0.75f, ffxSaturate(fNearestDepthInMeters / 100.0f));
+}
+           const float fUpsampleLanczosWeightScale = 1.0f / 16.0f;
+           const float fAverageLanczosWeightPerFrame = 0.74f * fUpsampleLanczosWeightScale;
+           const float fAccumulationMaxOnMotion = 3.0f * fUpsampleLanczosWeightScale;
+           const int iShadingChangeMipStart = 0;
+           const float fShadingChangeSamplePow = 1.0f / 1.0f;
+           const float fLockThreshold = 1.0f;
+           const float fLockMax = 2.0f;
+           const int REACTIVE = 0;
+           const int DISOCCLUSION = 1;
+           const int SHADING_CHANGE = 2;
+           const int ACCUMULAION = 3;
+           const int FRAME_INFO_EXPOSURE = 0;
+           const int FRAME_INFO_LOG_LUMA = 1;
+           const int FRAME_INFO_SCENE_AVERAGE_LUMA = 2;
+         bool TonemapFirstFrame()
+{
+    const bool bEnabled = true;
+    return FrameIndex()== 0 && bEnabled;
+}
+         float AverageLanczosWeightPerFrame()
+{
+    return 0.74f;
+}
+         ivec2 ShadingChangeRenderSize()
+{
+    return ivec2(RenderSize()* 0.5f);
+}
+         ivec2 ShadingChangeMaxRenderSize()
+{
+    return ivec2(MaxRenderSize()* 0.5f);
+}
+         ivec2 PreviousFrameShadingChangeRenderSize()
+{
+    return ivec2(PreviousFrameRenderSize()* 0.5f);
+}
+           const float resetAutoExposureAverageSmoothing = 1e4f;
+struct AccumulationPassCommonParams
+{
+             ivec2 iPxHrPos;
+               vec2 fHrUv;
+               vec2 fLrUvJittered;
+               vec2 fLrUv_HwSampler;
+               vec2 fMotionVector;
+               vec2 fReprojectedHrUv;
+             float f4KVelocity;
+             float fDisocclusion;
+             float fReactiveMask;
+             float fShadingChange;
+             float fAccumulation;
+             float fLumaInstabilityFactor;
+             float fFarthestDepthInMeters;
+             bool bIsExistingSample;
+             bool bIsNewSample;
+};
+         float Get4KVelocity(vec2 fMotionVector)
+{
+    return length(fMotionVector * vec2(3840.0f, 2160.0f));
+}
+struct RectificationBox
+{
+               vec3 boxCenter;
+               vec3 boxVec;
+               vec3 aabbMin;
+               vec3 aabbMax;
+             float fBoxCenterWeight;
+};
+struct AccumulationPassData
+{
+    RectificationBox clippingBox;
+               vec3 fUpsampledColor;
+             float fUpsampledWeight;
+               vec3 fHistoryColor;
+             float fHistoryWeight;
+             float fLock;
+             float fLockContributionThisFrame;
+};
+void RectificationBoxAddInitialSample(inout RectificationBox rectificationBox, const vec3 colorSample, const float fSampleWeight)
+{
+    rectificationBox . aabbMin = colorSample;
+    rectificationBox . aabbMax = colorSample;
+               vec3 weightedSample = colorSample * fSampleWeight;
+    rectificationBox . boxCenter = weightedSample;
+    rectificationBox . boxVec = colorSample * weightedSample;
+    rectificationBox . fBoxCenterWeight = fSampleWeight;
+}
+void RectificationBoxAddSample(bool bInitialSample, inout RectificationBox rectificationBox, const vec3 colorSample, const float fSampleWeight)
+{
+    if(bInitialSample){
+        RectificationBoxAddInitialSample(rectificationBox, colorSample, fSampleWeight);
+    } else {
+        rectificationBox . aabbMin = ffxMin(rectificationBox . aabbMin, colorSample);
+        rectificationBox . aabbMax = ffxMax(rectificationBox . aabbMax, colorSample);
+                   vec3 weightedSample = colorSample * fSampleWeight;
+        rectificationBox . boxCenter += weightedSample;
+        rectificationBox . boxVec += colorSample * weightedSample;
+        rectificationBox . fBoxCenterWeight += fSampleWeight;
+    }
+}
+void RectificationBoxComputeVarianceBoxData(inout RectificationBox rectificationBox)
+{
+    rectificationBox . fBoxCenterWeight =(abs(rectificationBox . fBoxCenterWeight)> float(FSR3UPSCALER_FP32_MIN)? rectificationBox . fBoxCenterWeight : float(1.f));
+    rectificationBox . boxCenter /= rectificationBox . fBoxCenterWeight;
+    rectificationBox . boxVec /= rectificationBox . fBoxCenterWeight;
+               vec3 stdDev = sqrt(abs(rectificationBox . boxVec - rectificationBox . boxCenter * rectificationBox . boxCenter));
+    rectificationBox . boxVec = stdDev;
+}
+           vec3 SafeRcp3(vec3 v)
+{
+    return(all(notEqual(v, vec3(0, 0, 0))))?(vec3(1, 1, 1)/ v): vec3(0, 0, 0);
+}
+         float MinDividedByMax(const float v0, const float v1, const float fOnZeroReturnValue)
+{
+    const float m = ffxMax(v0, v1);
+    return m != 0 ? ffxMin(v0, v1)/ m : fOnZeroReturnValue;
+}
+         float MinDividedByMax(const float v0, const float v1)
+{
+    const float m = ffxMax(v0, v1);
+    return m != 0 ? ffxMin(v0, v1)/ m : 0;
+}
+           vec3 YCoCgToRGB(vec3 fYCoCg)
+{
+               vec3 fRgb;
+    fRgb = vec3(
+        fYCoCg . x + fYCoCg . y - fYCoCg . z,
+        fYCoCg . x + fYCoCg . z,
+        fYCoCg . x - fYCoCg . y - fYCoCg . z);
+    return fRgb;
+}
+           vec3 RGBToYCoCg(vec3 fRgb)
+{
+               vec3 fYCoCg;
+    fYCoCg = vec3(
+        0.25f * fRgb . r + 0.5f * fRgb . g + 0.25f * fRgb . b,
+        0.5f * fRgb . r - 0.5f * fRgb . b,
+        - 0.25f * fRgb . r + 0.5f * fRgb . g - 0.25f * fRgb . b);
+    return fYCoCg;
+}
+         float RGBToLuma(vec3 fLinearRgb)
+{
+    return dot(fLinearRgb, vec3(0.2126f, 0.7152f, 0.0722f));
+}
+         float RGBToPerceivedLuma(vec3 fLinearRgb)
+{
+             float fLuminance = RGBToLuma(fLinearRgb);
+             float fPercievedLuminance = 0;
+    if(fLuminance <= 216.0f / 24389.0f){
+        fPercievedLuminance = fLuminance *(24389.0f / 27.0f);
+    }
+    else {
+        fPercievedLuminance = ffxPow(fLuminance, 1.0f / 3.0f)* 116.0f - 16.0f;
+    }
+    return fPercievedLuminance * 0.01f;
+}
+           vec3 Tonemap(vec3 fRgb)
+{
+    return fRgb /(ffxMax(ffxMax(0.f, fRgb . r), ffxMax(fRgb . g, fRgb . b))+ 1.f). xxx;
+}
+           vec3 InverseTonemap(vec3 fRgb)
+{
+    return fRgb / ffxMax(FSR3UPSCALER_TONEMAP_EPSILON, 1.f - ffxMax(fRgb . r, ffxMax(fRgb . g, fRgb . b))). xxx;
+}
+         bool IsUvInside(vec2 fUv)
+{
+    return(fUv . x >= 0.0f && fUv . x <= 1.0f)&&(fUv . y >= 0.0f && fUv . y <= 1.0f);
+}
+         ivec2 ClampLoad(ivec2 iPxSample, ivec2 iPxOffset, ivec2 iTextureSize)
+{
+             ivec2 result = iPxSample + iPxOffset;
+    result . x = ffxMax(0, ffxMin(result . x, iTextureSize . x - 1));
+    result . y = ffxMax(0, ffxMin(result . y, iTextureSize . y - 1));
+    return result;
+}
+           vec2 ClampUv(vec2 fUv, ivec2 iTextureSize, ivec2 iResourceSize)
+{
+    const vec2 fSampleLocation = fUv * iTextureSize;
+    const vec2 fClampedLocation = ffxMax(vec2(0.5f, 0.5f), ffxMin(fSampleLocation, vec2(iTextureSize)- vec2(0.5f, 0.5f)));
+    const vec2 fClampedUv = fClampedLocation / vec2(iResourceSize);
+    return fClampedUv;
+}
+         bool IsOnScreen(ivec2 pos, ivec2 size)
+{
+    return all(lessThan(uvec2(pos), uvec2(size)));
+}
+         float ComputeAutoExposureFromLavg(float Lavg)
+{
+    Lavg = exp(Lavg);
+    const float S = 100.0f;
+    const float K = 12.5f;
+             float ExposureISO100 = log2((Lavg * S)/ K);
+    const float q = 0.65f;
+             float Lmax =(78.0f /(q * S))* ffxPow(2.0f, ExposureISO100);
+    return 1.0f / Lmax;
+}
+         ivec2 ComputeHrPosFromLrPos(ivec2 iPxLrPos)
+{
+               vec2 fSrcJitteredPos = vec2(iPxLrPos)+ 0.5f - Jitter();
+               vec2 fLrPosInHr =(fSrcJitteredPos / RenderSize())* UpscaleSize();
+             ivec2 iPxHrPos = ivec2(floor(fLrPosInHr));
+    return iPxHrPos;
+}
+           vec2 ComputeNdc(vec2 fPxPos, ivec2 iSize)
+{
+    return fPxPos / vec2(iSize)* vec2(2.0f, - 2.0f)+ vec2(- 1.0f, 1.0f);
+}
+         float GetViewSpaceDepth(float fDeviceDepth)
+{
+    const vec4 fDeviceToViewDepth = DeviceToViewSpaceTransformFactors();
+    return(fDeviceToViewDepth[1]/(fDeviceDepth - fDeviceToViewDepth[0]));
+}
+         float GetViewSpaceDepthInMeters(float fDeviceDepth)
+{
+    return GetViewSpaceDepth(fDeviceDepth)* ViewSpaceToMetersFactor();
+}
+           vec3 GetViewSpacePosition(ivec2 iViewportPos, ivec2 iViewportSize, float fDeviceDepth)
+{
+    const vec4 fDeviceToViewDepth = DeviceToViewSpaceTransformFactors();
+    const float Z = GetViewSpaceDepth(fDeviceDepth);
+    const vec2 fNdcPos = ComputeNdc(iViewportPos, iViewportSize);
+    const float X = fDeviceToViewDepth[2]* fNdcPos . x * Z;
+    const float Y = fDeviceToViewDepth[3]* fNdcPos . y * Z;
+    return vec3(X, Y, Z);
+}
+           vec3 GetViewSpacePositionInMeters(ivec2 iViewportPos, ivec2 iViewportSize, float fDeviceDepth)
+{
+    return GetViewSpacePosition(iViewportPos, iViewportSize, fDeviceDepth)* ViewSpaceToMetersFactor();
+}
+         float GetMaxDistanceInMeters()
+{
+    return GetViewSpaceDepth(1.0f)* ViewSpaceToMetersFactor();
+}
+struct BilinearSamplingData
+{
+             ivec2 iOffsets[4];
+             float fWeights[4];
+             ivec2 iBasePos;
+};
+BilinearSamplingData GetBilinearSamplingData(vec2 fUv, ivec2 iSize)
+{
+    BilinearSamplingData data;
+               vec2 fPxSample =(fUv * iSize)- vec2(0.5f, 0.5f);
+    data . iBasePos = ivec2(floor(fPxSample));
+               vec2 fPxFrac = ffxFract(fPxSample);
+    data . iOffsets[0]= ivec2(0, 0);
+    data . iOffsets[1]= ivec2(1, 0);
+    data . iOffsets[2]= ivec2(0, 1);
+    data . iOffsets[3]= ivec2(1, 1);
+    data . fWeights[0]=(1 - fPxFrac . x)*(1 - fPxFrac . y);
+    data . fWeights[1]=(fPxFrac . x)*(1 - fPxFrac . y);
+    data . fWeights[2]=(1 - fPxFrac . x)*(fPxFrac . y);
+    data . fWeights[3]=(fPxFrac . x)*(fPxFrac . y);
+    return data;
+}
+struct PlaneData
+{
+               vec3 fNormal;
+             float fDistanceFromOrigin;
+};
+PlaneData GetPlaneFromPoints(vec3 fP0, vec3 fP1, vec3 fP2)
+{
+    PlaneData plane;
+               vec3 v0 = fP0 - fP1;
+               vec3 v1 = fP0 - fP2;
+    plane . fNormal = normalize(cross(v0, v1));
+    plane . fDistanceFromOrigin = - dot(fP0, plane . fNormal);
+    return plane;
+}
+         float PointToPlaneDistance(PlaneData plane, vec3 fPoint)
+{
+    return abs(dot(plane . fNormal, fPoint)+ plane . fDistanceFromOrigin);
+}
+void ReconstructPrevDepth(ivec2 iPxPos, float fDepth, vec2 fMotionVector)
+{
+    const float fNearestDepthInMeters = ffxMin(GetViewSpaceDepthInMeters(fDepth), FSR3UPSCALER_FP16_MAX);
+    const float fReconstructedDeptMvThreshold = ReconstructedDepthMvPxThreshold(fNearestDepthInMeters);
+    fMotionVector *= float(Get4KVelocity(fMotionVector)> fReconstructedDeptMvThreshold);
+    const vec2 fUv =(iPxPos + float(0.5))/ RenderSize();
+    const vec2 fReprojectedUv = fUv + fMotionVector;
+    const BilinearSamplingData bilinearInfo = GetBilinearSamplingData(fReprojectedUv, RenderSize());
+    for(int iSampleIndex = 0;iSampleIndex < 4;iSampleIndex ++){
+        const ivec2 iOffset = bilinearInfo . iOffsets[iSampleIndex];
+        const float fWeight = bilinearInfo . fWeights[iSampleIndex];
+        if(fWeight > fReconstructedDepthBilinearWeightThreshold){
+            const ivec2 iStorePos = bilinearInfo . iBasePos + iOffset;
+            if(IsOnScreen(iStorePos, RenderSize())){
+                StoreReconstructedDepth(iStorePos, fDepth);
+            }
+        }
+    }
+}
+struct DepthExtents
+{
+             float fNearest;
+             ivec2 fNearestCoord;
+             float fFarthest;
+};
+DepthExtents FindDepthExtents(in ivec2 iPxPos)
+{
+    DepthExtents extents;
+    const int iSampleCount = 9;
+    const ivec2 iSampleOffsets[iSampleCount]= {
+                 ivec2(+ 0, + 0),
+                 ivec2(+ 1, + 0),
+                 ivec2(+ 0, + 1),
+                 ivec2(+ 0, - 1),
+                 ivec2(- 1, + 0),
+                 ivec2(- 1, + 1),
+                 ivec2(+ 1, + 1),
+                 ivec2(- 1, - 1),
+                 ivec2(+ 1, - 1),
+    };
+             float depth[9];
+           int iSampleIndex = 0;
+    for(iSampleIndex = 0;iSampleIndex < iSampleCount;++ iSampleIndex){
+                 ivec2 iPos = iPxPos + iSampleOffsets[iSampleIndex];
+        depth[iSampleIndex]= LoadInputDepth(iPos);
+    }
+    extents . fNearestCoord = iPxPos;
+    extents . fNearest = depth[0];
+    extents . fFarthest = depth[0];
+    for(iSampleIndex = 1;iSampleIndex < iSampleCount;++ iSampleIndex){
+        const ivec2 iPos = iPxPos + iSampleOffsets[iSampleIndex];
+        if(IsOnScreen(iPos, RenderSize())){
+                     float fNdDepth = depth[iSampleIndex];
+            if(fNdDepth < extents . fNearest){
+                extents . fFarthest = ffxMax(extents . fFarthest, fNdDepth);
+                extents . fNearestCoord = iPos;
+                extents . fNearest = fNdDepth;
+            }
+        }
+    }
+    return extents;
+}
+           vec2 DilateMotionVector(ivec2 iPxPos, const DepthExtents depthExtents)
+{
+    const ivec2 iSamplePos = iPxPos;
+    const ivec2 iMotionVectorPos = depthExtents . fNearestCoord;
+    const vec2 fDilatedMotionVector = LoadInputMotionVector(iMotionVectorPos);
+    return fDilatedMotionVector;
+}
+         float GetCurrentFrameLuma(ivec2 iPxPos)
+{
+    const vec3 fRgb = ffxMax(vec3(0, 0, 0), LoadInputColor(iPxPos));
+    const float fLuma = RGBToLuma(fRgb);
+    return fLuma;
+}
+void PrepareInputs(ivec2 iPxPos)
+{
+    const DepthExtents depthExtents = FindDepthExtents(iPxPos);
+    const vec2 fDilatedMotionVector = DilateMotionVector(iPxPos, depthExtents);
+    ReconstructPrevDepth(iPxPos, depthExtents . fNearest, fDilatedMotionVector);
+    StoreDilatedMotionVector(iPxPos, fDilatedMotionVector);
+    StoreDilatedDepth(iPxPos, depthExtents . fNearest);
+    const float fFarthestDepthInMeters = ffxMin(GetViewSpaceDepthInMeters(depthExtents . fFarthest), FSR3UPSCALER_FP16_MAX);
+    StoreFarthestDepth(iPxPos, fFarthestDepthInMeters);
+    const float fLuma = GetCurrentFrameLuma(iPxPos);
+    StoreCurrentLuma(iPxPos, fLuma);
+}
+                            layout(local_size_x = 8, local_size_y = 8, local_size_z = 1)in;
+void main()
+{
+    PrepareInputs(ivec2(gl_GlobalInvocationID . xy));
+}
