@@ -1,0 +1,187 @@
+#version 430
+// M5 step 1: temporal accumulation ("reuse what this spot looked like last frame").
+//
+// Each pixel finds where its surface point was on screen last frame (reprojection),
+// checks that it really is the same surface there (same facing, same distance), and
+// blends this frame's noisy light into the running average kept from earlier frames.
+// Holding still, a pixel ends up averaging ~24 frames, so the grain drops ~5x.
+// Where there's no usable history (just came into view), it starts over from 1 sample
+// and the spatial filter (atrous.comp) does most of the work for those pixels.
+//
+// It also tracks how much each pixel's brightness jumps around (variance), which tells
+// the spatial filter how hard to blur there: noisy pixels get more blur, settled ones less.
+//
+// "Advanced" mode (uAdvanced = 1, the menu's Denoiser: Advanced) adds what newer real-time
+// denoisers (NVIDIA's ReLAX, AMD's FidelityFX) do against lag and smearing:
+//   - a second, fast average of only the last ~4 frames (brightness and its spread, kept in the
+//     moments picture's spare z/w), blended with this frame's 5 x 5 neighbourhood; the long
+//     average is pulled back inside that mean +- 3 spreads. When the light really changes (torch picked up, door opened, sun behind a cloud),
+//     the long average can't trail behind; it restarts from the short one.
+//   - fireflies (one sample far brighter than its neighbours) are cut down before they're averaged in.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(rgba16f, binding = 0) uniform readonly image2D uLight;       // this frame's noisy light
+layout(rgba16f, binding = 1) uniform readonly image2D uGeom;        // this frame: packed normal, distance, surface flag
+layout(rgba16f, binding = 2) uniform readonly image2D uPrevAccum;   // last frame's average, a = frames averaged
+layout(rgba16f, binding = 3) uniform readonly image2D uPrevMoments; // last frame's brightness stats
+layout(rgba16f, binding = 4) uniform readonly image2D uPrevGeom;    // last frame's geometry
+layout(rgba16f, binding = 5) uniform writeonly image2D outAccum;
+layout(rgba16f, binding = 6) uniform writeonly image2D outMoments;  // x = mean brightness, y = mean of brightness squared
+layout(rgba16f, binding = 7) uniform writeonly image2D outFilter;   // what the spatial filter starts from: rgb light, a = variance
+
+uniform ivec2 uResolution;
+uniform vec3  uCamForward, uCamRight, uCamUp;
+uniform float uTanHalfFov;
+uniform vec3  uPrevForward, uPrevRight, uPrevUp;
+uniform float uPrevTanHalfFov;
+uniform vec3  uEyeDelta;      // this frame's eye position minus last frame's
+uniform int   uHistoryValid;  // 0 after a resize, view switch, teleport...
+uniform float uMaxHistory;    // cap on frames averaged: higher = smoother, but light changes lag more
+uniform vec2  uJitter, uPrevJitter; // M8: sub-pixel camera nudge (FSR) this frame and last, pixels
+// how far each traced mob moved since last frame (world blocks); geometry w = 2 + its index
+layout(std430, binding = 0) readonly buffer EntMotion { vec4 entMotion[]; };
+uniform int   uEntMotionCount;
+uniform int   uAdvanced;            // 1 = fast-history clamp and firefly cut (see above)
+
+vec3 octDecode(vec2 e) {
+    vec3 n = vec3(e, 1.0 - abs(e.x) - abs(e.y));
+    if (n.z < 0.0) n.xy = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+    return normalize(n);
+}
+
+float luminance(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+
+vec3 rayDir(vec2 pixel, vec3 f, vec3 r, vec3 u, float tanHalf) {
+    vec2 ndc = (pixel + 0.5) / vec2(uResolution) * 2.0 - 1.0;
+    float aspect = float(uResolution.x) / float(uResolution.y);
+    return normalize(f + ndc.x * tanHalf * aspect * r + ndc.y * tanHalf * u);
+}
+
+void main() {
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    if (px.x >= uResolution.x || px.y >= uResolution.y) return;
+
+    vec4 g = imageLoad(uGeom, px);
+    vec3 cur = imageLoad(uLight, px).rgb;
+    if (g.w < 0.5) { // sky: nothing to denoise
+        imageStore(outAccum, px, vec4(0.0));
+        imageStore(outMoments, px, vec4(0.0));
+        imageStore(outFilter, px, vec4(0.0));
+        return;
+    }
+    vec3 n = octDecode(g.xy);
+    vec3 pos = rayDir(vec2(px) + uJitter, uCamForward, uCamRight, uCamUp, uTanHalfFov) * g.z; // relative to this frame's eye
+    vec3 prevPos = pos + uEyeDelta;                                                  // relative to last frame's eye
+    int e = int(g.w + 0.5) - 2;
+    if (e >= 0 && e < uEntMotionCount) prevPos -= entMotion[e].xyz;                  // a mob: where it was last frame
+
+    // ---- find this point on last frame's screen
+    // advanced: cut fireflies, a sample over 6x its neighbours' average brightness (+ a floor)
+    if (uAdvanced != 0) {
+        float ns = 0.0, nw = 0.0;
+        for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            ivec2 q = clamp(px + ivec2(dx, dy), ivec2(0), uResolution - 1);
+            ns += luminance(imageLoad(uLight, q).rgb); nw += 1.0;
+        }
+        float cap = 6.0 * ns / nw + 0.3, lc = luminance(cur);
+        if (lc > cap) cur *= cap / lc;
+    }
+
+    vec3 prevSum = vec3(0.0);
+    vec2 momSum = vec2(0.0), fastSum = vec2(0.0);
+    float lenSum = 0.0, wSum = 0.0;
+    float z = dot(prevPos, uPrevForward);
+    if (uHistoryValid != 0 && z > 0.05) {
+        float aspect = float(uResolution.x) / float(uResolution.y);
+        vec2 ndc = vec2(dot(prevPos, uPrevRight) / (z * uPrevTanHalfFov * aspect),
+                        dot(prevPos, uPrevUp) / (z * uPrevTanHalfFov));
+        vec2 p = (ndc * 0.5 + 0.5) * vec2(uResolution) - 0.5 - uPrevJitter; // in pixel units, pixel centres on whole numbers
+        ivec2 base = ivec2(floor(p));
+        vec2 f = p - vec2(base);
+        float tol = 0.05 + 0.015 * g.z; // allowed gap between surfaces, grows with distance
+        // blend the 4 nearest old pixels, skipping any that show a different surface
+        for (int i = 0; i < 4; i++) {
+            ivec2 q = base + ivec2(i & 1, i >> 1);
+            if (q.x < 0 || q.y < 0 || q.x >= uResolution.x || q.y >= uResolution.y) continue;
+            vec4 pg = imageLoad(uPrevGeom, q);
+            if (pg.w < 0.5) continue;
+            if (dot(octDecode(pg.xy), n) < 0.9) continue;
+            vec3 qPos = rayDir(vec2(q) + uPrevJitter, uPrevForward, uPrevRight, uPrevUp, uPrevTanHalfFov) * pg.z;
+            if (abs(dot(qPos - prevPos, n)) > tol) continue; // not on the same plane
+            float w = ((i & 1) == 1 ? f.x : 1.0 - f.x) * ((i >> 1) == 1 ? f.y : 1.0 - f.y);
+            vec4 acc = imageLoad(uPrevAccum, q);
+            prevSum += acc.rgb * w;
+            lenSum += acc.a * w;
+            vec4 pm = imageLoad(uPrevMoments, q);
+            momSum += pm.xy * w;
+            fastSum += pm.zw * w;
+            wSum += w;
+        }
+    }
+
+    float l = luminance(cur);
+    vec3 accum;
+    vec2 mom, fast;
+    float len;
+    if (wSum > 0.01) {
+        prevSum /= wSum; momSum /= wSum; lenSum /= wSum; fastSum /= wSum;
+        len = min(lenSum + 1.0, uMaxHistory);
+        float a = 1.0 / len;                  // equal weight for every frame so far, then a sliding average
+        accum = mix(prevSum, cur, a);
+        mom = mix(momSum, vec2(l, l * l), max(a, 0.2));
+        fast = mix(fastSum, vec2(l, l * l), max(a, 0.25)); // the last ~4 frames
+        if (uAdvanced != 0 && len > 4.0) {
+            // One pixel's 4-frame average is still grainy at 1 sample a frame; clamping to it alone made
+            // blotches while the light changed. So the window also takes this frame's 5 x 5 neighbours on
+            // the same surface: centre halfway between, spread the larger of the two.
+            vec2 nm = vec2(0.0);
+            float nw = 0.0;
+            for (int dy = -2; dy <= 2; dy++) for (int dx = -2; dx <= 2; dx++) {
+                ivec2 q = clamp(px + ivec2(dx, dy), ivec2(0), uResolution - 1);
+                vec4 qg = imageLoad(uGeom, q);
+                if (qg.w < 0.5 || dot(octDecode(qg.xy), n) < 0.9) continue;
+                float ql = luminance(imageLoad(uLight, q).rgb);
+                nm += vec2(ql, ql * ql); nw += 1.0;
+            }
+            nm /= max(nw, 1.0);
+            float centre = 0.5 * (fast.x + nm.x);
+            float sigma = max(sqrt(max(fast.y - fast.x * fast.x, 0.0)), sqrt(max(nm.y - nm.x * nm.x, 0.0)));
+            float la = luminance(accum);
+            float lo = max(centre - 3.0 * sigma - 0.02, 0.0), hi = centre + 3.0 * sigma + 0.02;
+            float lt = clamp(la, lo, hi);
+            if (la > 1e-5 && lt != la) {
+                accum *= lt / la;
+                // a big pull means the light changed: let the long average start over from here
+                float r = max(lt, la) / max(min(lt, la), 1e-4);
+                if (r > 1.5) len = min(len, 4.0);
+            }
+        }
+    } else {
+        len = 1.0;
+        accum = cur;
+        mom = vec2(l, l * l);
+        fast = mom;
+    }
+
+    float variance = max(mom.y - mom.x * mom.x, 0.0);
+    if (len < 4.0) {
+        // Too few frames to know the variance yet: estimate it from the neighbours on the same surface.
+        vec2 m = vec2(0.0);
+        float ws = 0.0;
+        for (int dy = -2; dy <= 2; dy++) for (int dx = -2; dx <= 2; dx++) {
+            ivec2 q = clamp(px + ivec2(dx, dy), ivec2(0), uResolution - 1);
+            vec4 qg = imageLoad(uGeom, q);
+            if (qg.w < 0.5 || dot(octDecode(qg.xy), n) < 0.9) continue;
+            float ql = luminance(imageLoad(uLight, q).rgb);
+            m += vec2(ql, ql * ql);
+            ws += 1.0;
+        }
+        m /= max(ws, 1.0);
+        variance = max(m.y - m.x * m.x, 0.0) * (4.0 / len);
+    }
+
+    imageStore(outAccum, px, vec4(accum, len));
+    imageStore(outMoments, px, vec4(mom, fast));
+    imageStore(outFilter, px, vec4(accum, variance));
+}
