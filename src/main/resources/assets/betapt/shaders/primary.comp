@@ -1,0 +1,324 @@
+#version 430
+const float ALPHA_CUT = 0.1; // as Beta's alpha test (pt_base.glsl)
+// M3: primary rays. One ray per pixel from the camera, stepped through the voxel
+// grid one block at a time (Amanatides & Woo DDA) until it hits something solid.
+// The hit is textured from terrain.png with Beta's own per-face textures and biome
+// tints. Lighting is deliberately simple here (Beta-style face shading times
+// daylight); real light transport arrives in M4.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(rgba8, binding = 0) uniform writeonly image2D outImage;
+
+layout(binding = 1) uniform usampler3D uVoxels;   // id | meta << 8, wrapped at 512
+layout(binding = 2) uniform sampler2D uAtlas;     // terrain.png, live (animated water/lava/fire)
+layout(binding = 3) uniform sampler2D uGrass;     // biome grass colour per column
+layout(binding = 4) uniform sampler2D uFoliage;   // biome leaf colour per column
+
+layout(std430, binding = 2) readonly buffer Slots { ivec2 slotChunk[]; };
+layout(std430, binding = 3) readonly buffer Info  { uint blockInfo[]; };  // 8 per (id * 16 + meta)
+layout(std430, binding = 4) readonly buffer Boxes { vec4 blockBox[]; };   // min, max per (id * 16 + meta)
+
+uniform ivec2 uResolution;
+uniform ivec3 uCamBlock;     // camera block, world coordinates
+uniform vec3  uCamFrac;      // camera position inside that block, 0..1
+uniform vec3  uCamForward, uCamRight, uCamUp;
+uniform float uTanHalfFov;
+uniform vec3  uSkyColor, uFogColor, uSunDir;
+uniform float uDaylight;     // 0 night .. 1 noon
+uniform float uMaxDist;      // how far rays go, in blocks
+uniform int uFastLeaves;      // Leaves: Fast: solid, Beta's Fast graphics texture (the tile after the see-through one)
+uniform int uGrassOverlay;    // Fancy graphics: 1 + the tile Beta lays over grass sides in the biome's colour (38), 0 on Fast
+uniform float uFogStart, uFogEnd; // Beta's linear fog, in blocks
+uniform int   uTileSize;     // pixels per terrain.png tile (16 for vanilla)
+
+const int SIZE = 512, SLOTS = 32;
+const uint CUBE = 1u, CROSS = 2u, BOX = 3u, LIQUID = 4u;
+const uint FLAG_TRANSLUCENT = 1u;
+
+bool chunkLoaded(ivec3 b) {
+    ivec2 c = ivec2(b.x >> 4, b.z >> 4);
+    return slotChunk[(c.x & (SLOTS - 1)) + (c.y & (SLOTS - 1)) * SLOTS] == c;
+}
+
+uint voxel(ivec3 b) {
+    if (b.y < 0 || b.y >= 128 || !chunkLoaded(b)) return 0u;
+    return texelFetch(uVoxels, ivec3(b.x & (SIZE - 1), b.y, b.z & (SIZE - 1)), 0).r;
+}
+
+// Pipes and cables (box conditions 7-12): an arm toward a neighbour it would join (the same block, a modded
+// block such as a machine or another pipe, or a chest, furnace or dispenser). 7 west, 8 east, 9 north, 10 south, 11 down, 12 up.
+bool joins(uint n, uint id) { return n != 0u && (n == id || n >= 97u || n == 23u || n == 54u || n == 61u || n == 62u); }
+bool armOk(uint cond, ivec3 c, uint id) {
+    ivec3 d = cond == 7u ? ivec3(-1, 0, 0) : cond == 8u ? ivec3(1, 0, 0) : cond == 9u ? ivec3(0, 0, -1)
+            : cond == 10u ? ivec3(0, 0, 1) : cond == 11u ? ivec3(0, -1, 0) : ivec3(0, 1, 0);
+    return joins(voxel(c + d) & 4095u, id);
+}
+
+// Beta face index: 0 down, 1 up, 2 north (-z), 3 south (+z), 4 west (-x), 5 east (+x)
+int faceOf(vec3 n) {
+    if (n.y < -0.5) return 0;
+    if (n.y > 0.5) return 1;
+    if (n.z < -0.5) return 2;
+    if (n.z > 0.5) return 3;
+    if (n.x < -0.5) return 4;
+    return 5;
+}
+
+vec2 faceUV(int face, vec3 p) {
+    if (face <= 1) return vec2(p.x, p.z);
+    if (face == 2) return vec2(1.0 - p.x, 1.0 - p.y);
+    if (face == 3) return vec2(p.x, 1.0 - p.y);
+    if (face == 4) return vec2(p.z, 1.0 - p.y);
+    return vec2(1.0 - p.z, 1.0 - p.y);
+}
+
+vec4 atlas(uint tile, vec2 uv) {
+    ivec2 t = ivec2(int(tile & 15u), int(tile >> 4)) * uTileSize;
+    ivec2 px = t + clamp(ivec2(floor(uv * float(uTileSize))), ivec2(0), ivec2(uTileSize - 1));
+    return texelFetch(uAtlas, px, 0);
+}
+
+float faceShade(int face) { // Beta's directional shading
+    if (face == 1) return 1.0;
+    if (face == 0) return 0.5;
+    if (face <= 3) return 0.8;
+    return 0.6;
+}
+
+vec3 tintFor(uint tintType, ivec3 b, uint entry) {
+    if (tintType == 5u) { uint c = blockInfo[entry * 9u + 8u]; return vec3((c >> 16) & 255u, (c >> 8) & 255u, c & 255u) / 255.0; } // a modded block's own colour
+    ivec2 col = ivec2(b.x & (SIZE - 1), b.z & (SIZE - 1));
+    if (tintType == 1u) return texelFetch(uGrass, col, 0).rgb;
+    if (tintType == 2u) return texelFetch(uFoliage, col, 0).rgb;
+    if (tintType == 3u) return vec3(0x61, 0x99, 0x61) / 255.0;
+    if (tintType == 4u) return vec3(0x80, 0xA7, 0x55) / 255.0;
+    return vec3(1.0);
+}
+
+// Ray vs axis-aligned box in block-local space. Returns entry t and the entry normal.
+uint liquidKind(uint id) { return id == 8u ? 9u : id == 10u ? 11u : id; } // water's two ids are one water, lava's one lava
+
+bool hitBox(vec3 o, vec3 invD, vec3 bmin, vec3 bmax, float tMin, float tMaxV, out float tHit, out vec3 n) {
+    vec3 t0 = (bmin - o) * invD, t1 = (bmax - o) * invD;
+    vec3 tn = min(t0, t1), tf = max(t0, t1);
+    float tNear = max(max(tn.x, tn.y), tn.z), tFar = min(min(tf.x, tf.y), tf.z);
+    if (tNear > tFar || tFar < tMin || tNear > tMaxV) return false;
+    tHit = max(tNear, tMin);
+    n = vec3(0.0);
+    if (tNear == tn.x) n.x = -sign(1.0 / invD.x);
+    else if (tNear == tn.y) n.y = -sign(1.0 / invD.y);
+    else n.z = -sign(1.0 / invD.z);
+    return true;
+}
+
+vec3 sky(vec3 d) {
+    float up = clamp(d.y, 0.0, 1.0);
+    vec3 col = mix(uFogColor, uSkyColor, pow(up, 0.6));
+    float sun = smoothstep(0.9985, 0.9992, dot(d, uSunDir));
+    return col + sun * vec3(1.0, 0.95, 0.8) * uDaylight;
+}
+
+void main() {
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    if (px.x >= uResolution.x || px.y >= uResolution.y) return;
+
+    vec2 ndc = (vec2(px) + 0.5) / vec2(uResolution) * 2.0 - 1.0;
+    float aspect = float(uResolution.x) / float(uResolution.y);
+    vec3 d = normalize(uCamForward + ndc.x * uTanHalfFov * aspect * uCamRight + ndc.y * uTanHalfFov * uCamUp);
+    d += vec3(equal(d, vec3(0.0))) * 1e-7; // avoid divide by zero
+    vec3 invD = 1.0 / d;
+
+    vec3 o = uCamFrac;              // ray origin, relative to uCamBlock
+    ivec3 cell = ivec3(0);
+    ivec3 stepDir = ivec3(sign(d));
+    vec3 tDelta = abs(invD);
+    vec3 tMax = (vec3(max(stepDir, ivec3(0))) - o) * invD;
+    float t = 0.0;
+
+    vec3 accum = vec3(0.0);
+    float trans = 1.0;              // how much light still gets through (water, ice)
+    uint insideTranslucent = 0u;
+    bool hit = false;
+    float hitDist = 0.0;
+
+    for (int i = 0; i < 1024; i++) {
+        ivec3 wb = uCamBlock + cell;
+        float tExit = min(min(tMax.x, tMax.y), tMax.z);
+        if ((wb.y < 0 && stepDir.y <= 0) || (wb.y >= 128 && stepDir.y >= 0) || t > uMaxDist) break;
+
+        uint v = voxel(wb);
+        uint id = v & 4095u;
+        if (id == 0u) insideTranslucent = 0u;
+        if (id != 0u && !(i == 0 && id != 8u && id != 9u)) { // skip the block the camera is inside (unless water)
+            uint entry = id * 16u + (v >> 12);
+            uint info = blockInfo[entry * 9u];
+            uint shape = info & 15u, tintType = (info >> 4) & 15u, tintMask = (info >> 8) & 63u, flags = info >> 16;
+            vec3 lo = o - vec3(cell);   // ray origin in this block's local space
+            float tHit = 0.0;
+            vec3 n = vec3(0.0);
+            bool found = false;
+            vec2 uv = vec2(0.0);
+            int face = 1;
+            int tileOverride = -1;
+
+            if (shape == CUBE) {
+                // Full cubes (most of the world): one fixed box, no table reads.
+                if (hitBox(lo, invD, vec3(0.0), vec3(1.0), t, tExit, tHit, n)) {
+                    face = faceOf(n);
+                    uv = faceUV(face, lo + d * tHit);
+                    found = true;
+                }
+            } else if (shape == LIQUID) {
+                // Water and lava: one box with a lowered surface. Kept separate from the multi-box
+                // code below: a ray crossing a lake visits dozens of water cells, so each must be cheap.
+                vec3 bmin = blockBox[(blockInfo[entry * 9u + 7u] >> 4) * 5u].xyz, bmax = blockBox[(blockInfo[entry * 9u + 7u] >> 4) * 5u + 1u].xyz;
+                uint va = voxel(wb + ivec3(0, 1, 0)), above = va & 4095u;
+                bool sameLiquid = id <= 9u ? (above == 8u || above == 9u) : id <= 11u ? (above == 10u || above == 11u)
+                        : (above == id || above == id + 1u || above + 1u == id) && (blockInfo[(above * 16u + (va >> 12)) * 9u] & 15u) == LIQUID;
+                if (sameLiquid) bmax.y = 1.0;
+                if (t <= 0.0 && all(greaterThanEqual(lo, bmin)) && all(lessThanEqual(lo, bmax))) {
+                    insideTranslucent = liquidKind(id); // the camera is under water: already inside, no surface here
+                } else if (hitBox(lo, invD, bmin, bmax, t, tExit, tHit, n)) {
+                    face = faceOf(n);
+                    uv = faceUV(face, lo + d * tHit);
+                    found = true;
+                }
+            } else if (shape == BOX) {
+                // M6: a block is up to 12 boxes (stairs = 2, fence = post + bars...). Pass 1 finds which
+                // box the ray hits first, keeping as little as possible per box; pass 2 works out the
+                // normal and texture position for that one box only. (Keeping this loop lean matters:
+                // the tracer runs ~5 times per pixel and every extra value it holds slows them all.)
+                // A box may be tilted (wall torch, lever handle): the ray is moved into the box's own
+                // coordinates (local = M * (p - pivot)), tested against a plain box there, and the
+                // normal is turned back with M's transpose.
+                uint boxWord = blockInfo[entry * 9u + 7u], nBoxes = boxWord & 15u, firstBox = boxWord >> 4;
+                float best = 1e30;
+                uint bestK = 0u;
+                for (uint k = 0u; k < nBoxes; k++) {
+                    uint base = (firstBox + k) * 5u;
+                    vec4 a = blockBox[base];
+                    uint cond = uint(a.w + 0.5) & 15u;
+                    if (cond != 0u) {
+                        bool w = (voxel(wb + ivec3(-1, 0, 0)) & 4095u) == id, e = (voxel(wb + ivec3(1, 0, 0)) & 4095u) == id;
+                        bool ok = cond == 1u ? w : cond == 2u ? e
+                                : cond == 3u ? (voxel(wb + ivec3(0, 0, -1)) & 4095u) == id
+                                : cond == 4u ? (voxel(wb + ivec3(0, 0, 1)) & 4095u) == id
+                                : cond == 5u ? (w || e) : cond == 6u ? !(w || e) : armOk(cond, wb, id);
+                        if (!ok) continue;
+                    }
+                    vec3 lo3 = a.xyz, hi3 = blockBox[base + 1u].xyz;
+                    vec3 ro = lo, rinv = invD;
+                    vec4 m0 = blockBox[base + 2u];
+                    if (m0.x != 0.0 || m0.y != 0.0 || m0.z != 0.0) {
+                        vec4 m1 = blockBox[base + 3u], m2 = blockBox[base + 4u];
+                        mat3 Mt = mat3(m0.xyz, m1.xyz, m2.xyz); // columns = M's rows, so v * Mt = M * v
+                        ro = (lo - vec3(m0.w, m1.w, m2.w)) * Mt;
+                        vec3 rd = d * Mt;
+                        rinv = 1.0 / mix(rd, vec3(1e-8), lessThan(abs(rd), vec3(1e-8)));
+                    }
+                    float th; vec3 nn;
+                    if (hitBox(ro, rinv, lo3, hi3, t, tExit, th, nn) && th < best) { best = th; bestK = k; found = true; }
+                }
+                if (found) {
+                    tHit = best;
+                    uint base = (firstBox + bestK) * 5u;
+                    vec4 a = blockBox[base], c = blockBox[base + 1u], m0 = blockBox[base + 2u];
+                    vec3 lo3 = a.xyz, hi3 = c.xyz;
+                    vec3 ro = lo, rd = d, rinv = invD;
+                    mat3 Mt = mat3(1.0);
+                    bool tilted = m0.x != 0.0 || m0.y != 0.0 || m0.z != 0.0;
+                    if (tilted) {
+                        vec4 m1 = blockBox[base + 3u], m2 = blockBox[base + 4u];
+                        Mt = mat3(m0.xyz, m1.xyz, m2.xyz);
+                        ro = (lo - vec3(m0.w, m1.w, m2.w)) * Mt;
+                        rd = d * Mt;
+                        rinv = 1.0 / mix(rd, vec3(1e-8), lessThan(abs(rd), vec3(1e-8)));
+                    }
+                    float th; vec3 nn;
+                    hitBox(ro, rinv, lo3, hi3, t, tExit, th, nn);
+                    face = faceOf(nn);                        // which side of the box: picks the texture
+                    n = tilted ? normalize(Mt * nn) : nn;      // the real direction it faces: for lighting
+                    vec3 hp = ro + rd * tHit;
+                    if ((uint(a.w + 0.5) & 16u) != 0u || (flags & 2u) != 0u) { // texture centred on the stick
+                        vec3 cc = (lo3 + hi3) * 0.5;
+                        hp = vec3(hp.x - cc.x + 0.5, hp.y - lo3.y, hp.z - cc.z + 0.5);
+                    }
+                    uv = faceUV(face, hp);
+                    tileOverride = c.w > 0.5 ? int(c.w + 0.5) - 1 : -1;
+                }
+            } else if (shape == CROSS) {
+                // two vertical diagonal planes: x = z and x = 1 - z
+                float best = 1e30;
+                for (int k = 0; k < 2; k++) {
+                    float denom = k == 0 ? (d.x - d.z) : (d.x + d.z);
+                    float num = k == 0 ? -(lo.x - lo.z) : (1.0 - lo.x - lo.z);
+                    if (abs(denom) < 1e-6) continue;
+                    float tp = num / denom;
+                    if (tp < t || tp > tExit || tp >= best) continue;
+                    vec3 p = lo + d * tp;
+                    if (any(lessThan(p, vec3(0.0))) || any(greaterThan(p, vec3(1.0)))) continue;
+                    vec2 cuv = vec2(k == 0 ? p.x : 1.0 - p.x, 1.0 - p.y);
+                    uint tile = blockInfo[entry * 9u + 1u + 2u] & 0xFFFFu;
+                    if (atlas(tile, cuv).a <= ALPHA_CUT) continue;
+                    best = tp; tHit = tp; uv = cuv; face = 2; found = true;
+                    n = normalize(k == 0 ? vec3(1, 0, -1) : vec3(1, 0, 1)) * -sign(dot(d, k == 0 ? vec3(1, 0, -1) : vec3(1, 0, 1)));
+                }
+            }
+
+            if (found) {
+                uint tw = tileOverride >= 0 ? uint(tileOverride) : blockInfo[entry * 9u + 1u + uint(face)];
+                uint tile = tw & 0xFFFFu;
+                if ((tw & 0x10000u) != 0u) uv = uv.yx; // a face the block's model turns (pathtrace.comp's orientUV)
+                if ((tw & 0x20000u) != 0u) uv.x = 1.0 - uv.x;
+                if ((tw & 0x40000u) != 0u) uv.y = 1.0 - uv.y;
+                // grass block sides turn snowy when snow sits on top (same rule as GrassBlock)
+                if (id == 2u && face >= 2) {
+                    uint above = voxel(wb + ivec3(0, 1, 0)) & 4095u;
+                    if (above == 78u || above == 80u) tile = 68u;
+                }
+                bool solidLeaf = uFastLeaves != 0 && id == 18u;
+                if (solidLeaf) tile += 1u;
+                vec4 tex = atlas(tile, uv);
+                if (solidLeaf) tex.a = 1.0;
+                bool translucent = (flags & FLAG_TRANSLUCENT) != 0u;
+                if (tex.a > ALPHA_CUT || (translucent && tex.a > 0.0)) {
+                    vec3 albedo = tex.rgb;
+                    if ((tintMask & (1u << uint(face))) != 0u) albedo *= tintFor(tintType, wb, entry);
+                    if (id == 2u && face >= 2 && tile != 68u && uGrassOverlay > 0) { // Fancy grass: the side's grass edge in the biome's colour
+                        vec4 ov = atlas(uint(uGrassOverlay - 1), uv);
+                        albedo = mix(albedo, ov.rgb * tintFor(1u, wb, entry), step(0.1, ov.a)); // drawn with alpha test, as Beta does: a pixel covers or it doesn't
+                    }
+                    float shade = (shape == CROSS ? 0.9 : faceShade(face)) * (0.2 + 0.8 * uDaylight);
+                    vec3 c = albedo * shade;
+                    if (translucent) {
+                        if (insideTranslucent != liquidKind(id)) {   // only the surface you look through, not every block of water
+                            float a = clamp(tex.a, 0.35, 0.9);
+                            accum += trans * a * c;
+                            trans *= 1.0 - a;
+                        }
+                        insideTranslucent = liquidKind(id);
+                        if (trans < 0.05) { hit = true; hitDist = tHit; break; }
+                    } else {
+                        accum += trans * c;
+                        trans = 0.0;
+                        hit = true; hitDist = tHit;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // step to the next block
+        t = tExit;
+        if (tMax.x < tMax.y && tMax.x < tMax.z) { cell.x += stepDir.x; tMax.x += tDelta.x; }
+        else if (tMax.y < tMax.z) { cell.y += stepDir.y; tMax.y += tDelta.y; }
+        else { cell.z += stepDir.z; tMax.z += tDelta.z; }
+    }
+
+    vec3 col = accum + trans * sky(d);
+    if (hit) {
+        float fog = clamp((hitDist - uFogStart) / (uFogEnd - uFogStart), 0.0, 1.0);
+        col = mix(col, uFogColor, fog);
+    }
+    imageStore(outImage, px, vec4(col, 1.0));
+}

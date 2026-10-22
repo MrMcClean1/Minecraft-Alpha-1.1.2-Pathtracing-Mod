@@ -1,0 +1,33 @@
+#version 430
+// M7 sharpening: AMD's "robust contrast adaptive sharpening" (RCAS), the sharpening half of
+// FSR 1 (FidelityFX, MIT licence), rewritten here from its published description.
+// Each pixel is pushed away from the average of its 4 neighbours, but only as far as it can
+// go without any colour channel leaving the 0..1 range of what's around it. That keeps
+// edges crisp without the bright/dark halos plain sharpening filters leave.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 0) uniform sampler2D uSrc;
+layout(rgba8, binding = 0) uniform writeonly image2D outImage;
+uniform ivec2 uSize;
+uniform float uSharpness;   // 0 = strongest (FSR's 0 stops), larger = gentler: exp2(-stops)
+
+const float RCAS_LIMIT = 0.25 - 1.0 / 16.0;
+
+void main() {
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    if (px.x >= uSize.x || px.y >= uSize.y) return;
+    ivec2 hi = uSize - 1;
+    vec3 b = texelFetch(uSrc, clamp(px + ivec2(0, 1), ivec2(0), hi), 0).rgb;
+    vec3 d = texelFetch(uSrc, clamp(px + ivec2(-1, 0), ivec2(0), hi), 0).rgb;
+    vec3 e = texelFetch(uSrc, px, 0).rgb;
+    vec3 f = texelFetch(uSrc, clamp(px + ivec2(1, 0), ivec2(0), hi), 0).rgb;
+    vec3 h = texelFetch(uSrc, clamp(px + ivec2(0, -1), ivec2(0), hi), 0).rgb;
+    vec3 mn4 = min(min(b, d), min(f, h));
+    vec3 mx4 = max(max(b, d), max(f, h));
+    // how strongly the neighbours can be subtracted before the result clips at 0 or 1
+    vec3 hitMin = min(mn4, e) / (4.0 * mx4 + 1e-5);
+    vec3 hitMax = (1.0 - max(mx4, e)) / (4.0 * mn4 - 4.0 - 1e-5);
+    vec3 lobeRGB = max(-hitMin, hitMax);
+    float lobe = max(-RCAS_LIMIT, min(max(lobeRGB.r, max(lobeRGB.g, lobeRGB.b)), 0.0)) * uSharpness;
+    vec3 c = (lobe * (b + d + f + h) + e) / (4.0 * lobe + 1.0);
+    imageStore(outImage, px, vec4(clamp(c, 0.0, 1.0), 1.0));
+}

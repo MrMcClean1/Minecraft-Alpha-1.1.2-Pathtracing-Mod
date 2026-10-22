@@ -1,0 +1,39 @@
+#version 430
+// HDR light -> screen colours: apply exposure, compress highlights on brightness only
+// (so sand stays sand-coloured instead of bleaching to white), convert to sRGB.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(binding = 1) uniform sampler2D uHdr;
+layout(rgba8, binding = 0) uniform writeonly image2D outImage;
+layout(std430, binding = 6) readonly buffer Exposure { float exposure; float avgLum; };
+layout(rgba16f, binding = 1) uniform readonly image2D uSkyFog; // Beta-coloured sky/fog, a = coverage
+uniform ivec2 uResolution;
+uniform float uBrightness; // the in-game Brightness slider, on top of auto exposure
+
+// Extended Reinhard on luminance: linear in the darks, rolls off toward white at W.
+vec3 tonemap(vec3 c) {
+    const float W = 6.0;
+    float L = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    if (L <= 0.0) return vec3(0.0);
+    float Lout = L * (1.0 + L / (W * W)) / (1.0 + L);
+    vec3 outc = c * (Lout / L);
+    // anything still above 1 in one channel blends toward white instead of clipping hue
+    float m = max(max(outc.r, outc.g), outc.b);
+    if (m > 1.0) outc = mix(outc / m, vec3(1.0), clamp((m - 1.0) * 0.5, 0.0, 1.0));
+    return clamp(outc, 0.0, 1.0);
+}
+
+void main() {
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    if (px.x >= uResolution.x || px.y >= uResolution.y) return;
+    vec3 c = texelFetch(uHdr, px, 0).rgb * exposure * uBrightness;
+    c = pow(tonemap(c), vec3(1.0 / 2.2));
+    // Sky and fog at Beta's own colours, blended on screen like Beta's GL fog.
+    vec4 sf = imageLoad(uSkyFog, px);
+    if (sf.a > 0.0) {
+        vec3 s = sf.rgb;
+        float m = max(max(s.r, s.g), s.b);
+        if (m > 1.0) s = mix(s / m, vec3(1.0), clamp((m - 1.0) * 0.5, 0.0, 1.0)); // sun: bright, not hue-clipped
+        c = mix(c, pow(clamp(s, 0.0, 1.0), vec3(1.0 / 2.2)), sf.a);
+    }
+    imageStore(outImage, px, vec4(c, 1.0));
+}

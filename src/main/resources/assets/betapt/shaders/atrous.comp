@@ -1,0 +1,95 @@
+#version 430
+// M5 step 2: spatial filter ("borrow from neighbours on the same surface").
+//
+// "A-trous" means "with holes": each pass averages a pixel with 8 neighbours, and every
+// pass spreads them twice as far apart (1, 2, 4, 8, 16 pixels). Five cheap passes reach
+// as far as one huge 65 x 65 blur would, at about 1/50th of the cost.
+//
+// The blur only borrows from neighbours that are the same surface:
+//   - facing the same way (normal), so a wall doesn't bleed into the floor,
+//   - on the same plane (distance), so a block edge stays sharp against what's behind it,
+//   - similar brightness, judged against how noisy the pixel is (variance), so a real
+//     shadow edge is kept while random grain is averaged away.
+// The last pass multiplies the texture colour back in and adds glow, giving the image
+// that exposure and tone mapping work on.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(rgba16f, binding = 0) uniform readonly image2D uIn;       // rgb light, a = variance
+layout(rgba16f, binding = 1) uniform readonly image2D uGeom;
+layout(rgba16f, binding = 2) uniform writeonly image2D outLight;
+layout(rgba16f, binding = 3) uniform readonly image2D uAlbedo;   // last pass only
+layout(rgba16f, binding = 4) uniform readonly image2D uExtra;    // last pass only
+layout(rgba16f, binding = 5) uniform writeonly image2D outHdr;   // last pass only
+
+uniform ivec2 uResolution;
+uniform vec3  uCamForward, uCamRight, uCamUp;
+uniform float uTanHalfFov;
+uniform vec2  uJitter; // M8: sub-pixel camera nudge (FSR), pixels
+uniform int   uStep;   // spacing between taps this pass; 0 = no filtering (denoiser off)
+uniform int   uFinal;  // 1 on the last pass
+
+vec3 octDecode(vec2 e) {
+    vec3 n = vec3(e, 1.0 - abs(e.x) - abs(e.y));
+    if (n.z < 0.0) n.xy = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+    return normalize(n);
+}
+float luminance(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+vec3 rayDir(ivec2 pixel) {
+    vec2 ndc = (vec2(pixel) + uJitter + 0.5) / vec2(uResolution) * 2.0 - 1.0;
+    float aspect = float(uResolution.x) / float(uResolution.y);
+    return normalize(uCamForward + ndc.x * uTanHalfFov * aspect * uCamRight + ndc.y * uTanHalfFov * uCamUp);
+}
+
+void main() {
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    if (px.x >= uResolution.x || px.y >= uResolution.y) return;
+
+    vec4 c = imageLoad(uIn, px);
+    vec4 g = imageLoad(uGeom, px);
+    vec4 result = c;
+
+    if (uStep > 0 && g.w > 0.5) {
+        vec3 n = octDecode(g.xy);
+        vec3 pos = rayDir(px) * g.z;
+        float l = luminance(c.rgb);
+
+        // variance smoothed over the 3 x 3 block around us: one pixel's variance is itself noisy
+        float var = 0.0;
+        for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+            ivec2 q = clamp(px + ivec2(dx, dy), ivec2(0), uResolution - 1);
+            float w = (dx == 0 ? 0.5 : 0.25) * (dy == 0 ? 0.5 : 0.25);
+            var += imageLoad(uIn, q).a * w;
+        }
+        float lumScale = 4.0 * sqrt(max(var, 0.0)) + 1e-3;
+        float planeTol = (0.03 + 0.004 * g.z) * float(uStep); // wider taps allow a bigger gap
+
+        vec3 sum = c.rgb;
+        float vsum = c.a;
+        float wsum = 1.0;
+        for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) {
+            if (dx == 0 && dy == 0) continue;
+            ivec2 q = px + ivec2(dx, dy) * uStep;
+            if (q.x < 0 || q.y < 0 || q.x >= uResolution.x || q.y >= uResolution.y) continue;
+            vec4 qg = imageLoad(uGeom, q);
+            if (qg.w < 0.5) continue;
+            vec4 qc = imageLoad(uIn, q);
+            float wn = pow(max(dot(octDecode(qg.xy), n), 0.0), 64.0);
+            float wz = exp(-abs(dot(rayDir(q) * qg.z - pos, n)) / planeTol);
+            float wl = exp(-abs(luminance(qc.rgb) - l) / lumScale);
+            float h = (dx == 0 ? 1.0 : 0.5) * (dy == 0 ? 1.0 : 0.5); // 1-2-1 tent, centre weight 1
+            float w = h * wn * wz * wl;
+            sum += qc.rgb * w;
+            vsum += qc.a * w * w;
+            wsum += w;
+        }
+        result = vec4(sum / wsum, vsum / (wsum * wsum));
+    }
+
+    if (uFinal == 1) {
+        vec3 albedo = imageLoad(uAlbedo, px).rgb;
+        vec3 extra = imageLoad(uExtra, px).rgb;
+        imageStore(outHdr, px, vec4(albedo * result.rgb + extra, 1.0));
+    } else {
+        imageStore(outLight, px, result);
+    }
+}

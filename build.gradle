@@ -1,0 +1,74 @@
+plugins {
+	id 'fabric-loom' version '1.18-SNAPSHOT'
+	id 'ploceus' version '1.18-SNAPSHOT'
+}
+
+base { archivesName = project.archives_base_name }
+version = project.version
+group = project.maven_group
+
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	minecraft "com.mojang:minecraft:${project.minecraft_version}"
+	modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+
+	exceptions ploceus.raven(project.raven_build)
+	signatures ploceus.sparrow(project.sparrow_build)
+	nests ploceus.nests(project.nests_build)
+	mappings ploceus.featherMappings(project.feather_build)
+
+	implementation 'com.google.code.gson:gson:2.10.1'
+	compileOnly 'org.projectlombok:lombok:1.18.42'
+	annotationProcessor 'org.projectlombok:lombok:1.18.42'
+}
+
+// ---- the Vulkan path (src/vk), built against LWJGL 3 ----
+// The game runs on LWJGL 2, so the Vulkan code and LWJGL 3 travel inside our jar as resources
+// (assets/betapt/vk/*.bin) and are loaded in a separate class loader by VkBridge.
+def lwjgl3Version = '3.3.6'
+sourceSets { vk }
+configurations { lwjgl3 { transitive = false } }
+dependencies {
+	vkCompileOnly "org.lwjgl:lwjgl:$lwjgl3Version"
+	vkCompileOnly "org.lwjgl:lwjgl-vulkan:$lwjgl3Version"
+	vkCompileOnly "org.lwjgl:lwjgl-opengl:$lwjgl3Version"
+	lwjgl3 "org.lwjgl:lwjgl:$lwjgl3Version"
+	lwjgl3 "org.lwjgl:lwjgl:$lwjgl3Version:natives-windows"
+	lwjgl3 "org.lwjgl:lwjgl-vulkan:$lwjgl3Version"
+	lwjgl3 "org.lwjgl:lwjgl-opengl:$lwjgl3Version"
+	lwjgl3 "org.lwjgl:lwjgl-opengl:$lwjgl3Version:natives-windows"
+}
+tasks.register('vkJar', Jar) {
+	archiveFileName = 'betapt-vk.bin'
+	destinationDirectory = layout.buildDirectory.dir('vk')
+	from sourceSets.vk.output
+}
+processResources {
+	dependsOn 'vkJar'
+	from(tasks.named('vkJar')) { into 'assets/betapt/vk' }
+	from(configurations.lwjgl3) {
+		into 'assets/betapt/vk'
+		rename { String name ->
+			if (name.startsWith('lwjgl-opengl') && name.contains('natives-windows')) return 'lwjgl-opengl-natives-windows.bin'
+			if (name.startsWith('lwjgl-opengl')) return 'lwjgl-opengl.bin'
+			if (name.contains('natives-windows')) return 'lwjgl-natives-windows.bin'
+			if (name.startsWith('lwjgl-vulkan')) return 'lwjgl-vulkan.bin'
+			return 'lwjgl.bin'
+		}
+	}
+	inputs.property 'version', version
+	filesMatching('fabric.mod.json') { expand 'version': version }
+}
+
+tasks.withType(JavaCompile).configureEach {
+	it.options.encoding = 'UTF-8'
+	it.options.release = 17
+}
+java {
+	sourceCompatibility = JavaVersion.VERSION_17
+	targetCompatibility = JavaVersion.VERSION_17
+}
+tasks.withType(JavaCompile).configureEach { options.compilerArgs += ['-Xmaxerrs', '2000'] }
