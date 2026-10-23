@@ -17,6 +17,15 @@ public abstract class VideoOptionsScreenMixin extends Screen {
     @Inject(method = "init", at = @At("TAIL"))
     @SuppressWarnings("unchecked")
     private void betapt$addButton(CallbackInfo ci) {
+        // Alpha's Controls... button is full width with no room under it: halve it, ours goes beside it
+        for (int i = 0; i < this.buttons.size(); i++) {
+            ButtonWidget b = (ButtonWidget) this.buttons.get(i);
+            if (b.message != null && b.message.startsWith("Controls")) {
+                this.buttons.set(i, new com.alexmcclellan.betapt.gui.PtButton(b.id, this.width / 2 - 155, b.y, 150, 20, b.message));
+                this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(BUTTON_ID, this.width / 2 + 5, b.y, 150, 20, "Path Tracer..."));
+                return;
+            }
+        }
         this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(BUTTON_ID, this.width / 2 - 100, this.height / 6 + 144, 200, 20, "Path Tracer..."));
     }
 

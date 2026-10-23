@@ -875,7 +875,8 @@ public final class PathTracer {
         GL20.glUniform1f(loc(p, "uMaxDist"), Math.min(viewDist, 248f));
         GL20.glUniform1i(loc(p, "uFastLeaves"), fastLeaves ? 1 : 0);
         // Fancy graphics: Beta lays tile 38 over grass sides in the biome's grass colour (Fast leaves the plain side)
-        grassOverlay = mc.options.fancyGraphics ? (StationCompat.terrainTile(net.minecraft.block.Block.BY_ID[2], 38) & 0xFFFF) + 1 : 0;
+        // Alpha's grass side tile has its green fringe drawn in, and its tile 38 is the iron block's side, not an overlay
+        grassOverlay = 0;
         GL20.glUniform1i(loc(p, "uGrassOverlay"), grassOverlay);
         camInWater = mc.player.isSubmergedIn(net.minecraft.block.material.Material.WATER);
         maxDist = Math.min(viewDist, 248f);

@@ -1,6 +1,7 @@
 package com.alexmcclellan.betapt.gui;
 
 import com.alexmcclellan.betapt.config.PtSettings;
+import com.alexmcclellan.betapt.gui.AlphaGui;
 import com.alexmcclellan.betapt.render.PathTracer;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
@@ -24,9 +25,8 @@ public class PathTracerOptionsScreen extends Screen {
         int left = this.width / 2 - 155, right = this.width / 2 + 5, top = this.height / 6;
         this.buttons.clear();
         // whose settings these are: shared by every dimension, or this dimension's own (saved per dimension)
-        ButtonWidget dimButton = new com.alexmcclellan.betapt.gui.PtButton(19, this.width / 2 - 110, top - 24, 220, 20, dimText());
-        dimButton.active = PtSettings.inDimension() && this.minecraft.world != null;
-        this.buttons.add(dimButton);
+        // Alpha has one dimension: this row is the GUI scale instead (AlphaGui)
+        this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(19, this.width / 2 - 110, top - 24, 220, 20, AlphaGui.text()));
         this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(1, left, top, 150, 20, enabledText()));
         this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(2, right, top, 150, 20, denoiseText()));
         this.buttons.add(new PtSlider(3, left, top + 24, pt.realism, 20,
@@ -80,7 +80,7 @@ public class PathTracerOptionsScreen extends Screen {
         com.alexmcclellan.betapt.render.Quality q = com.alexmcclellan.betapt.render.Quality.of(PathTracer.INSTANCE);
         return "Quality: " + (q == null ? "Custom" : q.label);
     }
-    private String handText() { return "Hand: " + (PathTracer.INSTANCE.handMode == PathTracer.HAND_TRACED ? "Traced" : "Beta"); }
+    private String handText() { return "Hand: " + (PathTracer.INSTANCE.handMode == PathTracer.HAND_TRACED ? "Traced" : "Alpha"); }
     private String reflectText() {
         int r = PathTracer.INSTANCE.reflections;
         return "Reflect: " + (r == PathTracer.REFLECT_ALL ? "All" : r == PathTracer.REFLECT_WATER ? "Water" : "OFF");
@@ -152,9 +152,10 @@ public class PathTracerOptionsScreen extends Screen {
             case 8 -> { pt.entityShadows = !pt.entityShadows; b.message = mobText(); }
             case 20 -> this.minecraft.openScreen(new EffectsScreen(this));
             case 17 -> { pt.bounces = pt.bounces == 1 ? 2 : 1; b.message = bounceText(); }
-            case 19 -> { // this dimension's own settings on (a copy of what's showing) or off (back to the shared ones)
-                PtSettings.setOwnSettings(!PtSettings.ownSettings(), dimName());
-                this.init();
+            case 19 -> { // GUI scale: Alpha makes a new Window every frame, so it applies at once; lay this screen out again
+                AlphaGui.cycle();
+                net.minecraft.client.render.Window win = new net.minecraft.client.render.Window(this.minecraft.width, this.minecraft.height);
+                this.init(this.minecraft, win.getWidth(), win.getHeight());
             }
             case 18 -> { pt.fastLeaves = !pt.fastLeaves; b.message = leavesText(); }
             case 16 -> { pt.reflections = (pt.reflections + 2) % 3; b.message = reflectText(); } // All -> Water -> OFF
@@ -211,10 +212,6 @@ public class PathTracerOptionsScreen extends Screen {
         int titleY = this.height / 6 - 36; // above the dimension button
         if (titleY >= 2) this.drawCenteredString(this.textRenderer, "Path Tracer Settings", this.width / 2, titleY, 0xFFFFFF);
         // under the buttons: which other dimensions keep their own settings
-        java.util.List<String> others = PtSettings.otherDimensionsWithOwnSettings();
-        if (!others.isEmpty())
-            this.drawCenteredString(this.textRenderer, "Own settings also in: " + String.join(", ", others),
-                    this.width / 2, Math.min(this.height - 10, this.height / 6 + 192), 0xA0A0A0);
         if (presetButton != null) presetButton.message = presetText(); // turns to "Custom" as soon as a slider moves
         if (qualityButton != null) qualityButton.message = qualityText();
         super.render(mouseX, mouseY, delta);
