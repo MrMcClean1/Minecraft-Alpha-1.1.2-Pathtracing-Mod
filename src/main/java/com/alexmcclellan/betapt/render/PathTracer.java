@@ -240,7 +240,7 @@ public final class PathTracer {
      */
     public boolean fastLeaves = false;
     /** This frame's grass side overlay (1 + tile, 0 on Fast graphics) and whether the camera is under water (Vulkan gets them too). */
-    private int grassOverlay;
+    public int grassOverlay; // public for the Alpha test
     private boolean camInWater;
 
     /*
