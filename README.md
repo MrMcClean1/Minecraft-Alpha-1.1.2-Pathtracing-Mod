@@ -28,3 +28,19 @@ Needs Java 17 or newer in the launcher.
 Not ported yet: the benchmark and modpack tests (test/ holds stubs), the StationAPI compatibility code (unused here).
 
 Test scene: `gradle runClient -Pscene [-PsceneView=0..5]` builds a row of every block high in the air and holds the camera on it.
+
+## Quick test
+
+About 2 minutes on a real GPU (10 in the cloud on a software renderer). It makes a world "alphapt-test", builds a
+row of every block in the air, checks the path tracer is running, the Alpha fixes (no Beta grass overlay, leaves
+whatever their decay data, the GUI scale cap), the Options / Path Tracer / Effects menus at 5 window sizes and 4 GUI
+scales (no button overlapping another or off the screen) and the F2 screenshot, then compares the traced picture
+with Alpha's own from six sides, colour per grid cell (wrong textures show; shadows don't count). Report and pictures:
+`.minecraft/alphapt-test/`. The game closes when it's done.
+
+- Linux / cloud: `scripts/test.sh` (Xvfb, Gradle with Java 25).
+- Windows (tests your Vulkan path too): MultiMC, AlphaPT, Edit, Settings, Java, JVM arguments: add
+  `-Dalphapt.test=true`, start, read `.minecraft\alphapt-test\report.txt`, then take the argument out again.
+
+The instance runs with `-Xss4m`: Alpha's lighting is recursive and a big change of light near spawn can overflow
+the default 1 MB thread stack (it happened in the test's fresh worlds).

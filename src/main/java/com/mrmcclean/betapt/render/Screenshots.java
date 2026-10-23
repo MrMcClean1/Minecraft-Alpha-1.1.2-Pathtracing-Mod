@@ -21,7 +21,7 @@ public final class Screenshots {
         held = down;
     }
 
-    private static void take(net.minecraft.client.Minecraft mc) {
+    public static void take(net.minecraft.client.Minecraft mc) {
         int w = mc.width, h = mc.height;
         ByteBuffer buf = BufferUtils.createByteBuffer(w * h * 3);
         GL11.glPixelStorei(GL11.GL_PACK_ALIGNMENT, 1);

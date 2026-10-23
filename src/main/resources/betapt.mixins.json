@@ -29,6 +29,7 @@
     "GameOptionsMixin",
     "WorldRendererMixin",
     "WindowScaleMixin",
+    "ButtonWidgetAccessor",
     "TessellatorCaptureMixin",
     "TessellatorAccessor"
   ],
