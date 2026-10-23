@@ -28,6 +28,7 @@
     "ScreenAccessor",
     "GameOptionsMixin",
     "WorldRendererMixin",
+    "WindowScaleMixin",
     "TessellatorCaptureMixin",
     "TessellatorAccessor"
   ],
