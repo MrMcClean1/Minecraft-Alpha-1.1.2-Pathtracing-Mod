@@ -39,8 +39,10 @@ with Alpha's own from six sides, colour per grid cell (wrong textures show; shad
 `.minecraft/alphapt-test/`. The game closes when it's done.
 
 - Linux / cloud: `scripts/test.sh` (Xvfb, Gradle with Java 25).
-- Windows (tests your Vulkan path too): MultiMC, AlphaPT, Edit, Settings, Java, JVM arguments: add
-  `-Dalphapt.test=true`, start, read `.minecraft\alphapt-test\report.txt`, then take the argument out again.
+- Windows (tests your Vulkan path too): make an empty file `.minecraft\alphapt-test\run` in the AlphaPT instance and
+  start the game (the file is removed when the test starts, so the next launch is normal). Or add `-Dalphapt.test=true`
+  to the JVM arguments in MultiMC (edit them in MultiMC itself: it rewrites instance.cfg while it runs).
+  Read `.minecraft\alphapt-test\report.txt`.
 
 The instance runs with `-Xss4m`: Alpha's lighting is recursive and a big change of light near spawn can overflow
 the default 1 MB thread stack (it happened in the test's fresh worlds).

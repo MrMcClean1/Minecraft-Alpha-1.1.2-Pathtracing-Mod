@@ -29,6 +29,7 @@
     "GameOptionsMixin",
     "WorldRendererMixin",
     "WindowScaleMixin",
+    "ChunkSortMixin",
     "ButtonWidgetAccessor",
     "TessellatorCaptureMixin",
     "TessellatorAccessor"
