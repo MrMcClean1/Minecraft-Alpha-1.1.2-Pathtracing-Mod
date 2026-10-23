@@ -477,6 +477,8 @@ public final class StationCompat {
             byte[] b = c.blocks;
             for (int i = 0; i < 32768; i++) ids[i] = (short) (b[i] & 255);
             System.arraycopy(c.blockMetadata.data, 0, meta, 0, 16384);
+            // Alpha keeps only leaf decay in a leaf's metadata (Beta's low bits are oak, spruce, birch): every leaf is oak
+            for (int i = 0; i < 32768; i++) if (ids[i] == 18) meta[i >> 1] &= (byte) ((i & 1) == 0 ? 0xF0 : 0x0F);
             ChestLooks.mark(c, ids, meta);
             Orientations.mark(c, ids, meta);
             return;
