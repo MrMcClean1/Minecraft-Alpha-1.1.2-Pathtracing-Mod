@@ -40,6 +40,7 @@ public final class ModTest {
                 int k = n++;
                 mc.world.setBlockWithMetadata(ox + (k % 21) * 2, OY + 1, oz + (k / 21) * 3, id, 0);
             }
+            for (int k = 0; k < 4; k++) mc.world.setBlockWithMetadata(ox + 6 + k, OY + 1, oz - 1, 18, new int[]{1, 2, 3, 9}[k]); // leaves with decay metadata
             com.alexmcclellan.betapt.BetaPT.LOGGER.info("Test scene: {} blocks at {} {} {}", n, ox, OY + 1, oz);
         }
         ticks++;
@@ -47,7 +48,7 @@ public final class ModTest {
         if (view < 0) view = (ticks / 400) % 5;
         double cx = ox + 20.5, cz = oz + 3.5;
         double[][] pos = {{cx, OY + 4.5, oz - 6.0, 0, 25}, {cx, OY + 14.0, cz, 0, 89}, {cx, OY + 4.5, oz + 13.0, 180, 25},
-                {ox + 46.0, OY + 4.5, cz, 90, 25}, {ox - 4.0, OY + 4.5, cz, 270, 25}, {ox + 3.5, OY + 2.6, oz - 2.5, 20, 25}};
+                {ox + 46.0, OY + 4.5, cz, 90, 25}, {ox - 4.0, OY + 4.5, cz, 270, 25}, {ox + 3.5, OY + 2.6, oz - 2.5, 20, 25}, {ox + 7.5, OY + 2.6, oz - 4.5, 0, 25}};
         double[] p = pos[view];
         mc.player.setPositionAndAngles(p[0], p[1], p[2], (float) p[3], (float) p[4]);
         mc.player.velocityX = mc.player.velocityY = mc.player.velocityZ = 0;
