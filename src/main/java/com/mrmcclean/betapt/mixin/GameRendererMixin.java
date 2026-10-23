@@ -199,6 +199,7 @@ public class GameRendererMixin {
         AutoTest.afterHud(this.minecraft);
         com.mrmcclean.betapt.test.ModTest.afterHud(this.minecraft);
         com.mrmcclean.betapt.render.Quality.frame(this.minecraft);
+        com.mrmcclean.betapt.render.Screenshots.frame(this.minecraft);
         PathTracer.INSTANCE.endFrame();
     }
 
