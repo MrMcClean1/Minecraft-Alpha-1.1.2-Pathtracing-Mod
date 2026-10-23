@@ -20,7 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Alpha's quick test (-Dalphapt.test=true, about 2 minutes on a real GPU). It opens (or makes) the world
+ * Alpha's quick test (-Dalphapt.test=true or an empty file .minecraft/alphapt-test/run; about 2 minutes on a real GPU). It opens (or makes) the world
  * "alphapt-test", builds a row of every block high in the air, then:
  *  - checks the path tracer is running (shaders, voxel chunks, block table), the Alpha fixes (no grass overlay,
  *    leaves read as oak whatever their decay data, the GUI scale cap), the menus' layouts at several window sizes
@@ -33,7 +33,15 @@ import java.util.List;
 public final class AlphaTest {
     private AlphaTest() {}
 
-    public static final boolean ON = Boolean.getBoolean("alphapt.test");
+    /** On with -Dalphapt.test=true, or when the file .minecraft/alphapt-test/run exists (removed when the test starts). */
+    public static final boolean ON = Boolean.getBoolean("alphapt.test") || trigger();
+
+    private static boolean trigger() {
+        try {
+            File f = net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("alphapt-test").resolve("run").toFile();
+            return f.isFile() && f.delete();
+        } catch (Throwable t) { return false; }
+    }
     private static final int OY = 100;
     private static final List<String> lines = new ArrayList<>();
     private static int passed, failed;
