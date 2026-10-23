@@ -16,14 +16,15 @@ public final class ModTest {
     private static int ticks, ox, oz;
     private static final int OY = 100;
 
-    public static boolean running() { return false; }
-    public static String status() { return ""; }
+    public static boolean running() { return AlphaTest.running(); }
+    public static String status() { return AlphaTest.status(); }
     public static void onChat(String message) {}
     public static void afterTick(Minecraft mc) {}
     public static void afterWorld(Minecraft mc) {}
-    public static void afterHud(Minecraft mc) {}
+    public static void afterHud(Minecraft mc) { AlphaTest.frame(mc); }
 
     public static void onTick(Minecraft mc) {
+        AlphaTest.tick(mc);
         if (!SCENE || mc.world == null || mc.player == null) return;
         if (!built) {
             built = true;
