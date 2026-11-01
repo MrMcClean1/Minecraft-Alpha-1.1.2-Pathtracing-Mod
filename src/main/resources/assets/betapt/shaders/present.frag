@@ -9,6 +9,7 @@ uniform ivec2 uResolution;   // the path tracer's resolution (render scale)
 uniform ivec2 uOutSize;      // the window
 uniform vec2  uTan;    // tan(half fov) * aspect, tan(half fov)
 uniform vec4  uProjZ;  // projection matrix entries P22, P23, P32, P33
+uniform int   uMode;   // 0 everything; 1 only what rays hit; 2 only the sky (Distant Horizons' terrain is already there)
 out vec4 fragColor;
 
 void main() {
@@ -17,6 +18,8 @@ void main() {
     // depth comes from the path tracer's own (possibly smaller) grid of rays
     ivec2 px = min(ivec2((vec2(opx) + 0.5) * vec2(uResolution) / vec2(uOutSize)), uResolution - 1);
     float t = imageLoad(uDepth, px).r;
+    if (uMode == 1 && t < 0.0) discard;
+    if (uMode == 2 && t >= 0.0) discard;
     if (t < 0.0) { gl_FragDepth = 1.0; return; } // sky: as far as it gets
     vec2 ndc = (vec2(px) + 0.5) / vec2(uResolution) * 2.0 - 1.0;
     float zEye = -t / length(vec3(ndc * uTan, 1.0));  // distance along the ray -> distance along the view axis

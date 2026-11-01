@@ -1,4 +1,5 @@
 #version 430
+#include "version.glsl"
 // M4: path tracing. For each pixel:
 //   1. a camera ray finds the visible surface (same grid walk as M3),
 //   2. a shadow ray toward the sun (or moon) decides direct sunlight,
@@ -96,12 +97,12 @@ bool chunkLoaded(ivec3 b) {
 // True if the 4x4x4 brick around cell b (relative to uCamBlock) is all air, or not loaded.
 bool brickEmpty(ivec3 b) {
     ivec3 w = b + uCamBlock;
-    if (w.y < 0 || w.y >= 128 || !chunkLoaded(w)) return true;
+    if (w.y < 0 || w.y >= WORLD_TOP || !chunkLoaded(w)) return true;
     return texelFetch(uBricks, ivec3((w.x & (SIZE - 1)) >> 2, w.y >> 2, (w.z & (SIZE - 1)) >> 2), 0).r == 0u;
 }
 uint voxel(ivec3 b) { // b relative to uCamBlock
     ivec3 w = b + uCamBlock;
-    if (w.y < 0 || w.y >= 128 || !chunkLoaded(w)) return 0u;
+    if (w.y < 0 || w.y >= WORLD_TOP || !chunkLoaded(w)) return 0u;
     return texelFetch(uVoxels, ivec3(w.x & (SIZE - 1), w.y, w.z & (SIZE - 1)), 0).r;
 }
 // Pipes and cables (box conditions 7-12): an arm toward a neighbour it would join (the same block, a modded
@@ -122,7 +123,7 @@ vec2 orientUV(vec2 uv, uint o) {
 }
 
 vec4 atlas(uint tile, vec2 uv) {
-    ivec2 t = ivec2(int(tile & 15u), int(tile >> 4)) * uTileSize;
+    ivec2 t = ivec2(int(tile & (GRID_COLS - 1u)), int(tile >> GRID_SHIFT)) * uTileSize;
     ivec2 px = t + clamp(ivec2(floor(uv * float(uTileSize))), ivec2(0), ivec2(uTileSize - 1));
     return texelFetch(uAtlas, px, 0);
 }
@@ -205,6 +206,8 @@ vec4 skinTexel(vec4 meta, float layer, vec3 f, vec3 ln) {
     float u0 = meta.x, v0 = meta.y;
     bool mir = meta.z < 0.0;
     float vScale = abs(meta.z);
+    bool both = vScale > 8.0;                        // a texture of another width: u and v both scaled
+    if (both) vScale -= 8.0;
     int pk = int(meta.w + 0.5);
     float dx = float(pk & 255), dy = float((pk >> 8) & 255), dz = float(pk >> 16);
     float gx = mir ? 1.0 - f.x : f.x;               // mirrored parts swap left and right
@@ -217,7 +220,7 @@ vec4 skinTexel(vec4 meta, float layer, vec3 f, vec3 ln) {
     else if (ln.y > 0.0)   uv = vec2(u0 + dz + dx + gx * dx, v0 + f.z * dz);
     else if (ln.z < 0.0)   uv = vec2(u0 + dz + gx * dx,      v0 + dz + f.y * dy);
     else                   uv = vec2(u0 + 2.0 * dz + dx + (1.0 - gx) * dx, v0 + dz + f.y * dy);
-    uv.y *= vScale;
+    if (both) uv *= vScale; else uv.y *= vScale;
     ivec2 px = clamp(ivec2(floor(uv)), ivec2(0), ivec2(63, 63));
     return texelFetch(uSkins, ivec3(px, int(layer)), 0);
 }
@@ -317,7 +320,7 @@ Hit trace(vec3 o, vec3 d, float maxT, bool primary) {
     for (int i = 0; i < 768; i++) {
         float tExit = min(min(tMax.x, tMax.y), tMax.z);
         int wy = cell.y + uCamBlock.y;
-        if ((wy < 0 && stepDir.y <= 0) || (wy >= 128 && stepDir.y >= 0) || t > maxT) break;
+        if ((wy < 0 && stepDir.y <= 0) || (wy >= WORLD_TOP && stepDir.y >= 0) || t > maxT) break;
 
         // M7 empty-space skipping: a whole brick of air is crossed in one hop to where the ray leaves it.
         if (brickEmpty(cell)) {

@@ -86,14 +86,15 @@ const uint KIND_CROSS = 1u, KIND_MOB = 2u, KIND_FACE2 = 3u; // FACE2: one square
 
 const float PI = 3.14159265;
 #define BLOCKLUM_DECL layout(set = 0, binding = 16, std430) readonly buffer BlockLum { uint blockLum[]; };
+#include "version.glsl"
 #include "pt_base.glsl"
 
 const vec3 FACE_N[6] = vec3[](vec3(0, -1, 0), vec3(0, 1, 0), vec3(0, 0, -1), vec3(0, 0, 1), vec3(-1, 0, 0), vec3(1, 0, 0));
 
-int tileSize() { return textureSize(uAtlas, 0).x / 16; }
+int tileSize() { return textureSize(uAtlas, 0).x / int(GRID_COLS); }
 vec4 atlas(uint tile, vec2 uv) {
     int ts = tileSize();
-    ivec2 t = ivec2(int(tile & 15u), int(tile >> 4)) * ts;
+    ivec2 t = ivec2(int(tile & (GRID_COLS - 1u)), int(tile >> GRID_SHIFT)) * ts;
     ivec2 px = t + clamp(ivec2(floor(uv * float(ts))), ivec2(0), ivec2(ts - 1));
     return texelFetch(uAtlas, px, 0);
 }

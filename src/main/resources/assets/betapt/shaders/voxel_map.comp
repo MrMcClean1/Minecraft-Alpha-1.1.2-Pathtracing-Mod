@@ -1,4 +1,5 @@
 #version 430
+#include "version.glsl"
 // M2 debug view: a top-down map drawn purely from the GPU's copy of the world.
 // For each pixel we look straight down from the top of the world (or from just above
 // the player in cutaway mode) and colour the first block we hit. If this matches the
@@ -15,7 +16,7 @@ uniform ivec2 uResolution;
 uniform vec3 uCamPos;
 uniform vec2 uCamDirXZ;      // horizontal look direction, for the player arrow
 uniform float uBlocksPerPixel;
-uniform int uStartY;         // 127 for surface view, eye level + 1 for cutaway
+uniform int uStartY;         // WORLD_TOP - 1 for surface view, eye level + 1 for cutaway
 
 const int SIZE = 512;
 const int SLOTS = 32;
@@ -55,7 +56,7 @@ void main() {
                 continue;
             }
             if (c.a == 0.0) continue; // fully transparent texture
-            float height = float(y) / 127.0;
+            float height = float(y) / float(WORLD_TOP - 1);
             col = c.rgb * (0.55 + 0.6 * height);
             // simple relief: darker if the block to the north-west is taller
             uint nw = blockAt(bx - 1, y + 1, bz - 1) & 4095u;
