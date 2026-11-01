@@ -16,7 +16,8 @@
     ]
   },
   "mixins": [
-    "betapt.mixins.json"
+    "betapt.mixins.json",
+    "betapt.bots.mixins.json"
   ],
   "depends": {
     "minecraft": "1.0.0-alpha.1.2.1",

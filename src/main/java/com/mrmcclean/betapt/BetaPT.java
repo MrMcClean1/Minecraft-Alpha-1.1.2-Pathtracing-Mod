@@ -21,6 +21,8 @@ public class BetaPT implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
+        // the AI bots (off until /bot on in chat)
+        com.mrmcclean.betapt.bots.Bots.setup(com.mrmcclean.betapt.bots.BotEntity.class, com.mrmcclean.betapt.bots.BotEntity::new);
         version = FabricLoader.getInstance().getModContainer(MOD_ID)
                 .map(c -> c.getMetadata().getVersion().getFriendlyString())
                 .orElse("dev");
