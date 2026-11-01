@@ -47,8 +47,13 @@ public final class BotTest {
         }
         PlayerEntity p = mc.player;
         if (p == null || mc.world == null) return;
+        if (step == 1 && wait == 1 && Boolean.getBoolean("classicbots.test.notracer")) {
+            // a software-rendered test machine: the path tracer would hold the game to a tick or two a second
+            try { Object pt = Class.forName("com.alexmcclellan.betapt.render.PathTracer").getField("INSTANCE").get(null); pt.getClass().getField("enabled").setBoolean(pt, false); } catch (Throwable ignored) {}
+        }
         // no window focus under a test display: Beta pauses single player behind the game menu, and nothing would move
         if (mc.screen instanceof net.minecraft.client.gui.screen.menu.GameMenuScreen || mc.screen instanceof net.minecraft.client.gui.screen.menu.TitleScreen) mc.openScreen(null);
+        if (wait % 600 == 0) Bots.log("BOTTEST status: player@" + System.identityHashCode(p) + " step " + step + ", " + wait + " ticks in, player health " + p.health + ", screen " + (mc.screen == null ? "none" : mc.screen.getClass().getName()) + ", player has " + has(p, 17) + " logs " + has(p, 4) + " cobblestone");
         try { run(mc, p); } catch (Throwable t) { fail("step " + step + " threw " + t); }
     }
 
@@ -60,7 +65,20 @@ public final class BotTest {
                 if (bot != null && bot.owner.equals(p.name) && bot.distanceTo(p) < 5) pass("spawn: Tess is next to " + p.name);
                 else if (wait > 40) fail("spawn: no bot (" + Bots.bots(mc.world).size() + " bots)");
                 return;
-            case 3: say(p, "Tess follow me"); p.setPosition(p.x + 10, p.y + 1, p.z); next(); return;
+            case 3: {
+                say(p, "Tess follow me");
+                // 10 blocks off, on dry ground (a lake there would drown them both)
+                int[][] offs = {{10, 0}, {0, 10}, {-10, 0}, {0, -10}, {10, 10}, {-10, -10}, {10, -10}, {-10, 10}};
+                for (int[] o : offs) {
+                    int x = (int) Math.floor(p.x) + o[0], z = (int) Math.floor(p.z) + o[1], y = mc.world.getHeight(x, z);
+                    int below = mc.world.getBlock(x, y - 1, z);
+                    if (below >= 8 && below <= 11 || below == 0) continue;
+                    p.setPosition(x + 0.5, y + p.eyeHeight + 0.1, z + 0.5);
+                    break;
+                }
+                next();
+                return;
+            }
             case 4:
                 if (bot.distanceTo(p) < 5) pass("follow: caught up in " + wait + " ticks");
                 else if (wait > 400) fail("follow: still " + (int) bot.distanceTo(p) + " blocks away");
@@ -77,7 +95,7 @@ public final class BotTest {
                 return;
             case 9: bot.add(new ItemStack(5, 8, 0)); say(p, "Tess set up a base here"); next(); return;
             case 10: {
-                int[] c = bot.brain.findNear(new int[]{54}, (int) Math.floor(bot.x), (int) Math.floor(bot.y), (int) Math.floor(bot.z), 6, false);
+                int[] c = bot.brain.findNear(new int[]{54}, bot.homeX, bot.homeY, bot.homeZ, 6, false);
                 if (bot.hasHome && c != null) pass("base: home set, chest at " + c[0] + " " + c[1] + " " + c[2]);
                 else if (wait > 60) fail("base: home " + bot.hasHome + ", chest " + (c != null));
                 return;
@@ -141,8 +159,66 @@ public final class BotTest {
                 else fail("orders: " + o + " want " + (w == null ? null : w.label));
                 return;
             }
-            case 22: say(p, "Tess follow me"); say(p, "/bot list"); next(); return;
-            case 23:
+            case 22: {
+                bot.brain.mode = Brain.Mode.STAY;
+                // each part on its own: the bot starts next to you
+                bot.setPositionAndAngles(p.x + 1, p.y - p.eyeHeight + 0.1, p.z, 0, 0);
+                bot.add(new ItemStack(4, 64, 0)); bot.add(new ItemStack(5, 32, 0));
+                say(p, "Tess build a hut here");
+                testPlan = bot.brain.plan; tpx = bot.brain.planX; tpy = bot.brain.planY; tpz = bot.brain.planZ; tpf = bot.brain.planF;
+                next();
+                return;
+            }
+            case 23: {
+                if (testPlan == null) { fail("build: no plan made"); return; }
+                int ok = 0, total = 0;
+                for (int[] pb : testPlan.blocks) { if (pb[3] == 0) continue; total++; int[] w = Blueprint.place(pb, tpx, tpy, tpz, tpf); if (mc.world.getBlock(w[0], w[1], w[2]) == pb[3]) ok++; }
+                if (bot.brain.plan == null && ok * 10 >= total * 9) pass("build: hut finished, " + ok + " of " + total + " blocks in place in " + wait / 20 + " s");
+                else if (wait > 20 * 150) fail("build: " + ok + " of " + total + " blocks; bot: " + bot.brain.statusLine() + " carrying " + bot.brain.inventoryLine());
+                return;
+            }
+            case 24: {
+                bot.add(new ItemStack(290, 1, 0)); bot.add(new ItemStack(295, 12, 0));
+                // the field: beside the hut, where the bot stands
+                // open grass nearby (not a tree top, not the hut)
+                for (int r = 8; r < 120; r += 3) {
+                    int fx = (int) Math.floor(bot.x) + r, fz = (int) Math.floor(bot.z) - r / 2, top = mc.world.getHeight(fx, fz);
+                    if (mc.world.getBlock(fx, top - 1, fz) != 2 || Math.abs(top - Math.floor(bot.y)) > 2) continue;
+                    int grass = 0; // a field's worth of open grass around it, not a beach or a forest
+                    for (int gx = -4; gx <= 4; gx++) for (int gz = -4; gz <= 4; gz++) { int t2 = mc.world.getHeight(fx + gx, fz + gz); if (Math.abs(t2 - top) <= 1 && mc.world.getBlock(fx + gx, t2 - 1, fz + gz) == 2) grass++; }
+                    if (grass < 40) continue;
+                    p.setPosition(fx + 0.5, top + p.eyeHeight + 0.1, fz + 0.5);
+                    bot.setPositionAndAngles(fx + 2.5, top + 0.1, fz + 0.5, 0, 0);
+                    break;
+                }
+                say(p, "Tess farm here");
+                next();
+                return;
+            }
+            case 25: {
+                int land = bot.brain.countFarmland(), crops = bot.brain.countCrops();
+                if (land >= 20 && crops >= 8) pass("farm: " + land + " farmland, " + crops + " planted in " + wait / 20 + " s");
+                else if (wait > 20 * 150) fail("farm: " + land + " farmland, " + crops + " planted; bot: " + bot.brain.statusLine() + " carrying " + bot.brain.inventoryLine());
+                return;
+            }
+            case 26: {
+                bot.brain.hasFarm = false;
+                bot.add(new ItemStack(274, 1, 0)); bot.add(new ItemStack(50, 16, 0));
+                mineY = (int) Math.floor(bot.y);
+                oresBefore = bot.count(Want.of("ores").items);
+                say(p, "Tess go mining");
+                next();
+                return;
+            }
+            case 27: {
+                int down = mineY - (int) Math.floor(bot.y);
+                int ores = bot.count(Want.of("ores").items) - oresBefore;
+                if (down >= 6 || ores >= 2) pass("mining: dug down " + down + " blocks and mined " + ores + " ore in " + wait / 20 + " s, carrying " + bot.brain.inventoryLine());
+                else if (wait > 20 * 150) fail("mining: only " + down + " blocks down; bot: " + bot.brain.statusLine());
+                return;
+            }
+            case 28: say(p, "Tess follow me"); say(p, "/bot list"); next(); return;
+            case 29:
                 Bots.log("BOTTEST Done: " + passed + " passed, " + failed + " failed in " + (System.currentTimeMillis() - t0) / 1000 + " s (model " + Model.status + ")");
                 next();
                 if (!Boolean.getBoolean("classicbots.test.stay")) mc.stop();
@@ -150,4 +226,6 @@ public final class BotTest {
     }
 
     private static ZombieEntity zombie;
+    private static Blueprint testPlan;
+    private static int tpx, tpy, tpz, tpf, mineY, oresBefore;
 }
