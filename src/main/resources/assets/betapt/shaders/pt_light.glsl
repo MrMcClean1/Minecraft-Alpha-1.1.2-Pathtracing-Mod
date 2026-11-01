@@ -272,8 +272,8 @@ vec3 reflectedLight(vec3 p, vec3 r) {
 
 // M9 LabPBR: one texel of a PBR map, same tile and position as the colour texture
 vec4 pbrTexel(sampler2D s, uint tile, vec2 uv) {
-    int ts = max(textureSize(s, 0).x / 16, 1);
-    ivec2 t = ivec2(int(tile & 15u), int(tile >> 4)) * ts;
+    int ts = max(textureSize(s, 0).x / int(GRID_COLS), 1);
+    ivec2 t = ivec2(int(tile & (GRID_COLS - 1u)), int(tile >> GRID_SHIFT)) * ts;
     return texelFetch(s, t + clamp(ivec2(floor(uv * float(ts))), ivec2(0), ivec2(ts - 1)), 0);
 }
 // The texture's right (T) and down (B) directions on a block face, as faceUV lays textures out.
