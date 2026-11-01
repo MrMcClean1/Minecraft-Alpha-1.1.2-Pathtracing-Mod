@@ -70,8 +70,9 @@ public class BotEntity extends MobEntity {
         this.jumping = false;
         try { brain.tick(); } catch (Throwable t) { if (errors++ < 3) { StringBuilder sb = new StringBuilder(); for (StackTraceElement e : t.getStackTrace()) { if (sb.length() > 400) break; sb.append(" at ").append(e); } Bots.log("brain error for " + botName() + ": " + t + sb); } }
         if (this.isSubmergedIn(net.minecraft.block.material.Material.WATER) || this.isInLava()) this.jumping = true;
-        if (DEBUG && ticks % 40 == 0) Bots.log(String.format("debug %s at %.1f %.1f %.1f fwd %.2f yaw %.0f ground %s mode %s job %s path %s",
-                botName(), x, y, z, forwardSpeed, yaw, onGround, brain.mode, brain.job, path != null));
+        if (DEBUG && ticks % 40 == 0) Bots.log(String.format("debug %s at %.1f %.1f %.1f fwd %.2f yaw %.0f ground %s mode %s job %s path %s jobTicks %d enemy %s owner %s",
+                botName(), x, y, z, forwardSpeed, yaw, onGround, brain.mode, brain.job, path != null, brain.jobTicks, brain.enemy == null ? "-" : brain.enemy.getClass().getSimpleName() + " d" + Math.round(distanceTo(brain.enemy)),
+                Bots.player(world, owner) == null ? "-" : String.format("%.1f %.1f %.1f", Bots.player(world, owner).x, Bots.player(world, owner).y, Bots.player(world, owner).z)));
     }
     static final boolean DEBUG = Boolean.getBoolean("classicbots.debug");
 
@@ -94,7 +95,7 @@ public class BotEntity extends MobEntity {
         if (dx * dx + dz * dz < reach * reach && Math.abs(dy) < 2.5) { path = null; return true; }
         int bx = MathHelper.floor(tx), by = MathHelper.floor(ty), bz = MathHelper.floor(tz);
         if (path == null || pathAge++ > 40 || bx != pathX || by != pathY || bz != pathZ) {
-            path = world.findPath(this, bx, by, bz, 40.0F);
+            try { path = world.findPath(this, bx, by, bz, 40.0F); } catch (RuntimeException e) { path = null; } // a target past the loaded area
             pathX = bx; pathY = by; pathZ = bz; pathAge = 0;
         }
         Vec3d node = null;
@@ -200,6 +201,8 @@ public class BotEntity extends MobEntity {
         return e;
     }
 
+    private final java.util.Map<Entity, Boolean> tossed = new java.util.WeakHashMap<>();
+
     public int giveTo(PlayerEntity p, int id, int n) {
         int given = 0;
         while (given < n) {
@@ -207,11 +210,14 @@ public class BotEntity extends MobEntity {
             if (m <= 0) break;
             ItemStack s = new ItemStack(id, m, 0);
             for (ItemStack t : inv) if (t != null && t.id == id) { s = new ItemStack(id, m, t.metadata); break; }
-            if (distanceTo(p) < 3 && p.inventory.addItem(s) && s.size <= 0) { given += m; continue; }
+            // close by (handing it over, not throwing): straight into their inventory, whatever doesn't fit is thrown
+            if (distanceTo(p) < 6.5 && p.inventory.addItem(s)) { given += m; continue; } // true: all of it is in (an empty slot keeps the stack as is)
             ItemEntity e = drop(s);
             if (e != null) {
+                tossed.put(e, Boolean.TRUE);
                 double dx = p.x - x, dz = p.z - z, d = Math.max(0.1, Math.sqrt(dx * dx + dz * dz));
-                e.velocityX = dx / d * 0.3; e.velocityZ = dz / d * 0.3; e.velocityY = 0.25; e.pickUpDelay = 10;
+                double v = Math.min(0.9, d / 11.0); // lands about at their feet (air drag, ~13 ticks up and down)
+                e.velocityX = dx / d * v; e.velocityZ = dz / d * v; e.velocityY = 0.25; e.pickUpDelay = 10;
             }
             given += m;
         }
@@ -225,6 +231,7 @@ public class BotEntity extends MobEntity {
             ItemEntity e = (ItemEntity) o;
             if (e.removed || e.item == null) continue;
             if (e.pickUpDelay > 0 && e.ticks < 40 && brain.thrownByOwner(e)) continue;
+            if (tossed.containsKey(e) && e.ticks < 200) continue; // what it just threw to someone
             add(e.item);
             if (e.item.size <= 0) { e.remove(); world.playSound(this, "random.pop", 0.2F, ((random.nextFloat() - random.nextFloat()) * 0.7F + 1.0F) * 2.0F); }
         }

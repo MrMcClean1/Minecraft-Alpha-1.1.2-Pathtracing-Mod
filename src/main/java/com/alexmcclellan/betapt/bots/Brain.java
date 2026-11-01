@@ -25,7 +25,7 @@ import java.util.*;
  */
 public class Brain {
     public enum Mode { FOLLOW, STAY, GUARD, HOME }
-    public enum Job { NONE, GATHER, HUNT, DELIVER, DEPOSIT, GO_HOME, COME, EXPLORE, RECOVER }
+    public enum Job { NONE, GATHER, HUNT, DELIVER, DEPOSIT, GO_HOME, COME, EXPLORE, RECOVER, BUILD, FARM }
 
     final BotEntity b;
     public Mode mode = Mode.FOLLOW;
@@ -36,6 +36,17 @@ public class Brain {
     int[] target;          // block being mined
     float digProgress;
     int tx, ty, tz;        // job spot (explore, recover, come)
+    /** After a gather started for something else (materials for a build, wood for a hoe): go back to this. */
+    Job after = Job.NONE;
+    // building: the plan, where it goes (front-left corner, facing) and how far along it is
+    Blueprint plan;
+    int planX, planY, planZ, planF, planIndex, planShort, outTicks;
+    // farming: the middle of a 9 x 9 field, tended every half minute or so when there's work
+    boolean hasFarm;
+    int farmX, farmY, farmZ, farmCursor, farmTimer = 400, harvested, planted, farmWalk, farmLast = -1;
+    private final Set<Integer> farmSkip = new HashSet<>();
+    // mining: which way the staircase goes
+    private int mineDir = -1, mineTurns;
     MobEntity enemy;
     int enemyTicks;
     final List<Chore> chores = new ArrayList<>();
@@ -57,6 +68,10 @@ public class Brain {
         if (b.health < 14 && eatCooldown == 0) eat();
         if (job != Job.NONE) { jobTicks++; runJob(owner); return; }
         if (--choreTimer <= 0) { choreTimer = 1200; if (startChore()) return; }
+        if (hasFarm && --farmTimer <= 0) {
+            farmTimer = 600;
+            if (b.distanceTo(farmX + 0.5, farmY, farmZ + 0.5) < 64 && nextFarmWork(false) != null) { harvested = planted = 0; startJob(Job.FARM); return; }
+        }
         switch (mode) {
             case FOLLOW:
                 if (owner == null) { if (b.hasHome) goHomeQuietly(); return; }
@@ -212,13 +227,40 @@ public class Brain {
             }
             case STATUS: ack(who, text, statusLine()); return true;
             case CRAFT_TOOLS: craftTools(true); say(toolsLine()); return true;
+            case BUILD: {
+                if (from == null) return false;
+                Blueprint p = Blueprint.of(o.what, o.count);
+                if (p == null) { say("I can build " + Blueprint.names() + "."); return true; }
+                int f = MathHelper.floor(from.yaw * 4.0F / 360.0F + 0.5D) & 3;
+                int px = MathHelper.floor(from.x), py = MathHelper.floor(from.shape.minY + 0.01), pz = MathHelper.floor(from.z);
+                // centred on where they look, starting 2 blocks in front of them
+                int[] o0 = Blueprint.place(new int[]{-(p.width / 2), 0, 2, 0}, px, py, pz, f);
+                plan = p; planX = o0[0]; planY = o0[1]; planZ = o0[2]; planF = f; planIndex = 0; planShort = 0;
+                StringBuilder need = new StringBuilder();
+                for (Map.Entry<Integer, Integer> e : p.needs().entrySet()) { if (need.length() > 0) need.append(", "); need.append(e.getValue()).append(' ').append(Bots.name(e.getKey())); }
+                startJob(Job.BUILD);
+                ack(who, text, "Building a " + p.name + " in front of you. It takes " + need + "; I'll get what I'm missing.");
+                return true;
+            }
+            case FARM:
+                if (from == null) return false;
+                farmX = MathHelper.floor(from.x); farmY = MathHelper.floor(from.shape.minY + 0.01); farmZ = MathHelper.floor(from.z);
+                hasFarm = true; harvested = planted = 0; farmTimer = 600;
+                startJob(Job.FARM);
+                ack(who, text, "I'll farm the 9 by 9 around here: till it, plant seeds and harvest the wheat when it's ripe.");
+                return true;
+            case FARM_STOP:
+                hasFarm = false;
+                if (job == Job.FARM) endJob(null);
+                ack(who, text, "I'll leave the farm be.");
+                return true;
             default: return false;
         }
     }
 
-    void startJob(Job j) { job = j; jobTicks = 0; target = null; digProgress = 0; skip.clear(); }
+    void startJob(Job j) { job = j; jobTicks = 0; target = null; digProgress = 0; skip.clear(); if (j == Job.FARM) farmSkip.clear(); }
 
-    private void endJob(String report) { job = Job.NONE; target = null; b.stopMoving(); if (report != null) say(report); }
+    private void endJob(String report) { job = Job.NONE; target = null; after = Job.NONE; b.stopMoving(); if (report != null) say(report); }
 
     private void setHome(PlayerEntity from) {
         b.hasHome = true;
@@ -232,7 +274,7 @@ public class Brain {
                 int[] spot = freeSpotNear(b.homeX, b.homeY, b.homeZ);
                 if (spot != null) { b.take(54, 1); Names.world(b).setBlock(spot[0], spot[1], spot[2], 54); say("Base set. I put a chest here for our things."); return; }
             }
-            say("Base set. I'll need a chest here: give me one, or 8 planks and I'll make it.");
+            say(b.count(54) > 0 ? "Base set, but there's no flat spot for the chest right here." : "Base set. I'll need a chest here: give me one, or 8 planks and I'll make it.");
             return;
         }
         say("Base set, next to the chest.");
@@ -261,6 +303,8 @@ public class Brain {
             case HUNT: hunt(owner); break;
             case DELIVER: deliver(owner); break;
             case DEPOSIT: deposit(); break;
+            case BUILD: build(); break;
+            case FARM: farm(); break;
             default: job = Job.NONE;
         }
     }
@@ -269,17 +313,32 @@ public class Brain {
         int have = b.count(want.items);
         if (have >= wantCount || b.freeSlots() == 0) { done(have); return; }
         if (want.smeltFrom != 0 && b.count(want.smeltFrom) > 0 && smelt()) return;
+        if (jobTicks > 20 * 60 * 6 && after != Job.NONE) { Job a = after; after = Job.NONE; startJob(a); return; }
         if (jobTicks > 20 * 60 * 6) { endJob("I only found " + have + " " + want.label + ". " + (have > 0 ? "Bringing them." : "")); if (have > 0) startDeliver(); return; }
         if (target != null && !want.mine.contains(Names.world(b).getBlock(target[0], target[1], target[2]))) target = null;
         if (target == null && jobTicks % 20 == 1) {
             target = findNear(toArray(want.mine), MathHelper.floor(b.x), MathHelper.floor(b.y), MathHelper.floor(b.z), 28, true);
+            // a tree: start at the bottom of the trunk, which it can walk up to (the crown is often out of reach)
+            if (target != null && Names.world(b).getBlock(target[0], target[1], target[2]) == 17)
+                while (target[1] > 1 && Names.world(b).getBlock(target[0], target[1] - 1, target[2]) == 17 && !skip.contains(key(target[0], target[1] - 1, target[2]))) target[1]--;
             if (target == null) { // look further away
                 if (jobTicks % 400 == 1) { double a = rnd.nextDouble() * Math.PI * 2; tx = MathHelper.floor(b.x + Math.cos(a) * 40); tz = MathHelper.floor(b.z + Math.sin(a) * 40); ty = Names.world(b).getHeight(tx, tz); }
-                b.walkTo(tx + 0.5, ty, tz + 0.5, 3);
-                return;
-            }
+                exploring = true;
+            } else exploring = false;
         }
-        if (target == null) return;
+        if (target == null && want.underground && pickTier() > 0) {
+            // ores: none in sight from up here, so dig down to where they are (a staircase, then a tunnel)
+            if (staircase()) return;
+        }
+        if (target == null && want.underground && pickTier() == 0) {
+            craftTools(false);
+            if (pickTier() == 0 && b.count(17) + b.count(5) / 4 < 2) { subGoal("wood", 3); return; }
+        }
+        if (target == null) {
+            // none in sight: keep walking out to look (every tick, not just when it looks around)
+            if (exploring && b.walkTo(tx + 0.5, ty, tz + 0.5, 3)) jobTicks = jobTicks / 400 * 400; // there: pick a new way at the next look
+            return;
+        }
         Block blk = Bots.block(Names.world(b).getBlock(target[0], target[1], target[2]));
         if (blk != null && !Names.handMineable(blk) && !canHarvest(blk)) {
             craftTools(false);
@@ -310,17 +369,24 @@ public class Brain {
             craftTools(false); target = null; jobTicks = 0;
             return;
         }
+        if (after != Job.NONE) { Job a = after; after = Job.NONE; startJob(a); return; }
         startDeliver();
     }
 
-    private boolean teleportTo(PlayerEntity o) { b.setPositionAndAngles(o.x, o.y - o.eyeHeight + 0.1, o.z, b.yaw, 0); return true; }
+    private boolean teleportTo(PlayerEntity o) {
+        // never into water or lava with them (it would drown there, wake up, and be pulled back in)
+        int x = MathHelper.floor(o.x), y = MathHelper.floor(o.y - o.eyeHeight + 0.1), z = MathHelper.floor(o.z);
+        for (int dy = 0; dy <= 1; dy++) { int id = Names.world(b).getBlock(x, y + dy, z); if (id >= 8 && id <= 11) return false; }
+        b.setPositionAndAngles(o.x, o.y - o.eyeHeight + 0.1, o.z, b.yaw, 0);
+        return true;
+    }
 
     private void startDeliver() { job = Job.DELIVER; jobTicks = 0; }
 
     private void deliver(PlayerEntity owner) {
         if (deliverToHome || owner == null) { startJob(Job.DEPOSIT); return; }
         // close enough to toss it over, or walked a while: hand it over (thrown if not right next to them)
-        if (b.walkTo(owner.x, owner.y, owner.z, 2.5) || (b.distanceTo(owner) < 8 && jobTicks > 200) || (jobTicks > 1200 && owner.onGround && teleportTo(owner))) {
+        if (b.walkTo(owner.x, owner.y, owner.z, 2.5) || (b.distanceTo(owner) < 6 && jobTicks > 200) || (jobTicks > 1200 && (owner.onGround || jobTicks > 1800) && teleportTo(owner))) {
             int n = 0;
             for (int id : want.items) n += b.giveTo(owner, id, b.count(id));
             endJob(n > 0 ? "Here's " + n + " " + want.label + "." : null);
@@ -440,15 +506,26 @@ public class Brain {
         if (k != reachKey) { reachKey = k; reachTicks = 0; }
         if (d2 > 4.6 * 4.6) {
             // out of reach for 10 s (a log high in the crown with leaves all around): another one will do
-            if (++reachTicks > 200) { skip.add(k); target = null; reachTicks = 0; b.stopMoving(); return; }
+            boolean ore = want != null && want.underground;
+            if (++reachTicks > (ore ? 900 : 200)) {
+                // a tree: the whole crown is likely just as unreachable, so leave the blocks around it too
+                if (!ore) for (int dx = -2; dx <= 2; dx++) for (int dz = -2; dz <= 2; dz++) for (int dy = -8; dy <= 8; dy++) skip.add(key(t[0] + dx, t[1] + dy, t[2] + dz));
+                skip.add(k);
+                target = null; reachTicks = 0; b.stopMoving(); return;
+            }
             int[] stand = standNear(t);
+            if (stand == null && ore && tunnelToward(t)) return; // inside the rock: dig over to it
             if (stand != null) b.walkTo(stand[0] + 0.5, stand[1], stand[2] + 0.5, 0.8);
             else b.walkTo(cx, t[1], cz, 2.5);
             return;
         }
         b.stopMoving();
         b.face(cx, cy, cz);
-        if (dig(t[0], t[1], t[2])) target = null;
+        if (dig(t[0], t[1], t[2])) {
+            // still there after breaking it (another mod's block that won't come out this way): leave it
+            if (Names.world(b).getBlock(t[0], t[1], t[2]) != 0) skip.add(key(t[0], t[1], t[2]));
+            target = null;
+        }
     }
 
     /** One tick of breaking a block; true when it's broken (its drops go on the ground to be picked up). */
@@ -504,7 +581,7 @@ public class Brain {
     /** Stuck on the way somewhere: break through (feet, head, and step down toward a lower target), or pillar up. */
     private int stuckCount;
     private final Set<Long> skip = new HashSet<>();
-    private long reachKey; private int reachTicks;
+    private long reachKey; private int reachTicks; private boolean exploring;
     void progress() { stuckCount = 0; }
 
     void stuck(double gx, double gy, double gz) {
@@ -512,7 +589,7 @@ public class Brain {
         if (++stuckCount >= 3) { // the third time here without getting anywhere: give up on this way
             stuckCount = 0;
             PlayerEntity o = Bots.player(Names.world(b), b.owner);
-            if ((job == Job.NONE && mode == Mode.FOLLOW || job == Job.DELIVER) && o != null && o.onGround) { teleportTo(o); return; }
+            if ((job == Job.NONE && mode == Mode.FOLLOW || job == Job.DELIVER) && o != null && o.onGround && teleportTo(o)) return;
             if (target != null) { skip.add(key(target[0], target[1], target[2])); target = null; return; }
             if (job == Job.RECOVER || job == Job.COME) { endJob(job == Job.RECOVER ? "I can't reach my things from here." : null); return; }
         }
@@ -591,8 +668,14 @@ public class Brain {
     private int[] homeChest() { return b.hasHome ? findNear(new int[]{54}, b.homeX, b.homeY, b.homeZ, 6, false) : null; }
 
     private int[] freeSpotNear(int x, int y, int z) {
-        int[][] d = {{1, 0, 0}, {-1, 0, 0}, {0, 0, 1}, {0, 0, -1}, {1, 0, 1}, {-1, 0, -1}};
-        for (int[] o : d) if (Names.world(b).getBlock(x + o[0], y, z + o[2]) == 0 && solid(x + o[0], y - 1, z + o[2])) return new int[]{x + o[0], y, z + o[2]};
+        // next to it first, then a step up or down, then two blocks out (it may be standing in a pit it dug)
+        for (int r = 1; r <= 3; r++)
+            for (int dy : new int[]{0, 1, -1, 2, -2})
+                for (int dx = -r; dx <= r; dx++) for (int dz = -r; dz <= r; dz++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;
+                    int px = x + dx, py = y + dy, pz = z + dz;
+                    if (Names.world(b).getBlock(px, py, pz) == 0 && solid(px, py - 1, pz) && !liquidNext(px, py, pz)) return new int[]{px, py, pz};
+                }
         return null;
     }
 
@@ -773,6 +856,8 @@ public class Brain {
             case EXPLORE: s = "exploring"; break;
             case RECOVER: s = "going back for my things"; break;
             case COME: s = "coming over"; break;
+            case BUILD: s = plan == null ? "building" : "building a " + plan.name + " (" + planIndex * 100 / Math.max(1, plan.blocks.size()) + "% done)"; break;
+            case FARM: s = "tending the farm"; break;
             default: s = mode == Mode.FOLLOW ? "following you" : mode == Mode.STAY ? "waiting here" : mode == Mode.GUARD ? "on guard" : "keeping house";
         }
         return "I'm " + s + ", health " + b.health + "/20" + (chores.isEmpty() ? "" : ", " + chores.size() + " chore" + (chores.size() > 1 ? "s" : "")) + ".";
@@ -804,6 +889,257 @@ public class Brain {
         return "Back from exploring" + (found.isEmpty() ? ", nothing special nearby." : ". Spotted: " + String.join(", ", found.keySet()) + ".");
     }
 
+    // ------------------------------------------------------------------ building
+
+    /** Blocks it may build into: air, water, and plants or snow in the way. */
+    private boolean replaceable(int id) { return id == 0 || (id >= 8 && id <= 11) || id == 31 || id == 32 || id == 37 || id == 38 || id == 78 || id == 6; }
+
+    private int planLeft(int id) {
+        int n = 0;
+        for (int i = planIndex; i < plan.blocks.size(); i++) if (plan.blocks.get(i)[3] == id) n++;
+        return n;
+    }
+
+    private void build() {
+        if (plan == null) { endJob(null); return; }
+        // past what's already right (an earlier visit, or the ground was already clear there)
+        while (planIndex < plan.blocks.size()) {
+            int[] pb = plan.blocks.get(planIndex);
+            int[] w = Blueprint.place(pb, planX, planY, planZ, planF);
+            int id = Names.world(b).getBlock(w[0], w[1], w[2]);
+            if (pb[3] == 0 ? replaceable(id) || !mayBreak(w[0], w[1], w[2], id) : id == pb[3]) planIndex++;
+            else break;
+        }
+        if (planIndex >= plan.blocks.size()) { String n = plan.name; plan = null; endJob("Finished the " + n + "."); return; }
+        int[] pb = plan.blocks.get(planIndex);
+        int[] w = Blueprint.place(pb, planX, planY, planZ, planF);
+        int id = pb[3];
+        // materials: planks from its logs (keeping the logs the plan itself needs), else go and get some
+        if (id != 0 && b.count(id) == 0) {
+            if (id == Blueprint.PLANKS && b.count(17) > planLeft(Blueprint.LOG)) { craft(5, 4, new int[]{17, 1}); return; }
+            if (++planShort > 4) { String n = plan.name; int pct = planIndex * 100 / plan.blocks.size(); plan = null; endJob("I keep coming back without enough " + Bots.name(id) + ". The " + n + " is " + pct + "% done; say it again and I'll carry on."); return; }
+            int need = Math.min(planLeft(id), 192);
+            String what = id == Blueprint.STONE ? "cobblestone" : "wood";
+            int n = id == Blueprint.PLANKS ? (need + 3) / 4 + planLeft(Blueprint.LOG) : need;
+            want = Want.of(what); wantCount = b.count(want.items) + n; deliverToHome = false;
+            Job keep = Job.BUILD;
+            startJob(Job.GATHER); after = keep;
+            say("Getting " + n + " " + want.label + " for the " + plan.name + ".");
+            return;
+        }
+        double cx = w[0] + 0.5, cy = w[1] + 0.5, cz = w[2] + 0.5;
+        int fx = MathHelper.floor(b.x), fy = MathHelper.floor(b.shape.minY + 0.01), fz = MathHelper.floor(b.z);
+        int[] c0 = Blueprint.place(new int[]{0, 0, 0, 0}, planX, planY, planZ, planF), c1 = Blueprint.place(new int[]{plan.width - 1, 0, plan.depth - 1, 0}, planX, planY, planZ, planF);
+        boolean inside = fx >= Math.min(c0[0], c1[0]) && fx <= Math.max(c0[0], c1[0]) && fz >= Math.min(c0[2], c1[2]) && fz <= Math.max(c0[2], c1[2]);
+        if (id != 0 && (pb[1] >= 2 && inside && plan.width <= 7 || w[0] == fx && w[2] == fz && (w[1] == fy || w[1] == fy + 1))) {
+            // in the way, or about to roof itself in: out of the front, where whoever asked was standing
+            int[] out = Blueprint.place(new int[]{plan.width / 2, 0, -3, 0}, planX, planY, planZ, planF);
+            boolean onSpot = w[0] == fx && w[2] == fz;
+            if ((inside || onSpot) && ++outTicks < 200) {
+                if (b.walkTo(out[0] + 0.5, out[1], out[2] + 0.5, 1.5)) outTicks = 0;
+                return;
+            }
+            if (onSpot) { outTicks = 0; plan.blocks.add(plan.blocks.remove(planIndex)); return; } // can't get off it: that block later
+        }
+        double h = Math.sqrt((cx - b.x) * (cx - b.x) + (cz - b.z) * (cz - b.z)), up = cy - b.shape.minY;
+        // reach: 6 blocks out, and up to 9 above its feet (a builder's reach, generous next to a player's 4.5, so a hut goes up from one spot outside)
+        if (h > 6.5 || up > 9.5 || up < -3) {
+            // walk to a spot it can stand on near that block (the block's own column is often wall below it)
+            int[] st = standFor(w[0], w[2]);
+            if (st != null) b.walkTo(st[0] + 0.5, st[1], st[2] + 0.5, 0.6);
+            else b.walkTo(cx, Math.min(b.y, w[1]), cz, 3.0);
+            if (++farReach > 600) { farReach = 0; plan.blocks.add(plan.blocks.remove(planIndex)); } // can't get near it: later
+            return;
+        }
+        farReach = 0;
+        b.stopMoving();
+        b.face(cx, cy, cz);
+        if (b.ticks % 3 != 0) return; // about 7 blocks a second
+        int there = Names.world(b).getBlock(w[0], w[1], w[2]);
+        if (id == 0 || !replaceable(there)) {
+            // clear the spot first (natural blocks only: it never breaks what someone built)
+            if (!mayBreak(w[0], w[1], w[2], there)) { planIndex++; return; }
+            boolean broke = false;
+            for (int i = 0; i < 6 && !(broke = dig(w[0], w[1], w[2])); i++) { }
+            if (broke && !replaceable(Names.world(b).getBlock(w[0], w[1], w[2]))) planIndex++; // it won't come out: build around it
+            return;
+        }
+        Names.world(b).setBlock(w[0], w[1], w[2], id);
+        b.take(id, 1);
+        b.swing();
+        planIndex++; planShort = 0;
+    }
+
+    private int farReach;
+
+    /** The nearest place to stand (air for feet and head, something under) within 3 blocks of a column, around the plan's ground level. */
+    private int[] standFor(int x, int z) {
+        int[] best = null; double bd = 1e9;
+        for (int dx = -3; dx <= 3; dx++) for (int dz = -3; dz <= 3; dz++) {
+            if (dx == 0 && dz == 0) continue;
+            for (int y = planY - 2; y <= planY + 2; y++) {
+                int px = x + dx, pz = z + dz;
+                if (!air(px, y, pz) || !air(px, y + 1, pz) || !solid(px, y - 1, pz)) continue;
+                double d = (px + 0.5 - b.x) * (px + 0.5 - b.x) + (pz + 0.5 - b.z) * (pz + 0.5 - b.z) + (dx * dx + dz * dz) * 4;
+                if (d < bd) { bd = d; best = new int[]{px, y, pz}; }
+            }
+        }
+        return best;
+    }
+
+    // ------------------------------------------------------------------ farming
+
+    private boolean hasHoe() { for (ItemStack s : b.inv) if (s != null && s.id >= 290 && s.id <= 294) return true; return false; }
+
+    /** The soil block of a farm column: grass, dirt or farmland near the farm's level, with room above. */
+    private int soilY(int x, int z) {
+        for (int y = farmY + 1; y >= farmY - 3; y--) {
+            int id = Names.world(b).getBlock(x, y, z);
+            if (id == 2 || id == 3 || id == 60) {
+                // open to the sky (no roof over it: inside a hut isn't the field)
+                for (int yy = y + 2; yy <= y + 6; yy++) { int a = Names.world(b).getBlock(x, yy, z); if (a != 0 && !replaceable(a) && a != 18) return Integer.MIN_VALUE; }
+                return y;
+            }
+            if (id != 0 && !replaceable(id) && id != 59) return Integer.MIN_VALUE; // rock or something built
+        }
+        return Integer.MIN_VALUE;
+    }
+
+    /** The next thing to do on the farm: {x, y, z, what} (1 clear a plant, 2 till, 3 plant, 4 harvest), or null. */
+    private int[] nextFarmWork(boolean move) {
+        for (int k = 0; k < 81; k++) {
+            int i = (farmCursor + k) % 81, x = farmX - 4 + i % 9, z = farmZ - 4 + i / 9;
+            if (farmSkip.contains(i)) continue;
+            int y = soilY(x, z);
+            if (y == Integer.MIN_VALUE) continue;
+            int soil = Names.world(b).getBlock(x, y, z), above = Names.world(b).getBlock(x, y + 1, z);
+            int what = 0;
+            if (above == 59) { if (Names.world(b).getBlockMetadata(x, y + 1, z) >= 7) what = 4; }
+            else if (above == 31 || above == 32 || above == 37 || above == 38 || above == 78) what = 1;
+            else if (above != 0) continue;
+            else if (soil == 2 || soil == 3) what = 2;
+            else if (soil == 60 && b.count(295) > 0) what = 3;
+            if (what == 0) continue;
+            if (move) farmCursor = i;
+            return new int[]{x, y, z, what};
+        }
+        return null;
+    }
+
+    private void farm() {
+        if (!hasFarm) { endJob(null); return; }
+        if (!hasHoe()) {
+            craftTools(false);
+            if (b.count(280) >= 2 && !craft(291, 1, new int[]{4, 2, 280, 2})) craft(290, 1, new int[]{5, 2, 280, 2});
+            if (!hasHoe()) {
+                if (b.count(17) + b.count(5) / 4 >= 2) return; // crafting next tick
+                want = Want.of("wood"); wantCount = b.count(want.items) + 3; deliverToHome = false;
+                startJob(Job.GATHER); after = Job.FARM;
+                say("Getting some wood for a hoe.");
+                return;
+            }
+        }
+        int[] w = nextFarmWork(true);
+        if (w == null || jobTicks > 20 * 60 * 4) {
+            String r = harvested > 0 ? "Harvested " + harvested + " wheat" + (planted > 0 ? " and replanted." : ".") : planted > 0 ? "Planted " + planted + " seeds." : null;
+            if (b.count(295) == 0 && w == null && harvested == 0 && planted == 0 && countFarmland() > 0 && countCrops() == 0) r = "The field is tilled, but I have no seeds. Tilling grass turns some up; give me some if you have them.";
+            endJob(r);
+            if (b.hasHome && b.count(296) >= 16) startJob(Job.DEPOSIT);
+            return;
+        }
+        double cx = w[0] + 0.5, cz = w[2] + 0.5;
+        if (BotEntity.DEBUG && b.ticks % 40 == 0) Bots.log("debug farm " + w[0] + " " + w[1] + " " + w[2] + " do " + w[3] + " farm at " + farmX + " " + farmY + " " + farmZ + " seeds " + b.count(295));
+        if (farmCursor != farmLast) { farmLast = farmCursor; farmWalk = 0; }
+        if (Math.sqrt((cx - b.x) * (cx - b.x) + (cz - b.z) * (cz - b.z)) > 3.5 || Math.abs(w[1] + 1 - b.shape.minY) > 3) {
+            if (++farmWalk > 300) { farmSkip.add(farmCursor); return; } // can't get there (fenced off, up a cliff): leave that square
+            b.walkTo(cx, w[1] + 1, cz, 2.0);
+            return;
+        }
+        b.stopMoving();
+        b.face(cx, w[1] + 1, cz);
+        if (b.ticks % 4 != 0) return;
+        b.swing();
+        switch (w[3]) {
+            case 1: Names.world(b).setBlock(w[0], w[1] + 1, w[2], 0); if (rnd.nextInt(8) == 0) b.add(new ItemStack(295, 1, 0)); break;
+            case 2: Names.world(b).setBlock(w[0], w[1], w[2], 60); if (rnd.nextInt(6) == 0) b.add(new ItemStack(295, 1, 0)); break; // tilled grass turns up seeds now and then
+            case 3: Names.world(b).setBlock(w[0], w[1] + 1, w[2], 59); b.take(295, 1); planted++; break;
+            case 4:
+                Names.world(b).setBlock(w[0], w[1] + 1, w[2], 0);
+                b.add(new ItemStack(296, 1, 0)); b.add(new ItemStack(295, 1 + rnd.nextInt(3), 0)); harvested++;
+                break;
+        }
+    }
+
+    int countFarmland() { int n = 0; for (int i = 0; i < 81; i++) { int x = farmX - 4 + i % 9, z = farmZ - 4 + i / 9, y = soilY(x, z); if (y != Integer.MIN_VALUE && Names.world(b).getBlock(x, y, z) == 60) n++; } return n; }
+    int countCrops() { int n = 0; for (int i = 0; i < 81; i++) { int x = farmX - 4 + i % 9, z = farmZ - 4 + i / 9, y = soilY(x, z); if (y != Integer.MIN_VALUE && Names.world(b).getBlock(x, y + 1, z) == 59) n++; } return n; }
+
+    // ------------------------------------------------------------------ mining down
+
+    private int pickTier() { int t = 0; for (ItemStack s : b.inv) if (s != null && toolKind(s) == 0) t = Math.max(t, toolTier(s)); return t; }
+
+    /**
+     * Down to where the ores are: a staircase (one down for each one forward) to y 12, then a straight tunnel.
+     * It turns away from water, lava, drops and anything it may not break. False if boxed in on all sides.
+     */
+    private boolean staircase() {
+        int x = MathHelper.floor(b.x), y = MathHelper.floor(b.shape.minY + 0.01), z = MathHelper.floor(b.z);
+        if (mineDir < 0) mineDir = MathHelper.floor(b.yaw * 4.0F / 360.0F + 0.5D) & 3;
+        int dx = mineDir == 1 ? -1 : mineDir == 3 ? 1 : 0, dz = mineDir == 0 ? 1 : mineDir == 2 ? -1 : 0;
+        int fx = x + dx, fz = z + dz, fy = y > 12 ? y - 1 : y;
+        int floor = Names.world(b).getBlock(fx, fy - 1, fz);
+        boolean bad = floor == 0 || (floor >= 8 && floor <= 11);
+        for (int yy = fy; yy <= y + 1 && !bad; yy++) {
+            int id = Names.world(b).getBlock(fx, yy, fz);
+            if ((id >= 8 && id <= 11) || liquidNext(fx, yy, fz) || (id != 0 && !mayBreak(fx, yy, fz, id))) bad = true;
+            int over = Names.world(b).getBlock(fx, yy + 1, fz);
+            if (id != 0 && (over == 12 || over == 13)) bad = true; // sand or gravel would come down on it
+        }
+        if (bad) {
+            mineDir = (mineDir + 1) & 3;
+            if (++mineTurns > 4) { mineTurns = 0; return false; }
+            return true;
+        }
+        mineTurns = 0;
+        for (int yy = y + 1; yy >= fy; yy--) {
+            int id = Names.world(b).getBlock(fx, yy, fz);
+            if (id != 0 && Bots.block(id) != null && Bots.block(id).material.blocksMovement()) {
+                b.stopMoving();
+                b.face(fx + 0.5, yy + 0.5, fz + 0.5);
+                dig(fx, yy, fz);
+                return true;
+            }
+        }
+        b.walkTo(fx + 0.5, fy, fz + 0.5, 0.35);
+        return true;
+    }
+
+    /** Dig a way through the rock to a block it can't stand next to (an ore inside the stone). */
+    private int tunnelX, tunnelZ, tunnelStill;
+    private boolean tunnelToward(int[] t) {
+        int x = MathHelper.floor(b.x), y = MathHelper.floor(b.shape.minY + 0.01), z = MathHelper.floor(b.z);
+        if (x == tunnelX && z == tunnelZ) { if (++tunnelStill > 160) { tunnelStill = 0; return false; } } else { tunnelX = x; tunnelZ = z; tunnelStill = 0; }
+        int ddx = t[0] - x, ddy = t[1] - y, ddz = t[2] - z;
+        int sx = 0, sz = 0;
+        if (Math.abs(ddx) >= Math.abs(ddz) && ddx != 0) sx = Integer.signum(ddx); else if (ddz != 0) sz = Integer.signum(ddz);
+        if (sx == 0 && sz == 0) return false; // right above or below: mineAt's reach covers it, or stuck() digs down
+        int fy = ddy < -1 ? y - 1 : ddy > 1 ? y + 1 : y;
+        for (int yy = Math.max(y + 1, fy + 1); yy >= Math.min(y, fy); yy--) {
+            int id = Names.world(b).getBlock(x + sx, yy, z + sz);
+            if (id == 0 || Bots.block(id) == null || !Bots.block(id).material.blocksMovement()) continue;
+            if ((id >= 8 && id <= 11) || liquidNext(x + sx, yy, z + sz) || !mayBreak(x + sx, yy, z + sz, id)) return false;
+            int over = Names.world(b).getBlock(x + sx, yy + 1, z + sz);
+            if (over == 12 || over == 13) return false; // sand or gravel would come down on it
+            if (x + sx == t[0] && yy == t[1] && z + sz == t[2]) return false; // that's the ore itself: mineAt digs it
+            b.stopMoving();
+            b.face(x + sx + 0.5, yy + 0.5, z + sz + 0.5);
+            dig(x + sx, yy, z + sz);
+            return true;
+        }
+        if (fy > y && Names.world(b).getBlock(x, y + 2, z) != 0) { dig(x, y + 2, z); return true; } // room to step up
+        b.walkTo(x + sx + 0.5, fy, z + sz + 0.5, 0.35);
+        return true;
+    }
+
     // ------------------------------------------------------------------ saving
 
     void write(NbtCompound n) {
@@ -811,6 +1147,8 @@ public class Brain {
         NbtList l = new NbtList();
         for (Chore c : chores) { NbtCompound t = new NbtCompound(); t.putString("What", c.what); t.putInt("Count", c.count); l.addElement(t); }
         n.put("Chores", l);
+        n.putBoolean("HasFarm", hasFarm);
+        if (hasFarm) { n.putInt("FarmX", farmX); n.putInt("FarmY", farmY); n.putInt("FarmZ", farmZ); }
     }
 
     void read(NbtCompound n) {
@@ -818,6 +1156,8 @@ public class Brain {
         chores.clear();
         NbtList l = n.getList("Chores");
         for (int i = 0; l != null && i < l.size(); i++) { NbtCompound t = (NbtCompound) l.get(i); chores.add(new Chore(t.getString("What"), t.getInt("Count"))); }
+        hasFarm = n.getBoolean("HasFarm");
+        if (hasFarm) { farmX = n.getInt("FarmX"); farmY = n.getInt("FarmY"); farmZ = n.getInt("FarmZ"); }
     }
 
     private static long key(int x, int y, int z) { return ((long) x & 0x3FFFFFF) << 38 | ((long) y & 0xFFF) << 26 | ((long) z & 0x3FFFFFF); }

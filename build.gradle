@@ -72,4 +72,4 @@ java {
 	targetCompatibility = JavaVersion.VERSION_17
 }
 tasks.withType(JavaCompile).configureEach { options.compilerArgs += ['-Xmaxerrs', '2000'] }
-loom { runs { client { vmArg '-Xss4m'; if (project.hasProperty('alphatest')) vmArg '-Dalphapt.test=true'; if (project.hasProperty('bots')) { vmArg '-Dclassicbots.test=true'; vmArg '-Dclassicbots.debug=true' }; if (project.hasProperty('scene')) { vmArg '-Dalphapt.scene=true'; if (project.hasProperty('sceneView')) vmArg "-Dalphapt.sceneView=${project.property('sceneView')}" } } } }
+loom { runs { client { vmArg '-Xss4m'; if (project.hasProperty('alphatest')) vmArg '-Dalphapt.test=true'; if (project.hasProperty('bots')) { vmArg '-Dclassicbots.test=true'; vmArg '-Dclassicbots.debug=true'; vmArg '-Dclassicbots.test.notracer=true' }; if (project.hasProperty('scene')) { vmArg '-Dalphapt.scene=true'; if (project.hasProperty('sceneView')) vmArg "-Dalphapt.sceneView=${project.property('sceneView')}" } } } }
