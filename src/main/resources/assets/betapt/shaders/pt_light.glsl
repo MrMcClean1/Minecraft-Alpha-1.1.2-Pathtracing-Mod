@@ -558,7 +558,9 @@ void main() {
         float vis = 0.0;
         for (int i = 0; i < godN; i++) if ((fxHits & (1u << uint(iGod + i))) == 0u) vis += 1.0 - uCloudShadow * cloudCover(uCamFrac + d * (godEnd * (float(i) + jit) / float(godN)), uSunDir);
         vec3 rays = godRays(d, godEnd, vis / float(godN));
-        if (h.hit) light += rays / max(albedo, vec3(0.05));
+        // Haze in front of the surface. Dividing by a dark surface colour (0.05) blew the noisy shafts up 20x; the
+        // denoiser clamped them and the long rays near the horizon came out as a dark band. 0.35 caps that at 3x.
+        if (h.hit) light += rays / max(albedo, vec3(0.35));
         else skyFog.rgb += rays * 0.35;
     }
 
