@@ -8,7 +8,7 @@ import java.util.regex.Pattern;
 public final class Orders {
     private Orders() {}
 
-    public enum Kind { FOLLOW, STAY, COME, GUARD, GATHER, HOME_SET, HOME_GO, CHORE, CHORES_CLEAR, GIVE, GIVE_ALL, INVENTORY, DEPOSIT, EXPLORE, STATUS, HUNT, CRAFT_TOOLS, NONE }
+    public enum Kind { FOLLOW, STAY, COME, GUARD, GATHER, HOME_SET, HOME_GO, CHORE, CHORES_CLEAR, GIVE, GIVE_ALL, INVENTORY, DEPOSIT, EXPLORE, STATUS, HUNT, CRAFT_TOOLS, BUILD, FARM, FARM_STOP, NONE }
 
     public static final class Order {
         public final Kind kind; public final String what; public final int count;
@@ -27,6 +27,15 @@ public final class Orders {
             return new Order(Kind.CHORE, w, n > 0 ? n : 32);
         }
         if (has(t, "stop chores", "forget chores", "no more chores", "clear chores", "stop stocking")) return new Order(Kind.CHORES_CLEAR, null, 0);
+        if (has(t, "build", "construct", "put up", "make a", "make us", "make me")) {
+            for (String plan : new String[]{"castle", "fort", "tower", "wall", "house", "cabin", "hut", "shelter"})
+                if (t.contains(" " + plan)) return new Order(Kind.BUILD, plan, n);
+            if (has(t, "build", "construct")) return new Order(Kind.BUILD, "?", n);
+        }
+        if (has(t, "stop farming", "forget the farm", "no more farming", "leave the farm")) return new Order(Kind.FARM_STOP, null, 0);
+        if (has(t, "farm", "plant wheat", "plant crops", "plant seeds", "grow wheat", "grow food", "harvest", "tend the", "till")) return new Order(Kind.FARM, null, 0);
+        if (has(t, "go mining", "strip mine", "dig for ore", "dig for ores", "mine for ore", "mine for ores", "find ore", "find ores", "get ores", "mine some ore", "mine ores", "mine ore"))
+            return new Order(Kind.GATHER, "ores", n > 0 ? n : 16);
         if (has(t, "set up a base", "make a base", "base here", "set home", "home here", "this is home", "live here", "make camp")) return new Order(Kind.HOME_SET, null, 0);
         if (has(t, "go home", "back to base", "return home", "go to base")) return new Order(Kind.HOME_GO, null, 0);
         if (has(t, "follow", "come with me", "with me", "lets go", "let s go")) return new Order(Kind.FOLLOW, null, 0);
