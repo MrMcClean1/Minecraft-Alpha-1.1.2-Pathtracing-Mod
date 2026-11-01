@@ -43,7 +43,7 @@ public class BotEntity extends MobEntity {
         this.walkSpeed = 0.7F;
         this.health = 20;
         this.setSize(0.6F, 1.8F);
-        this.eyeHeight = 1.62F;
+        // no eyeHeight here: in Alpha that field lifts y above the feet (players only), and a mob drawn at y floated 1.62 up
         this.stepHeight = 0.5F;
     }
 
