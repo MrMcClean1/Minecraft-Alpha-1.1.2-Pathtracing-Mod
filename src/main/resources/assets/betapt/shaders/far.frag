@@ -3,7 +3,7 @@
 // of the tracer's range out to ~1000 blocks. Heights are blended between cells, so cliffs come out as slopes, not
 // steps; land is lit by the sun with shadows from the land around it; water reflects the sky; all fades into fog.
 layout(r32f, binding = 0) uniform readonly image2D uDepth;   // the tracer's ray distance, < 0 for sky
-uniform sampler2D uMap;      // 2048 x 2048, wraps: rgb top block colour, a: height (low 7 bits) + water (bit 7); 0 unknown
+uniform sampler2D uMap;      // uMapN x uMapN, wraps: rgb top block colour, a: height (low 7 bits) + water (bit 7); 0 unknown
 uniform ivec2 uResolution;   // the tracer's resolution
 uniform ivec2 uOutSize;      // the window
 uniform vec2  uTan;          // tan(half fov) * aspect, tan(half fov)
@@ -13,11 +13,11 @@ uniform float uNear, uFar, uWorldTop;
 uniform vec3  uSun;          // towards the sun (or the moon at night)
 uniform vec3  uFog;          // the fog / horizon colour
 uniform float uDaylight;     // 0 night .. 1 day
+uniform int   uMapN;         // the map's size (a power of two: 1024, 2048 or 4096)
+uniform int   uShadows, uWater;
 out vec4 fragColor;
 
-const int MAPN = 2048;
-
-vec4 cellAt(ivec2 c) { return texelFetch(uMap, c & (MAPN - 1), 0); }
+vec4 cellAt(ivec2 c) { return texelFetch(uMap, c & (uMapN - 1), 0); }
 int code(vec4 t) { return int(t.a * 255.0 + 0.5); }
 
 // height of the land at a point: the four nearest cells blended (unknown cells take their known neighbours' mean)
@@ -46,7 +46,7 @@ void main() {
     if (dir.y > 0.3) discard;                       // well above the horizon: nothing out there is that high
     float t = uNear, prevT = t;
     bool hit = false;
-    for (int i = 0; i < 480 && t < uFar; i++) {
+    for (int i = 0; i < 900 && t < uFar; i++) {
         vec3 p = uCam + dir * t;
         if (p.y > uWorldTop && dir.y >= 0.0) break;
         if (below(p)) { hit = true; break; }
@@ -73,7 +73,7 @@ void main() {
     vec3 L = normalize(uSun);
     // sun shadow: a few growing steps towards the sun over the land
     float lit = 1.0;
-    if (L.y > 0.02) {
+    if (uShadows != 0 && L.y > 0.02) {
         vec3 q = p + n * 0.6;
         float s = 1.5;
         for (int i = 0; i < 20; i++) {
@@ -86,7 +86,7 @@ void main() {
     float sunLight = max(dot(n, L), 0.0) * uDaylight * lit;
     float sky = 0.25 + 0.15 * uDaylight * (0.6 + 0.4 * n.y);
     vec3 col = albedo * (sky + 0.85 * sunLight);
-    if (water) {
+    if (water && uWater != 0) {
         float fres = 0.04 + 0.96 * pow(1.0 - max(-dir.y, 0.0), 5.0);
         vec3 skyCol = pow(uFog, vec3(2.2));
         col = mix(col, skyCol, fres * 0.8);
