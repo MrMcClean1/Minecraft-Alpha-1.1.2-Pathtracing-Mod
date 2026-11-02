@@ -54,7 +54,7 @@ public class EffectsScreen extends Screen {
             case 8 -> "Nights: " + (pt.darkNights ? "Dark (Beta)" : "Bright");
             case 9 -> "Hand collision: " + onOff(pt.handCollide);
             case 10 -> "Particles, rain: " + (pt.particleLight ? "Traced light" : "Beta");
-            case 11 -> "Far terrain: " + onOff(com.alexmcclellan.betapt.render.FarTerrain.enabled);
+            case 11 -> "Far terrain: " + onOff(com.alexmcclellan.betapt.render.FarTerrain.enabled) + "...";
             default -> "";
         };
     }
@@ -71,7 +71,7 @@ public class EffectsScreen extends Screen {
             "Dark dims the picture at night, as Beta's nights are.",
             "OFF: walls you stand at don't hide the traced hand (Beta).",
             "Traced light: smoke, bits and rain lit by the path tracer.",
-            "Land out to ~1000 blocks: visited, saved, and made ahead from the seed.",
+            "Land past the tracer's range: distance, shadows, water...",
     };
     private int hovered;
 
@@ -88,7 +88,7 @@ public class EffectsScreen extends Screen {
             case 8 -> pt.darkNights = !pt.darkNights;
             case 9 -> pt.handCollide = !pt.handCollide;
             case 10 -> pt.particleLight = !pt.particleLight;
-            case 11 -> com.alexmcclellan.betapt.render.FarTerrain.setEnabled(!com.alexmcclellan.betapt.render.FarTerrain.enabled);
+            case 11 -> { this.minecraft.openScreen(new FarScreen(this)); return; }
             case 7 -> { // Off -> Quick -> Full -> Multiplayer (if a server is known) -> Benchmark -> Off
                 var all = com.alexmcclellan.betapt.config.BetaPTConfig.TestMode.values();
                 var next = all[(com.alexmcclellan.betapt.config.BetaPTConfig.testMode().ordinal() + 1) % all.length];
@@ -116,7 +116,7 @@ public class EffectsScreen extends Screen {
             if (w.id >= 1 && w.id <= 11 && mouseX >= w.x && mouseY >= w.y && mouseX < w.x + bw && mouseY < w.y + 20) hovered = w.id;
         }
         String help = hovered > 0 ? HELP[hovered] : "Presets set these too. Done on the main page saves.";
-        this.drawCenteredString(this.textRenderer, help, this.width / 2, Math.min(this.height - 10, top + 168), 0xA0A0A0); // under Done
+        this.drawCenteredString(this.textRenderer, help, this.width / 2, Math.min(this.height - 10, top + 194), 0xA0A0A0); // under Done
         super.render(mouseX, mouseY, delta);
     }
 }
