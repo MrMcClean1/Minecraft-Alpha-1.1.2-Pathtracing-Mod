@@ -33,9 +33,18 @@ public final class FarTerrain {
     private FarTerrain() {}
 
     /** The map: N x N cells of one block, kept as a ring (a chunk's cells always sit at (x & N-1, z & N-1)). */
-    static final int N = 2048, CH = N / 16, HALF = CH / 2, RANGE = 1000;
+    static volatile int N = 2048, CH = N / 16, HALF = CH / 2, RANGE = 1000;
 
-    public static boolean enabled, generate = true;
+    /** The map's size for a distance setting: 500 -> 1024 cells, 1000 -> 2048, 2000 -> 4096. */
+    private static void size(int dist) {
+        int n = dist <= 500 ? 1024 : dist <= 1000 ? 2048 : 4096;
+        N = n; CH = n / 16; HALF = CH / 2; RANGE = n / 2 - 24;
+    }
+
+    public static boolean enabled, generate = true, shadows = true, water = true;
+    /** Blocks out from the player: 500, 1000 or 2000. */
+    public static int distance = 1000;
+    private static volatile boolean resize;
     public static Long serverSeed;
     static { load(); }
 
@@ -52,7 +61,11 @@ public final class FarTerrain {
 
     private static volatile String key;            // the world's name in the cache
     private static volatile File saveDir;          // single player: where its chunks are saved
-    private static volatile java.util.function.Supplier<Gen> genFactory;
+    private static volatile GenSource genFactory;
+
+    /** Makes this version's generator for a seed (on the far terrain thread). */
+    public interface GenFactory { Gen make(long seed) throws Exception; }
+    private interface GenSource { Gen get() throws Exception; }
     private static volatile Gen gen;               // the worker's generator (null: none, or it failed)
     private static volatile int centerX, centerZ;  // the player's chunk
     private static volatile boolean live;          // overworld and on: loaded chunks are noted
@@ -74,23 +87,36 @@ public final class FarTerrain {
         Properties p = props();
         enabled = Boolean.parseBoolean(p.getProperty("enabled", "false"));
         generate = Boolean.parseBoolean(p.getProperty("generate", "true"));
+        shadows = Boolean.parseBoolean(p.getProperty("shadows", "true"));
+        water = Boolean.parseBoolean(p.getProperty("water", "true"));
+        try { distance = Integer.parseInt(p.getProperty("distance", "1000").trim()); } catch (NumberFormatException e) { distance = 1000; }
+        distance = distance <= 500 ? 500 : distance <= 1000 ? 1000 : 2000;
+        size(distance);
         String s = p.getProperty("serverSeed", "").trim();
         try { serverSeed = s.isEmpty() ? null : Long.parseLong(s); } catch (NumberFormatException e) { serverSeed = (long) s.hashCode(); } // a text seed, as the game takes it
     }
 
-    public static void setEnabled(boolean on) {
-        enabled = on;
+    public static void setEnabled(boolean on) { enabled = on; save(); }
+
+    /** Writes the settings (FarScreen) and applies them. */
+    public static void save() {
         Properties p = props();
-        p.setProperty("enabled", Boolean.toString(on));
-        p.putIfAbsent("generate", Boolean.toString(generate));
+        p.setProperty("enabled", Boolean.toString(enabled));
+        p.setProperty("generate", Boolean.toString(generate));
+        p.setProperty("distance", Integer.toString(distance));
+        p.setProperty("shadows", Boolean.toString(shadows));
+        p.setProperty("water", Boolean.toString(water));
         p.putIfAbsent("serverSeed", "");
         try {
             configFile().getParentFile().mkdirs();
             try (OutputStream out = new FileOutputStream(configFile())) {
-                p.store(out, "Far terrain past the path tracer's range. generate: make land you haven't been to from the seed. serverSeed: a server's seed, if you know it");
+                p.store(out, "Far terrain past the path tracer's range (Path Tracer > Effects > Far terrain). distance: 500, 1000 or 2000 blocks. "
+                        + "generate: make land you haven't been to from the seed. serverSeed: a server's seed, if you know it");
             }
         } catch (Exception ignored) {}
-        if (!on) { live = false; status = "off"; }
+        if (!enabled) { live = false; status = "off"; }
+        tried.clear(); // a chunk passed over may come now (generating switched on)
+        if (N != (distance <= 500 ? 1024 : distance <= 1000 ? 2048 : 4096)) resize = true;
     }
 
     // ---- where a single player world is saved: the first File field of the world or of its storage
@@ -125,7 +151,7 @@ public final class FarTerrain {
      * seed in single player (a server's is serverSeed); gen: makes this version's generator for a seed.
      */
     public static void tick(Object world, boolean overworld, double camX, double camZ, String mpKey, long seed,
-                            java.util.function.LongFunction<Gen> genFor) {
+                            GenFactory genFor) {
         live = enabled && overworld && world != null;
         if (!live) { status = enabled ? "overworld only (the Nether has no sky to show it in)" : "off"; return; }
         if (world != lastWorld) {
@@ -140,10 +166,19 @@ public final class FarTerrain {
                 cols.clear(); genCache.clear(); loadedRegions.clear(); tried.clear(); dirtyRegions.clear(); regionHeads.clear(); dirty.clear();
                 generated = fromSave = fromCache = noted = 0;
                 saveDir = dir;
-                genFactory = generate && s != null && genFor != null ? () -> genFor.apply(s) : null;
+                genFactory = s != null && genFor != null ? () -> genFor.make(s) : null;
                 Arrays.fill(slotOwner, Long.MIN_VALUE); // every slot gets this world's chunk (or nothing)
                 key = k;
             }
+        }
+        if (resize) { // another distance: a map of another size, every slot filled again
+            resize = false;
+            if (tex != 0) GL11.glDeleteTextures(tex);
+            tex = 0;
+            size(distance);
+            slotOwner = new long[CH * CH];
+            Arrays.fill(slotOwner, Long.MIN_VALUE);
+            sweep = 0;
         }
         centerX = (int) Math.floor(camX) >> 4;
         centerZ = (int) Math.floor(camZ) >> 4;
@@ -220,7 +255,7 @@ public final class FarTerrain {
                 String k = key;
                 if (!Objects.equals(k, doing)) { // another world (tick emptied the map): a new generator, start over
                     doing = k; gen = null; ring = 0;
-                    java.util.function.Supplier<Gen> f = genFactory;
+                    GenSource f = genFactory;
                     if (f != null) {
                         try { gen = f.get(); } catch (Throwable e) { BetaPT.LOGGER.warn("Far terrain: no generator ({})", e.toString()); }
                     }
@@ -244,11 +279,11 @@ public final class FarTerrain {
                 if (System.currentTimeMillis() - lastFlush > 30_000) {
                     lastFlush = System.currentTimeMillis();
                     synchronized (FarTerrain.class) { if (Objects.equals(doing, key)) flush(doing); }
-                    if (cols.size() > 40_000) trim(cx0, cz0);
+                    if (cols.size() > Math.max(40_000, CH * CH * 5 / 4)) trim(cx0, cz0);
                     BetaPT.LOGGER.info("Far terrain: {}", status);
                 }
                 status = cols.size() + " chunks (" + noted + " visited, " + fromSave + " saved, " + fromCache + " cached, " + generated + " generated"
-                        + (gen == null ? (!generate ? "; generating off" : genFactory == null && saveDir == null ? "; set serverSeed to generate the rest" : "; not generating in this world") : "") + ")";
+                        + (gen == null || !generate ? (!generate ? "; generating off" : genFactory == null && saveDir == null ? "; set serverSeed to generate the rest" : "; not generating in this world") : "") + ")";
                 if (!did) Thread.sleep(400);
             } catch (InterruptedException e) {
                 return;
@@ -271,7 +306,7 @@ public final class FarTerrain {
             if (ids != null && (c = columns(ids, LIVE)) != null) fromSave++;
         }
         if (c == null && (c = genCache.remove(ck)) != null) fromCache++;
-        Gen g = gen;
+        Gen g = generate ? gen : null;
         if (c == null && g != null) {
             try {
                 short[] ids = g.chunk(cx, cz);
@@ -512,7 +547,7 @@ public final class FarTerrain {
     // ---- on the GPU: one N x N texture, each chunk at its ring slot
 
     private static int tex, program;
-    private static final long[] slotOwner = new long[CH * CH];
+    private static long[] slotOwner = new long[CH * CH];
     private static int sweep;
     private static ByteBuffer one;
     static { Arrays.fill(slotOwner, Long.MIN_VALUE); }
@@ -591,6 +626,9 @@ public final class FarTerrain {
         GL20.glUniform3f(GL20.glGetUniformLocation(program, "uUp"), cam.ux, cam.uy, cam.uz);
         GL20.glUniform1f(GL20.glGetUniformLocation(program, "uNear"), near);
         GL20.glUniform1f(GL20.glGetUniformLocation(program, "uFar"), RANGE);
+        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uMapN"), N);
+        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uShadows"), shadows ? 1 : 0);
+        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uWater"), water ? 1 : 0);
         GL20.glUniform1f(GL20.glGetUniformLocation(program, "uWorldTop"), worldTop);
         GL20.glUniform3f(GL20.glGetUniformLocation(program, "uSun"), sun[0], sun[1], sun[2]);
         GL20.glUniform3f(GL20.glGetUniformLocation(program, "uFog"), fog[0], fog[1], fog[2]);
