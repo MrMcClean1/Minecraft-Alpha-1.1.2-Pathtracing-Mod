@@ -639,6 +639,7 @@ public final class PathTracer {
         Camera cam = legacyFrame ? Camera.from(mc.player, tickDelta) : Camera.fromGl(mc.player, tickDelta);
         voxels.update(mc.world, cam.x, cam.z);
         lastCam = cam;
+        try { FarTerrain.tick(mc.world, !Dim.nether(mc.world), cam.x, cam.z); } catch (Throwable ignored) {}
         lightCut = lightingJumped(mc, tickDelta) || resumed;
         resumed = false;
 
@@ -772,6 +773,8 @@ public final class PathTracer {
      * (present.frag). Every bit of OpenGL state we touch is saved and put back, because Beta
      * carries on drawing entities, particles and the hand straight after this.
      */
+    private final float[] lastFog = {0.7f, 0.8f, 1f};
+
     private void present() {
         int prevTex = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
@@ -796,6 +799,11 @@ public final class PathTracer {
         GL42.glBindImageTexture(0, depthTex, 0, false, 0, GL15.GL_READ_ONLY, GL30.GL_R32F);
         GL30.glBindVertexArray(presentVao);
         GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, 3);
+        // far terrain from the saved chunks, over the sky past the tracer's range (off unless switched on)
+        if (FarTerrain.enabled && pathView()) {
+            float day = Math.max(0f, Math.min(1f, sunDir[1] * 2f + 0.5f));
+            try { FarTerrain.draw(lastCam, width, height, outW, outH, tanHalfFov * aspect, tanHalfFov, maxDist * 0.95f, sunDir, lastFog, day, 128); } catch (Throwable ignored) {}
+        }
         GL30.glBindVertexArray(0);
         GL42.glBindImageTexture(0, 0, 0, false, 0, GL15.GL_READ_ONLY, GL11.GL_RGBA8);
         GL20.glUseProgram(0);
@@ -861,6 +869,7 @@ public final class PathTracer {
         net.minecraft.util.math.Vec3d fogC = mc.world.getFogColor(tickDelta);
         GL20.glUniform3f(loc(p, "uSkyColor"), (float) skyC.x, (float) skyC.y, (float) skyC.z);
         GL20.glUniform3f(loc(p, "uFogColor"), (float) fogC.x, (float) fogC.y, (float) fogC.z);
+        lastFog[0] = (float) fogC.x; lastFog[1] = (float) fogC.y; lastFog[2] = (float) fogC.z;
         float angle = mc.world.getTimeOfDay(tickDelta) * (float) (Math.PI * 2.0);
         // Beta 1.7.3 spins the sun around the X axis, so it rises in -Z and sets in +Z
         // (the famous "sun rises in the north"). Later versions added a 90 degree turn.

@@ -31,7 +31,8 @@ public class EffectsScreen extends Screen {
         this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(7, this.width / 2 - 100, top + 96, 200, 20, testText()));
         // particles and rain (moved here from the main page, which has the Quality button now)
         this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(10, this.width / 2 - 100, top + 120, 200, 20, text(10)));
-        this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(200, this.width / 2 - 100, top + 144, 200, 20, "Done"));
+        this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(11, this.width / 2 - 100, top + 144, 200, 20, text(11)));
+        this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(200, this.width / 2 - 100, top + 168, 200, 20, "Done"));
     }
 
     private static String onOff(boolean b) { return b ? "ON" : "OFF"; }
@@ -53,6 +54,7 @@ public class EffectsScreen extends Screen {
             case 8 -> "Nights: " + (pt.darkNights ? "Dark (Beta)" : "Bright");
             case 9 -> "Hand collision: " + onOff(pt.handCollide);
             case 10 -> "Particles, rain: " + (pt.particleLight ? "Traced light" : "Beta");
+            case 11 -> "Far terrain: " + onOff(com.alexmcclellan.betapt.render.FarTerrain.enabled);
             default -> "";
         };
     }
@@ -69,6 +71,7 @@ public class EffectsScreen extends Screen {
             "Dark dims the picture at night, as Beta's nights are.",
             "OFF: walls you stand at don't hide the traced hand (Beta).",
             "Traced light: smoke, bits and rain lit by the path tracer.",
+            "Land past the tracer's range, out to ~1000 blocks, from saved chunks.",
     };
     private int hovered;
 
@@ -85,6 +88,7 @@ public class EffectsScreen extends Screen {
             case 8 -> pt.darkNights = !pt.darkNights;
             case 9 -> pt.handCollide = !pt.handCollide;
             case 10 -> pt.particleLight = !pt.particleLight;
+            case 11 -> com.alexmcclellan.betapt.render.FarTerrain.setEnabled(!com.alexmcclellan.betapt.render.FarTerrain.enabled);
             case 7 -> { // Off -> Quick -> Full -> Multiplayer (if a server is known) -> Benchmark -> Off
                 var all = com.alexmcclellan.betapt.config.BetaPTConfig.TestMode.values();
                 var next = all[(com.alexmcclellan.betapt.config.BetaPTConfig.testMode().ordinal() + 1) % all.length];
