@@ -41,7 +41,9 @@ public final class FarTerrain {
         N = n; CH = n / 16; HALF = CH / 2; RANGE = n / 2 - 24;
     }
 
-    public static boolean enabled, generate = true, shadows = true, water = true;
+    public static boolean enabled, generate = true, shadows = true, water = true, blocky = false, texture = true;
+    /** 0 off, 1 light, 2 normal: how much the far land fades into the fog. */
+    public static int haze = 1;
     /** Blocks out from the player: 500, 1000 or 2000. */
     public static int distance = 1000;
     private static volatile boolean resize;
@@ -89,6 +91,9 @@ public final class FarTerrain {
         generate = Boolean.parseBoolean(p.getProperty("generate", "true"));
         shadows = Boolean.parseBoolean(p.getProperty("shadows", "true"));
         water = Boolean.parseBoolean(p.getProperty("water", "true"));
+        blocky = Boolean.parseBoolean(p.getProperty("blocky", "false"));
+        texture = Boolean.parseBoolean(p.getProperty("texture", "true"));
+        try { haze = Math.max(0, Math.min(2, Integer.parseInt(p.getProperty("haze", "1").trim()))); } catch (NumberFormatException e) { haze = 1; }
         try { distance = Integer.parseInt(p.getProperty("distance", "1000").trim()); } catch (NumberFormatException e) { distance = 1000; }
         distance = distance <= 500 ? 500 : distance <= 1000 ? 1000 : 2000;
         size(distance);
@@ -106,6 +111,9 @@ public final class FarTerrain {
         p.setProperty("distance", Integer.toString(distance));
         p.setProperty("shadows", Boolean.toString(shadows));
         p.setProperty("water", Boolean.toString(water));
+        p.setProperty("blocky", Boolean.toString(blocky));
+        p.setProperty("texture", Boolean.toString(texture));
+        p.setProperty("haze", Integer.toString(haze));
         p.putIfAbsent("serverSeed", "");
         try {
             configFile().getParentFile().mkdirs();
@@ -629,6 +637,9 @@ public final class FarTerrain {
         GL20.glUniform1i(GL20.glGetUniformLocation(program, "uMapN"), N);
         GL20.glUniform1i(GL20.glGetUniformLocation(program, "uShadows"), shadows ? 1 : 0);
         GL20.glUniform1i(GL20.glGetUniformLocation(program, "uWater"), water ? 1 : 0);
+        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uBlocky"), blocky ? 1 : 0);
+        GL20.glUniform1i(GL20.glGetUniformLocation(program, "uTexture"), texture ? 1 : 0);
+        GL20.glUniform1f(GL20.glGetUniformLocation(program, "uHaze"), haze * 0.5f);
         GL20.glUniform1f(GL20.glGetUniformLocation(program, "uWorldTop"), worldTop);
         GL20.glUniform3f(GL20.glGetUniformLocation(program, "uSun"), sun[0], sun[1], sun[2]);
         GL20.glUniform3f(GL20.glGetUniformLocation(program, "uFog"), fog[0], fog[1], fog[2]);
