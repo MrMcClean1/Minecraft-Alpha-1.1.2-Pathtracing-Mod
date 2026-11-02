@@ -134,6 +134,11 @@ public final class FarTerrain {
             String k = (dir != null ? "sp-" + dir.getName() : mpKey).replaceAll("[^A-Za-z0-9._-]", "_");
             Long s = dir != null ? Long.valueOf(seed) : serverSeed;
             if (!k.equals(key)) {
+                // another world: save the last one's cache and empty the map now, before this world's chunks arrive
+                String was = key;
+                if (was != null) synchronized (FarTerrain.class) { flush(was); }
+                cols.clear(); genCache.clear(); loadedRegions.clear(); tried.clear(); dirtyRegions.clear(); regionHeads.clear(); dirty.clear();
+                generated = fromSave = fromCache = noted = 0;
                 saveDir = dir;
                 genFactory = generate && s != null && genFor != null ? () -> genFor.apply(s) : null;
                 Arrays.fill(slotOwner, Long.MIN_VALUE); // every slot gets this world's chunk (or nothing)
@@ -213,10 +218,8 @@ public final class FarTerrain {
             try {
                 if (!live) { Thread.sleep(500); continue; }
                 String k = key;
-                if (!Objects.equals(k, doing)) { // another world: save the last one's cache, start over
-                    if (doing != null) flush(doing);
-                    cols.clear(); genCache.clear(); loadedRegions.clear(); tried.clear(); dirtyRegions.clear(); regionHeads.clear();
-                    doing = k; gen = null; ring = 0; generated = fromSave = fromCache = noted = 0;
+                if (!Objects.equals(k, doing)) { // another world (tick emptied the map): a new generator, start over
+                    doing = k; gen = null; ring = 0;
                     java.util.function.Supplier<Gen> f = genFactory;
                     if (f != null) {
                         try { gen = f.get(); } catch (Throwable e) { BetaPT.LOGGER.warn("Far terrain: no generator ({})", e.toString()); }
@@ -240,12 +243,12 @@ public final class FarTerrain {
                 }
                 if (System.currentTimeMillis() - lastFlush > 30_000) {
                     lastFlush = System.currentTimeMillis();
-                    flush(doing);
+                    synchronized (FarTerrain.class) { if (Objects.equals(doing, key)) flush(doing); }
                     if (cols.size() > 40_000) trim(cx0, cz0);
                     BetaPT.LOGGER.info("Far terrain: {}", status);
                 }
                 status = cols.size() + " chunks (" + noted + " visited, " + fromSave + " saved, " + fromCache + " cached, " + generated + " generated"
-                        + (gen == null ? (saveDir == null && serverSeed == null ? "; set serverSeed to generate the rest" : generate ? "" : "; generating off") : "") + ")";
+                        + (gen == null ? (!generate ? "; generating off" : genFactory == null && saveDir == null ? "; set serverSeed to generate the rest" : "; not generating in this world") : "") + ")";
                 if (!did) Thread.sleep(400);
             } catch (InterruptedException e) {
                 return;
@@ -279,6 +282,7 @@ public final class FarTerrain {
             }
         }
         if (c == null) { tried.add(ck); return false; }
+        if (dir != saveDir) return false; // the world changed while this one was read
         if (cols.putIfAbsent(ck, c) == null) {
             dirty.add(ck);
             dirtyRegions.add(rk);
