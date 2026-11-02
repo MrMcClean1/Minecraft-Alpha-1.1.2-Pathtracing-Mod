@@ -71,7 +71,7 @@ public class EffectsScreen extends Screen {
             "Dark dims the picture at night, as Beta's nights are.",
             "OFF: walls you stand at don't hide the traced hand (Beta).",
             "Traced light: smoke, bits and rain lit by the path tracer.",
-            "Land past the tracer's range, out to ~1000 blocks, from saved chunks.",
+            "Land out to ~1000 blocks: visited, saved, and made ahead from the seed.",
     };
     private int hovered;
 
@@ -112,8 +112,8 @@ public class EffectsScreen extends Screen {
         hovered = 0;
         for (Object o : this.buttons) {
             ButtonWidget w = (ButtonWidget) o;
-            int bw = w.id == 7 || w.id == 10 ? 200 : 150;
-            if (w.id >= 1 && w.id <= 10 && mouseX >= w.x && mouseY >= w.y && mouseX < w.x + bw && mouseY < w.y + 20) hovered = w.id;
+            int bw = w.id == 7 || w.id == 10 || w.id == 11 ? 200 : 150;
+            if (w.id >= 1 && w.id <= 11 && mouseX >= w.x && mouseY >= w.y && mouseX < w.x + bw && mouseY < w.y + 20) hovered = w.id;
         }
         String help = hovered > 0 ? HELP[hovered] : "Presets set these too. Done on the main page saves.";
         this.drawCenteredString(this.textRenderer, help, this.width / 2, Math.min(this.height - 10, top + 168), 0xA0A0A0); // under Done
