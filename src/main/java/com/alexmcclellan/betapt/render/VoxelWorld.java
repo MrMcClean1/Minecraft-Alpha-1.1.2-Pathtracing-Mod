@@ -304,6 +304,7 @@ public final class VoxelWorld {
         short[] ids = readIds;
         byte[] meta = readMeta;
         StationCompat.read(chunk, ids, meta);
+        FarTerrain.noteChunk(chunk.chunkX, chunk.chunkZ, ids); // far terrain keeps what the game has loaded (servers too)
         long hash = contentHash(ids, meta);
         if (onlyIfChanged && hash == slotHash[slot]) return null;
         slotHash[slot] = hash;

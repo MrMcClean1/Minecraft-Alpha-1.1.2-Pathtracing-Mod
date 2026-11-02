@@ -639,7 +639,7 @@ public final class PathTracer {
         Camera cam = legacyFrame ? Camera.from(mc.player, tickDelta) : Camera.fromGl(mc.player, tickDelta);
         voxels.update(mc.world, cam.x, cam.z);
         lastCam = cam;
-        try { FarTerrain.tick(mc.world, !Dim.nether(mc.world), cam.x, cam.z); } catch (Throwable ignored) {}
+        try { net.minecraft.world.World w = mc.world; FarTerrain.tick(w, !Dim.nether(w), cam.x, cam.z, FarGen.key(w), FarGen.seed(w), s -> FarGen.create(w, s)); } catch (Throwable ignored) {}
         lightCut = lightingJumped(mc, tickDelta) || resumed;
         resumed = false;
 
