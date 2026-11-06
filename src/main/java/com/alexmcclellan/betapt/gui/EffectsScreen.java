@@ -32,7 +32,8 @@ public class EffectsScreen extends Screen {
         // particles and rain (moved here from the main page, which has the Quality button now)
         this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(10, this.width / 2 - 100, top + 120, 200, 20, text(10)));
         this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(11, this.width / 2 - 100, top + 144, 200, 20, text(11)));
-        this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(200, this.width / 2 - 100, top + 168, 200, 20, "Done"));
+        this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(12, this.width / 2 + 5, top + 168, 150, 20, "NVIDIA RTX..."));
+        this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(200, this.width / 2 - 155, top + 168, 150, 20, "Done"));
     }
 
     private static String onOff(boolean b) { return b ? "ON" : "OFF"; }
@@ -98,6 +99,7 @@ public class EffectsScreen extends Screen {
                 b.message = testText();
                 return;
             }
+            case 12 -> { this.minecraft.openScreen(new RtxScreen(this)); return; }
             case 200 -> { this.minecraft.openScreen(this.parent); return; }
             default -> { return; }
         }

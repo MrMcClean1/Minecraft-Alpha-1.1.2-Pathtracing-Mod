@@ -50,7 +50,11 @@ abstract class VkBase {
 
     /** Device extensions turned on only if the chosen GPU has them (set before createDevice); optionalEnabled = the ones it had. */
     protected String[] optionalExtensions = {};
-    protected final java.util.Set<String> optionalEnabled = new java.util.HashSet<>();
+    protected final java.util.Set<String> optionalEnabled = new java.util.LinkedHashSet<>();
+    protected static final String EXT_RT_PIPELINE = "VK_KHR_ray_tracing_pipeline", EXT_SER = "VK_NV_ray_tracing_invocation_reorder",
+            EXT_OMM = "VK_EXT_opacity_micromap", EXT_SYNC2 = "VK_KHR_synchronization2";
+    /** Newer features the device was made with (each only when asked for through optionalExtensions and the GPU has it). */
+    protected boolean timelineOn, rtPipelineOn, serOn, ommOn;
 
     /**
      * @param uuid  if not null, only the Vulkan device with this UUID (the one OpenGL is running on,
@@ -119,15 +123,41 @@ abstract class VkBase {
                 if ((qf.get(i).queueFlags() & VK_QUEUE_COMPUTE_BIT) != 0 && qf.get(i).timestampValidBits() > 0) { queueFamily = i; break; }
             if (queueFamily < 0) throw new IllegalStateException("no compute queue with timestamps");
 
-            VkPhysicalDeviceRayQueryFeaturesKHR rq = VkPhysicalDeviceRayQueryFeaturesKHR.calloc(stack).sType$Default().rayQuery(true);
+            optionalEnabled.clear();
+            for (String e : optionalExtensions) if (hasExtensions(physical, e)) optionalEnabled.add(e);
+            // extensions that need another one: SER needs ray tracing pipelines, micromaps need synchronization2
+            if (!optionalEnabled.contains(EXT_RT_PIPELINE)) optionalEnabled.remove(EXT_SER);
+            if (!optionalEnabled.contains(EXT_SYNC2)) optionalEnabled.remove(EXT_OMM);
+            // which of the newer features the GPU really has (asked only for extensions it lists)
+            VkPhysicalDeviceVulkan12Features q12 = VkPhysicalDeviceVulkan12Features.calloc(stack).sType$Default();
+            VkPhysicalDeviceRayTracingPipelineFeaturesKHR qrt = VkPhysicalDeviceRayTracingPipelineFeaturesKHR.calloc(stack).sType$Default();
+            VkPhysicalDeviceRayTracingInvocationReorderFeaturesNV qser = VkPhysicalDeviceRayTracingInvocationReorderFeaturesNV.calloc(stack).sType$Default();
+            VkPhysicalDeviceOpacityMicromapFeaturesEXT qomm = VkPhysicalDeviceOpacityMicromapFeaturesEXT.calloc(stack).sType$Default();
+            VkPhysicalDeviceSynchronization2Features qs2 = VkPhysicalDeviceSynchronization2Features.calloc(stack).sType$Default();
+            long qc = 0;
+            if (optionalEnabled.contains(EXT_RT_PIPELINE)) { qrt.pNext(qc); qc = qrt.address(); }
+            if (optionalEnabled.contains(EXT_SER)) { qser.pNext(qc); qc = qser.address(); }
+            if (optionalEnabled.contains(EXT_OMM)) { qomm.pNext(qc); qc = qomm.address(); qs2.pNext(qc); qc = qs2.address(); }
+            q12.pNext(qc);
+            vkGetPhysicalDeviceFeatures2(physical, VkPhysicalDeviceFeatures2.calloc(stack).sType$Default().pNext(q12.address()));
+            timelineOn = q12.timelineSemaphore();
+            rtPipelineOn = optionalEnabled.contains(EXT_RT_PIPELINE) && qrt.rayTracingPipeline();
+            serOn = rtPipelineOn && optionalEnabled.contains(EXT_SER) && qser.rayTracingInvocationReorder();
+            ommOn = optionalEnabled.contains(EXT_OMM) && qomm.micromap() && qs2.synchronization2();
+            long ec = 0; // the same features, turned on
+            if (rtPipelineOn) ec = VkPhysicalDeviceRayTracingPipelineFeaturesKHR.calloc(stack).sType$Default().rayTracingPipeline(true).pNext(ec).address();
+            if (serOn) ec = VkPhysicalDeviceRayTracingInvocationReorderFeaturesNV.calloc(stack).sType$Default().rayTracingInvocationReorder(true).pNext(ec).address();
+            if (ommOn) {
+                ec = VkPhysicalDeviceOpacityMicromapFeaturesEXT.calloc(stack).sType$Default().micromap(true).pNext(ec).address();
+                ec = VkPhysicalDeviceSynchronization2Features.calloc(stack).sType$Default().synchronization2(true).pNext(ec).address();
+            }
+            VkPhysicalDeviceRayQueryFeaturesKHR rq = VkPhysicalDeviceRayQueryFeaturesKHR.calloc(stack).sType$Default().rayQuery(true).pNext(ec);
             VkPhysicalDeviceAccelerationStructureFeaturesKHR as = VkPhysicalDeviceAccelerationStructureFeaturesKHR.calloc(stack)
                     .sType$Default().accelerationStructure(true).pNext(rq.address());
             VkPhysicalDeviceVulkan12Features v12 = VkPhysicalDeviceVulkan12Features.calloc(stack).sType$Default()
-                    .bufferDeviceAddress(true).pNext(as.address());
+                    .bufferDeviceAddress(true).timelineSemaphore(timelineOn).pNext(as.address());
             VkDeviceQueueCreateInfo.Buffer qci = VkDeviceQueueCreateInfo.calloc(1, stack);
             qci.get(0).sType$Default().queueFamilyIndex(queueFamily).pQueuePriorities(stack.floats(1f));
-            optionalEnabled.clear();
-            for (String e : optionalExtensions) if (hasExtensions(physical, e)) optionalEnabled.add(e);
             PointerBuffer exts = stack.mallocPointer(3 + extraExtensions.length + optionalEnabled.size());
             exts.put(stack.UTF8(KHRAccelerationStructure.VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME))
                     .put(stack.UTF8(KHRRayQuery.VK_KHR_RAY_QUERY_EXTENSION_NAME))
