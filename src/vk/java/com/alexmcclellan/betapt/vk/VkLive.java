@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import org.lwjgl.opengl.GL43C;
 
 import static org.lwjgl.vulkan.KHRAccelerationStructure.*;
 import static org.lwjgl.vulkan.VK10.*;
@@ -102,6 +103,7 @@ public final class VkLive extends VkBase {
             v.start(in);
             return v;
         } catch (Throwable t) {
+            if (v.nvPending) { NvFeatures.markStarted(); v.nvPending = false; }
             v.close();
             throw t instanceof RuntimeException ? (RuntimeException) t : new RuntimeException(t);
         }
@@ -116,6 +118,14 @@ public final class VkLive extends VkBase {
         height = (Integer) in.get("height");
         blockInfo = (int[]) in.get("blockInfo");
         blockBoxes = (float[]) in.get("blockBox");
+
+        boolean wantDlss = Boolean.TRUE.equals(in.get("dlss")), wantReflex = Boolean.TRUE.equals(in.get("reflex"));
+        boolean wantSer = Boolean.TRUE.equals(in.get("ser"));
+        wantOmm = Boolean.TRUE.equals(in.get("omm"));
+        ommLeaves = Boolean.getBoolean("betapt.omm.leaves");
+        if ((wantDlss || wantReflex) && NvFeatures.crashedLastTime()) { wantDlss = false; wantReflex = false; }
+        if (wantDlss || wantReflex) { NvFeatures.markStarting(); nvPending = true; }
+        if (wantDlss) NvFeatures.startStreamline(); // before any Vulkan instance: it becomes the Vulkan library
 
         GLCapabilities caps;
         try { caps = GL.getCapabilities(); } catch (IllegalStateException e) { caps = GL.createCapabilities(); }
@@ -136,10 +146,24 @@ public final class VkLive extends VkBase {
                 && !Boolean.getBoolean("betapt.vk.cpuSync");
         String semExt = windows ? KHRExternalSemaphoreWin32.VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME
                 : KHRExternalSemaphoreFd.VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME;
-        if (glSem) optionalExtensions = new String[]{semExt};
+        List<String> opt = new ArrayList<>();
+        if (glSem) opt.add(semExt);
+        if (wantSer) { opt.add(EXT_RT_PIPELINE); opt.add(EXT_SER); }
+        if (wantOmm) { opt.add(EXT_OMM); opt.add(EXT_SYNC2); }
+        optionalExtensions = opt.toArray(new String[0]);
         createDevice(uuid, windows ? KHRExternalMemoryWin32.VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME : KHRExternalMemoryFd.VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
         System.out.println("[BetaPT] Vulkan tracer on " + out.get("device") + ", " + out.get("vram") + " video memory; extra ray tracing hardware: " + out.get("rtExtras"));
         out.put("glRenderer", GL11C.glGetString(GL11C.GL_RENDERER));
+        nv = new NvFeatures();
+        if (wantDlss) nv.dlssAfterDevice(physical);
+        if (wantReflex) {
+            if (timelineOn) nv.reflexStart(device, Boolean.TRUE.equals(in.get("reflexBoost")));
+            else nv.reflexStatus = "Reflex: this driver has no timeline semaphores";
+        }
+        if (nvPending && !nv.dlssReady()) { NvFeatures.markStarted(); nvPending = false; } // DLSS clears it after its first frame
+        serStatus = !wantSer ? "off" : serOn ? "starting" : "not on this GPU/driver (needs VK_NV_ray_tracing_invocation_reorder)";
+        ommStatus = !wantOmm ? "off" : ommOn ? "on" : "not on this GPU/driver (needs VK_EXT_opacity_micromap)";
+        out.put("nvidia", nvStatus());
         if (glSem && optionalEnabled.contains(semExt)) {
             try { createSemaphores(); }
             catch (RuntimeException e) { glDone = 0; out.put("syncError", e.toString()); } // fall back to the CPU wait
@@ -180,6 +204,12 @@ public final class VkLive extends VkBase {
         // ---- textures: Beta's block atlas and clouds ----
         int aw = (Integer) in.get("atlasW"), ah = (Integer) in.get("atlasH");
         atlasImage = sampledImage(aw, ah, (int[]) in.get("atlas"));
+        if (wantOmm && ommOn) { // which atlas pixels a ray can't pass (the shader's ALPHA_CUT, 0.1)
+            int[] a = (int[]) in.get("atlas");
+            atlasOpaque = new byte[a.length];
+            for (int i = 0; i < a.length; i++) atlasOpaque[i] = (byte) ((a[i] >>> 24) > 25 ? 1 : 0);
+            atlasW = aw; atlasH = ah;
+        }
         atlasView = imageView(atlasImage);
         cloudImage = sampledImage(256, 256, (int[]) in.get("clouds"));
         cloudView = imageView(cloudImage);
@@ -312,11 +342,11 @@ public final class VkLive extends VkBase {
             off += (long) w * h * 4;
         }
         imageBarrier(cb, atlasImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
-                VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+                VK_ACCESS_TRANSFER_WRITE_BIT, traceStage, VK_PIPELINE_STAGE_TRANSFER_BIT);
         vkCmdCopyBufferToImage(cb, tileStaging[0], atlasImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, regions);
         regions.free(); // recorded: the command buffer keeps its own copy
         imageBarrier(cb, atlasImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
-                VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
+                VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, traceStage);
     }
 
     /** The mob skins, ARGB, 64 x 64 per layer, layers one after the other (EntityCapture's skin array). */
@@ -438,7 +468,7 @@ public final class VkLive extends VkBase {
             VkDescriptorSetLayoutBinding.Buffer b = VkDescriptorSetLayoutBinding.calloc(types.length, stack);
             VkDescriptorPoolSize.Buffer sizes = VkDescriptorPoolSize.calloc(types.length, stack);
             for (int i = 0; i < types.length; i++) {
-                b.get(i).binding(i).descriptorType(types[i]).descriptorCount(1).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+                b.get(i).binding(i).descriptorType(types[i]).descriptorCount(1).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT | (serOn ? KHRRayTracingPipeline.VK_SHADER_STAGE_RAYGEN_BIT_KHR : 0));
                 sizes.get(i).type(types[i]).descriptorCount(1);
             }
             LongBuffer lp = stack.mallocLong(1);
@@ -498,6 +528,11 @@ public final class VkLive extends VkBase {
             w.get(11).sType$Default().dstSet(set).dstBinding(11).descriptorCount(1).descriptorType(types[11])
                     .pImageInfo(VkDescriptorImageInfo.calloc(1, stack).sampler(sampler).imageView(cloudView).imageLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL));
             vkUpdateDescriptorSets(device, w, null);
+            if (serOn) {
+                try { createSerPipeline(); serStatus = "on"; traceStage = KHRRayTracingPipeline.VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR; }
+                catch (Throwable e) { serStatus = "couldn't start: " + e.getMessage(); serPipeline = 0; }
+                out.put("nvidia", nvStatus());
+            }
 
             check(vkCreateQueryPool(device, VkQueryPoolCreateInfo.calloc(stack).sType$Default()
                     .queryType(VK_QUERY_TYPE_TIMESTAMP).queryCount(4), null, lp), "query pool");
@@ -623,16 +658,32 @@ public final class VkLive extends VkBase {
         int quads, cutoutBase;
         int[] groupQuads;
         boolean[] opaque;
+        // opacity micromap for the cutout group (0s when off): input buffer, storage, scratch, micromap
+        long[] ommIn, ommSt, ommScr;
+        long micromap, ommIndexAddr, ommDataAddr, ommTriAddr;
+        int ommEntries, ommUsed;
+    }
+
+    /** A part's slot entry (also what goes on the retired list): see 'slot', then the micromap's buffers and handle. */
+    private static long[] entry(Part p) {
+        return new long[]{p.geo[0], p.geo[1], p.storage[0], p.storage[1], p.handle, p.addr, p.base + p.nOff, p.cutoutBase,
+                p.ommIn == null ? 0 : p.ommIn[0], p.ommIn == null ? 0 : p.ommIn[1], p.ommSt == null ? 0 : p.ommSt[0], p.ommSt == null ? 0 : p.ommSt[1],
+                p.micromap, p.ommScr == null ? 0 : p.ommScr[0], p.ommScr == null ? 0 : p.ommScr[1]};
     }
 
     /** Never used by the GPU: freed with the next batch (on the game's thread, like every other free). */
     private void discard(Part p) {
-        if (p != null) retired.add(new long[]{p.geo[0], p.geo[1], p.storage[0], p.storage[1], p.handle, p.addr});
+        if (p != null) retired.add(entry(p));
     }
 
     /** The geometry descriptions for a part's groups (geometry 0 and 1). Returns the first cutout triangle. */
     private static int describe(MemoryStack stack, int[] groupQuads, boolean[] opaque, long base, long iOff, int quads,
                                 VkAccelerationStructureGeometryKHR.Buffer gb, VkAccelerationStructureBuildRangeInfoKHR.Buffer range, IntBuffer counts) {
+        return describe(stack, groupQuads, opaque, base, iOff, quads, gb, range, counts, null);
+    }
+
+    private static int describe(MemoryStack stack, int[] groupQuads, boolean[] opaque, long base, long iOff, int quads,
+                                VkAccelerationStructureGeometryKHR.Buffer gb, VkAccelerationStructureBuildRangeInfoKHR.Buffer range, IntBuffer counts, Part omm) {
         int gi = 0, first = 0, cutoutBase = 0;
         for (int k = 0; k < groupQuads.length; k++) {
             int gq = groupQuads[k];
@@ -643,6 +694,14 @@ public final class VkLive extends VkBase {
                         .vertexData(VkDeviceOrHostAddressConstKHR.calloc(stack).deviceAddress(base)).vertexStride(12)
                         .maxVertex(quads * 4 - 1).indexType(VK_INDEX_TYPE_UINT32)
                         .indexData(VkDeviceOrHostAddressConstKHR.calloc(stack).deviceAddress(base + iOff + first * 24L));
+                if (omm != null && omm.micromap != 0 && k == 1) { // the cutout group: its opacity micromap
+                    VkMicromapUsageEXT.Buffer use = VkMicromapUsageEXT.calloc(1, stack);
+                    use.get(0).count(omm.ommUsed).subdivisionLevel(OMM_LEVEL).format(EXTOpacityMicromap.VK_OPACITY_MICROMAP_FORMAT_4_STATE_EXT);
+                    VkAccelerationStructureTrianglesOpacityMicromapEXT om = VkAccelerationStructureTrianglesOpacityMicromapEXT.calloc(stack).sType$Default()
+                            .indexType(VK_INDEX_TYPE_UINT32).indexBuffer(VkDeviceOrHostAddressConstKHR.calloc(stack).deviceAddress(omm.ommIndexAddr))
+                            .indexStride(4).baseTriangle(0).pUsageCounts(use).micromap(omm.micromap);
+                    gb.get(gi).geometry().triangles().pNext(om.address());
+                }
                 range.get(gi).primitiveCount(gq * 2);
                 counts.put(gi, gq * 2);
                 gi++;
@@ -682,7 +741,11 @@ public final class VkLive extends VkBase {
             VkAccelerationStructureGeometryKHR.Buffer gb = VkAccelerationStructureGeometryKHR.calloc(nGeo, stack);
             VkAccelerationStructureBuildRangeInfoKHR.Buffer range = VkAccelerationStructureBuildRangeInfoKHR.calloc(nGeo, stack);
             IntBuffer counts = stack.mallocInt(nGeo);
-            int cutoutBase = describe(stack, groupQuads, opaque, base, iOff, quads, gb, range, counts);
+            Part p = new Part();
+            if (wantOmm && ommOn && groups.length == 2 && opaque[0] && !opaque[1] && groups[1].quads > 0) {
+                try { prepareOmm(p, groups[1]); } catch (Throwable e) { out.put("ommError", e.toString()); freeOmm(p); }
+            }
+            int cutoutBase = describe(stack, groupQuads, opaque, base, iOff, quads, gb, range, counts, p);
             VkAccelerationStructureBuildGeometryInfoKHR.Buffer info = VkAccelerationStructureBuildGeometryInfoKHR.calloc(1, stack);
             info.get(0).sType$Default().type(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR)
                     .flags(VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR).mode(VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR)
@@ -694,7 +757,6 @@ public final class VkLive extends VkBase {
             LongBuffer lp = stack.mallocLong(1);
             check(vkCreateAccelerationStructureKHR(device, VkAccelerationStructureCreateInfoKHR.calloc(stack).sType$Default()
                     .buffer(storage[0]).size(sizes.accelerationStructureSize()).type(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR), null, lp), "BLAS");
-            Part p = new Part();
             p.geo = geo; p.storage = storage; p.handle = lp.get(0);
             p.addr = vkGetAccelerationStructureDeviceAddressKHR(device, VkAccelerationStructureDeviceAddressInfoKHR.calloc(stack)
                     .sType$Default().accelerationStructure(p.handle));
@@ -713,7 +775,7 @@ public final class VkLive extends VkBase {
             VkAccelerationStructureGeometryKHR.Buffer gb = VkAccelerationStructureGeometryKHR.calloc(nGeo, stack);
             VkAccelerationStructureBuildRangeInfoKHR.Buffer range = VkAccelerationStructureBuildRangeInfoKHR.calloc(nGeo, stack);
             IntBuffer counts = stack.mallocInt(nGeo);
-            describe(stack, p.groupQuads, p.opaque, p.base, p.iOff, p.quads, gb, range, counts);
+            describe(stack, p.groupQuads, p.opaque, p.base, p.iOff, p.quads, gb, range, counts, p);
             VkAccelerationStructureBuildGeometryInfoKHR.Buffer info = VkAccelerationStructureBuildGeometryInfoKHR.calloc(1, stack);
             info.get(0).sType$Default().type(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR)
                     .flags(VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR).mode(VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR)
@@ -734,8 +796,9 @@ public final class VkLive extends VkBase {
                 vkCmdPipelineBarrier(pending, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
                         VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, mb, null, null);
             }
+            if (p.micromap != 0) recordOmm(pending, p);
             vkCmdBuildAccelerationStructuresKHR(pending, info, stack.mallocPointer(1).put(0, range.address()));
-            return new long[]{p.geo[0], p.geo[1], p.storage[0], p.storage[1], p.handle, p.addr, p.base + p.nOff, p.cutoutBase};
+            return entry(p);
         }
     }
 
@@ -764,6 +827,12 @@ public final class VkLive extends VkBase {
             if (r.length >= 6) {
                 vkDestroyAccelerationStructureKHR(device, r[4], null);
                 release(r[2], r[3]);
+            }
+            if (r.length >= 15) { // its opacity micromap, after the tree that used it
+                if (r[12] != 0) EXTOpacityMicromap.vkDestroyMicromapEXT(device, r[12], null);
+                if (r[8] != 0) release(r[8], r[9]);
+                if (r[10] != 0) release(r[10], r[11]);
+                if (r[13] != 0) release(r[13], r[14]);
             }
             release(r[0], r[1]);
         }
@@ -839,7 +908,7 @@ public final class VkLive extends VkBase {
                 built.get(0).sType$Default().srcAccessMask(VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR)
                         .dstAccessMask(VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR | VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR);
                 vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
-                        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, built, null, null);
+                        VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR | traceStage, 0, built, null, null);
             }
             writeChunkTable();
             uploadTiles(cb, stack);
@@ -900,15 +969,21 @@ public final class VkLive extends VkBase {
             vkCmdBuildAccelerationStructuresKHR(cb, bi, stack.mallocPointer(1).put(0, range.address()));
             VkMemoryBarrier.Buffer mb = VkMemoryBarrier.calloc(1, stack);
             mb.get(0).sType$Default().srcAccessMask(VK_ACCESS_ACCELERATION_STRUCTURE_WRITE_BIT_KHR).dstAccessMask(VK_ACCESS_ACCELERATION_STRUCTURE_READ_BIT_KHR);
-            vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, mb, null, null);
+            vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, traceStage, 0, mb, null, null);
             vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, queries, 1);
-            vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
-            vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipeLayout, 0, stack.longs(set), null);
-            vkCmdDispatch(cb, (width + 7) / 8, (height + 7) / 8, 1);
+            if (serPipeline != 0) { // SER: the same tracer as a ray generation shader
+                vkCmdBindPipeline(cb, KHRRayTracingPipeline.VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, serPipeline);
+                vkCmdBindDescriptorSets(cb, KHRRayTracingPipeline.VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, pipeLayout, 0, stack.longs(set), null);
+                KHRRayTracingPipeline.vkCmdTraceRaysKHR(cb, rgenRegion, emptyRegion, emptyRegion, emptyRegion, width, height, 1);
+            } else {
+                vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+                vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_COMPUTE, pipeLayout, 0, stack.longs(set), null);
+                vkCmdDispatch(cb, (width + 7) / 8, (height + 7) / 8, 1);
+            }
             vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, queries, 2);
             VkMemoryBarrier.Buffer done = VkMemoryBarrier.calloc(1, stack);
             done.get(0).sType$Default().srcAccessMask(VK_ACCESS_SHADER_WRITE_BIT).dstAccessMask(VK_ACCESS_MEMORY_READ_BIT);
-            vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, done, null, null);
+            vkCmdPipelineBarrier(cb, traceStage, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, done, null, null);
             out.put("instances", n);
             if (glDone == 0) {
                 endOneShot(cb);
@@ -992,6 +1067,414 @@ public final class VkLive extends VkBase {
         }
     }
 
+    // ================================================================== NVIDIA RTX features (all optional)
+
+    private NvFeatures nv;
+    private boolean nvPending;            // the "starting" breadcrumb is still there (cleared after DLSS's first frame)
+    private int traceStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT; // where the tracer runs (ray tracing stage with SER)
+    private String serStatus = "off", ommStatus = "off";
+
+    /** One line for the settings screen and the log: what's on, and why not when it isn't. */
+    public String nvStatus() {
+        StringBuilder s = new StringBuilder();
+        if (nv != null) {
+            if (!nv.dlssStatus.isEmpty()) s.append(nv.dlssStatus);
+            else if (NvFeatures.status.contains("skipped")) s.append(NvFeatures.status);
+            if (!nv.reflexStatus.isEmpty()) s.append(s.length() > 0 ? "; " : "").append(nv.reflexStatus);
+        }
+        s.append(s.length() > 0 ? "; " : "").append("SER ").append(serStatus).append("; micromaps ").append(ommStatus);
+        return s.toString();
+    }
+
+    // ---- shader execution reordering: the tracer as a ray generation shader (vkpath_ser.rgen)
+
+    private long serPipeline, serModule;
+    private long[] sbt;
+    private VkStridedDeviceAddressRegionKHR rgenRegion, emptyRegion;
+
+    private static ByteBuffer loadSpv(String name) throws Exception {
+        try (InputStream s = VkLive.class.getResourceAsStream(name)) {
+            if (s == null) throw new IllegalStateException(name + " missing");
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[65536];
+            for (int n; (n = s.read(buf)) > 0; ) bo.write(buf, 0, n);
+            byte[] bytes = bo.toByteArray();
+            ByteBuffer spv = MemoryUtil.memAlloc(bytes.length);
+            spv.put(bytes).flip();
+            return spv;
+        }
+    }
+
+    private void createSerPipeline() throws Exception {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            LongBuffer lp = stack.mallocLong(1);
+            ByteBuffer spv = loadSpv("/vkpath_ser.spv");
+            try {
+                check(vkCreateShaderModule(device, VkShaderModuleCreateInfo.calloc(stack).sType$Default().pCode(spv), null, lp), "SER shader module");
+            } finally {
+                MemoryUtil.memFree(spv);
+            }
+            serModule = lp.get(0);
+            VkPipelineShaderStageCreateInfo.Buffer st = VkPipelineShaderStageCreateInfo.calloc(1, stack);
+            st.get(0).sType$Default().stage(KHRRayTracingPipeline.VK_SHADER_STAGE_RAYGEN_BIT_KHR).module(serModule).pName(stack.UTF8("main"));
+            VkRayTracingShaderGroupCreateInfoKHR.Buffer gr = VkRayTracingShaderGroupCreateInfoKHR.calloc(1, stack);
+            gr.get(0).sType$Default().type(KHRRayTracingPipeline.VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR).generalShader(0)
+                    .closestHitShader(KHRRayTracingPipeline.VK_SHADER_UNUSED_KHR).anyHitShader(KHRRayTracingPipeline.VK_SHADER_UNUSED_KHR)
+                    .intersectionShader(KHRRayTracingPipeline.VK_SHADER_UNUSED_KHR);
+            VkRayTracingPipelineCreateInfoKHR.Buffer ci = VkRayTracingPipelineCreateInfoKHR.calloc(1, stack);
+            ci.get(0).sType$Default().pStages(st).pGroups(gr).maxPipelineRayRecursionDepth(1).layout(pipeLayout);
+            check(KHRRayTracingPipeline.vkCreateRayTracingPipelinesKHR(device, VK_NULL_HANDLE, VK_NULL_HANDLE, ci, null, lp), "SER pipeline");
+            serPipeline = lp.get(0);
+            VkPhysicalDeviceRayTracingPipelinePropertiesKHR rp = VkPhysicalDeviceRayTracingPipelinePropertiesKHR.calloc(stack).sType$Default();
+            vkGetPhysicalDeviceProperties2(physical, VkPhysicalDeviceProperties2.calloc(stack).sType$Default().pNext(rp.address()));
+            int hs = rp.shaderGroupHandleSize(), ba = Math.max(1, rp.shaderGroupBaseAlignment());
+            ByteBuffer handle = stack.malloc(hs);
+            check(KHRRayTracingPipeline.vkGetRayTracingShaderGroupHandlesKHR(device, serPipeline, 0, 1, handle), "SER group handle");
+            long stride = (hs + ba - 1L) / ba * ba;
+            sbt = buffer(stride + ba, KHRRayTracingPipeline.VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            long addr = address(sbt[0]), aligned = (addr + ba - 1) / ba * ba;
+            long mp = map(sbt);
+            MemoryUtil.memCopy(MemoryUtil.memAddress(handle), mp + (aligned - addr), hs);
+            unmap(sbt);
+            rgenRegion = VkStridedDeviceAddressRegionKHR.calloc().deviceAddress(aligned).stride(stride).size(stride);
+            emptyRegion = VkStridedDeviceAddressRegionKHR.calloc();
+        }
+    }
+
+    // ---- opacity micromaps: the see-through pixels of plants, ladders and such, marked in the search tree so the
+    // hardware skips them without asking the shader. Only pixels that are see-through for sure are marked (with a
+    // margin for waving plants); everything else is left to the shader as before, so the picture doesn't change.
+
+    private static final int OMM_LEVEL = 3, OMM_MICRO = 64, OMM_BYTES = 16; // 4^3 micro-triangles, 2 bits each
+    private static final int GRID_COLS = 16;                               // tiles per atlas row (version.glsl)
+    private static final boolean[] OMM_IDS = new boolean[4096];
+    static { // vanilla plants and such; not glass (the shader notes clear glass pixels), leaves only if asked
+        for (int id : new int[]{6, 30, 31, 32, 37, 38, 39, 40, 59, 65, 83}) OMM_IDS[id] = true;
+    }
+    private static final float[][] MICRO = new float[OMM_MICRO][]; // each micro-triangle's corners (u, v) x 3
+    static { for (int i = 0; i < OMM_MICRO; i++) MICRO[i] = microTriangle(i, OMM_LEVEL); }
+    private boolean wantOmm, ommLeaves;
+    private byte[] atlasOpaque;
+    private int atlasW, atlasH;
+
+    /** The even bits of x, packed together. */
+    private static int evenBits(int x) {
+        x &= 0x55555555;
+        x = (x | (x >>> 1)) & 0x33333333;
+        x = (x | (x >>> 2)) & 0x0f0f0f0f;
+        x = (x | (x >>> 4)) & 0x00ff00ff;
+        x = (x | (x >>> 8)) & 0x0000ffff;
+        return x;
+    }
+
+    /** Each bit becomes the XOR of itself and every bit above it (16 bits). */
+    private static int prefixXor(int x) {
+        x ^= x >>> 1; x ^= x >>> 2; x ^= x >>> 4; x ^= x >>> 8;
+        return x & 0xffff;
+    }
+
+    /**
+     * Corners of micro-triangle 'index' at a subdivision level, in the order Vulkan stores micromap states (the
+     * space-filling "bird" curve), as barycentrics (u, v) weighting the triangle's 2nd and 3rd corners.
+     */
+    static float[] microTriangle(int index, int level) {
+        if (level == 0) return new float[]{0, 0, 1, 0, 0, 1};
+        int b0 = evenBits(index), b1 = evenBits(index >>> 1);
+        int fx = prefixXor(b0), fy = prefixXor(b0 & ~b1);
+        int tt = fy ^ b1;
+        int iu = (fx & ~tt) | (b0 & ~tt) | (~b0 & ~fx & tt);
+        int iv = fy ^ b0;
+        int iw = (~fx & ~tt) | (b0 & ~tt) | (~b0 & fx & tt);
+        int mask = (1 << level) - 1;
+        iu &= mask; iv &= mask; iw &= mask;
+        boolean upright = ((iu ^ iv ^ iw) & 1) != 0;
+        if (!upright) { iu++; iv++; }
+        float s = 1f / (1 << level), du = upright ? s : -s, dv = du;
+        float u = iu * s, v = iv * s;
+        return new float[]{u, v, u + du, v, u, v + dv};
+    }
+
+    /** 0 see-through for sure, 2 "ask the shader" (unknown), per micro-triangle of one textured triangle. */
+    private byte[] microStates(int tile, float[] uv) {
+        int ts = Math.max(1, atlasW / GRID_COLS);
+        int tx = (tile & (GRID_COLS - 1)) * ts, ty = (tile / GRID_COLS) * ts;
+        float margin = 0.12f * ts + 1f; // waving plants move their picture by up to about a tenth of a tile
+        byte[] st = new byte[OMM_MICRO];
+        for (int i = 0; i < OMM_MICRO; i++) {
+            float[] m = MICRO[i];
+            float x0 = Float.MAX_VALUE, y0 = Float.MAX_VALUE, x1 = -Float.MAX_VALUE, y1 = -Float.MAX_VALUE;
+            for (int c = 0; c < 3; c++) {
+                float u = m[c * 2], v = m[c * 2 + 1], w = 1 - u - v;
+                float px = (uv[0] * w + uv[2] * u + uv[4] * v) * ts, py = (uv[1] * w + uv[3] * u + uv[5] * v) * ts;
+                x0 = Math.min(x0, px); x1 = Math.max(x1, px); y0 = Math.min(y0, py); y1 = Math.max(y1, py);
+            }
+            int ax = Math.max(0, (int) Math.floor(x0 - margin)), bx = Math.min(ts - 1, (int) Math.floor(x1 + margin));
+            int ay = Math.max(0, (int) Math.floor(y0 - margin)), by = Math.min(ts - 1, (int) Math.floor(y1 + margin));
+            boolean clear = true;
+            for (int y = ay; y <= by && clear; y++) {
+                int row = (ty + y) * atlasW + tx;
+                if (ty + y >= atlasH) { clear = false; break; }
+                for (int x = ax; x <= bx; x++) if (atlasOpaque[row + x] != 0) { clear = false; break; }
+            }
+            st[i] = (byte) (clear ? 0 : 2);
+        }
+        return st;
+    }
+
+    /** Mesher thread: the micromap's data for a cutout group, its buffers, and the empty micromap. */
+    private void prepareOmm(Part p, ChunkMesher.Group g) {
+        int tris = g.quads * 2;
+        int[] index = new int[tris];
+        java.util.HashMap<String, Integer> seen = new java.util.HashMap<>();
+        java.io.ByteArrayOutputStream data = new java.io.ByteArrayOutputStream();
+        int entries = 0, used = 0;
+        for (int t = 0; t < tris; t++) {
+            int o = t * ChunkMesher.INTS_PER_TRI, a = g.tri[o], id = a & 4095;
+            if (!(OMM_IDS[id] || (ommLeaves && id == 18)) || ((a >>> 12) & 15) == 2) {
+                index[t] = EXTOpacityMicromap.VK_OPACITY_MICROMAP_SPECIAL_INDEX_FULLY_UNKNOWN_TRANSPARENT_EXT;
+                continue;
+            }
+            int tile = a >>> 16;
+            float[] uv = new float[6];
+            StringBuilder key = new StringBuilder().append(tile);
+            for (int k = 0; k < 6; k++) { uv[k] = Float.intBitsToFloat(g.tri[o + 4 + k]); key.append(',').append(g.tri[o + 4 + k]); }
+            Integer e = seen.get(key.toString());
+            if (e == null) {
+                byte[] st = microStates(tile, uv);
+                boolean allClear = true, allUnknown = true;
+                for (byte b : st) { if (b != 0) allClear = false; if (b != 2) allUnknown = false; }
+                if (allClear) e = EXTOpacityMicromap.VK_OPACITY_MICROMAP_SPECIAL_INDEX_FULLY_TRANSPARENT_EXT;
+                else if (allUnknown) e = EXTOpacityMicromap.VK_OPACITY_MICROMAP_SPECIAL_INDEX_FULLY_UNKNOWN_TRANSPARENT_EXT;
+                else {
+                    byte[] packed = new byte[OMM_BYTES];
+                    for (int i = 0; i < OMM_MICRO; i++) packed[i >> 2] |= (byte) (st[i] << ((i & 3) * 2));
+                    data.write(packed, 0, OMM_BYTES);
+                    e = entries++;
+                }
+                seen.put(key.toString(), e);
+            }
+            index[t] = e;
+            if (e >= 0) used++;
+        }
+        if (entries == 0) { // nothing partly see-through: still one (unused) entry, so the micromap isn't empty
+            data.write(new byte[OMM_BYTES], 0, OMM_BYTES);
+            entries = 1;
+        }
+        byte[] bytes = data.toByteArray();
+        long triOff = (bytes.length + 255L) / 256 * 256, idxOff = (triOff + entries * 8L + 255) / 256 * 256, size = idxOff + tris * 4L;
+        p.ommIn = chunkMem().buffer(size, EXTOpacityMicromap.VK_BUFFER_USAGE_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+                | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, ChunkMemory.KIND_HOST);
+        long ptr = p.ommIn[2];
+        MemoryUtil.memByteBuffer(ptr, bytes.length).put(bytes);
+        for (int i = 0; i < entries; i++) { // VkMicromapTriangleEXT: data offset, level, format
+            MemoryUtil.memPutInt(ptr + triOff + i * 8L, i * OMM_BYTES);
+            MemoryUtil.memPutShort(ptr + triOff + i * 8L + 4, (short) OMM_LEVEL);
+            MemoryUtil.memPutShort(ptr + triOff + i * 8L + 6, (short) EXTOpacityMicromap.VK_OPACITY_MICROMAP_FORMAT_4_STATE_EXT);
+        }
+        MemoryUtil.memIntBuffer(ptr + idxOff, tris).put(index);
+        long base = address(p.ommIn[0]);
+        p.ommDataAddr = base; p.ommTriAddr = base + triOff; p.ommIndexAddr = base + idxOff;
+        p.ommEntries = entries; p.ommUsed = used;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkMicromapBuildInfoEXT info = ommInfo(stack, p);
+            VkMicromapBuildSizesInfoEXT sizes = VkMicromapBuildSizesInfoEXT.calloc(stack).sType$Default();
+            EXTOpacityMicromap.vkGetMicromapBuildSizesEXT(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, info, sizes);
+            p.ommSt = chunkMem().buffer(sizes.micromapSize(), EXTOpacityMicromap.VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                    ChunkMemory.KIND_DEVICE);
+            p.ommScr = chunkMem().buffer(sizes.buildScratchSize() + 256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+                    ChunkMemory.KIND_DEVICE);
+            LongBuffer lp = stack.mallocLong(1);
+            check(EXTOpacityMicromap.vkCreateMicromapEXT(device, VkMicromapCreateInfoEXT.calloc(stack).sType$Default().buffer(p.ommSt[0])
+                    .size(sizes.micromapSize()).type(EXTOpacityMicromap.VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT), null, lp), "micromap");
+            p.micromap = lp.get(0);
+        }
+    }
+
+    private static VkMicromapBuildInfoEXT ommInfo(MemoryStack stack, Part p) {
+        VkMicromapUsageEXT.Buffer use = VkMicromapUsageEXT.calloc(1, stack);
+        use.get(0).count(p.ommEntries).subdivisionLevel(OMM_LEVEL).format(EXTOpacityMicromap.VK_OPACITY_MICROMAP_FORMAT_4_STATE_EXT);
+        return VkMicromapBuildInfoEXT.calloc(stack).sType$Default().type(EXTOpacityMicromap.VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT)
+                .flags(EXTOpacityMicromap.VK_BUILD_MICROMAP_PREFER_FAST_TRACE_BIT_EXT).mode(EXTOpacityMicromap.VK_BUILD_MICROMAP_MODE_BUILD_EXT)
+                .pUsageCounts(use).data(VkDeviceOrHostAddressConstKHR.calloc(stack).deviceAddress(p.ommDataAddr))
+                .triangleArray(VkDeviceOrHostAddressConstKHR.calloc(stack).deviceAddress(p.ommTriAddr)).triangleArrayStride(8);
+    }
+
+    /** If preparing the micromap failed half way: give back what it got (the part is built without one). */
+    private void freeOmm(Part p) {
+        if (p.micromap != 0) EXTOpacityMicromap.vkDestroyMicromapEXT(device, p.micromap, null);
+        for (long[] b : new long[][]{p.ommIn, p.ommSt, p.ommScr}) if (b != null) release(b[0], b[1]);
+        p.micromap = 0; p.ommIn = p.ommSt = p.ommScr = null;
+    }
+
+    /** Game thread: the micromap build, before the part's tree build that uses it. */
+    private void recordOmm(VkCommandBuffer cb, Part p) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkMicromapBuildInfoEXT.Buffer info = VkMicromapBuildInfoEXT.calloc(1, stack);
+            info.put(0, ommInfo(stack, p));
+            info.get(0).dstMicromap(p.micromap)
+                    .scratchData(VkDeviceOrHostAddressKHR.calloc(stack).deviceAddress((address(p.ommScr[0]) + 255) / 256 * 256));
+            EXTOpacityMicromap.vkCmdBuildMicromapsEXT(cb, info);
+            VkMemoryBarrier2.Buffer mb = VkMemoryBarrier2.calloc(1, stack);
+            mb.get(0).sType$Default().srcStageMask(EXTOpacityMicromap.VK_PIPELINE_STAGE_2_MICROMAP_BUILD_BIT_EXT)
+                    .srcAccessMask(EXTOpacityMicromap.VK_ACCESS_2_MICROMAP_WRITE_BIT_EXT)
+                    .dstStageMask(KHRSynchronization2.VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR)
+                    .dstAccessMask(EXTOpacityMicromap.VK_ACCESS_2_MICROMAP_READ_BIT_EXT);
+            KHRSynchronization2.vkCmdPipelineBarrier2KHR(cb, VkDependencyInfo.calloc(stack).sType$Default().pMemoryBarriers(mb));
+        }
+    }
+
+    // ---- DLSS: the tone-mapped picture, its depth and motion are copied into images Vulkan shares with OpenGL;
+    // Streamline runs DLSS on the Vulkan queue into a window-sized image OpenGL then shows.
+
+    private static final int[] DL_VK = {VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R32_SFLOAT, VK_FORMAT_R16G16_SFLOAT, VK_FORMAT_R8G8B8A8_UNORM};
+    private static final int[] DL_GL = {GL11C.GL_RGBA8, GL30C.GL_R32F, GL30C.GL_RG16F, GL11C.GL_RGBA8};
+    private final long[][] dl = new long[4][]; // colour, depth, motion, output: {image, memory, view, format, w, h, usage, GL texture, GL memory}
+    private long dlssFence;
+    private VkCommandBuffer dlssCb;
+
+    public boolean dlssReady() { return nv != null && nv.dlssReady(); }
+
+    /** {optimal width, height, min width, height, max width, height} for a DLSS mode and window size, or null. */
+    public int[] dlssSizes(int mode, int ow, int oh) { return dlssReady() ? nv.dlssSizes(mode, ow, oh) : null; }
+
+    private boolean semaphores() { return glDone != 0; }
+
+    private void waitDlss() {
+        if (dlssCb == null) return;
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            check(vkWaitForFences(device, stack.longs(dlssFence), true, 10_000_000_000L), "DLSS wait");
+            vkResetFences(device, stack.longs(dlssFence));
+        }
+        vkFreeCommandBuffers(device, commandPool, dlssCb);
+        dlssCb = null;
+    }
+
+    /** An image Vulkan and OpenGL share, in GENERAL layout. */
+    private long[] sharedImage(int w, int h, int vkFormat, int glFormat) {
+        int handleType = windows ? VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT : VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+        int usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        long img = image(w, h, vkFormat, usage, handleType);
+        long mem = lastImageMemory, size = lastImageSize;
+        long view = imageView(img, vkFormat);
+        int tex, glm;
+        int prevTex = GL11C.glGetInteger(GL11C.GL_TEXTURE_BINDING_2D);
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            glm = EXTMemoryObject.glCreateMemoryObjectsEXT();
+            EXTMemoryObject.glMemoryObjectParameterivEXT(glm, EXTMemoryObject.GL_DEDICATED_MEMORY_OBJECT_EXT, stack.ints(GL11C.GL_TRUE));
+            if (windows) {
+                PointerBuffer handle = stack.mallocPointer(1);
+                check(KHRExternalMemoryWin32.vkGetMemoryWin32HandleKHR(device, VkMemoryGetWin32HandleInfoKHR.calloc(stack).sType$Default()
+                        .memory(mem).handleType(handleType), handle), "vkGetMemoryWin32HandleKHR");
+                EXTMemoryObjectWin32.glImportMemoryWin32HandleEXT(glm, size, EXTMemoryObjectWin32.GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, handle.get(0));
+            } else {
+                IntBuffer fd = stack.mallocInt(1);
+                check(KHRExternalMemoryFd.vkGetMemoryFdKHR(device, VkMemoryGetFdInfoKHR.calloc(stack).sType$Default()
+                        .memory(mem).handleType(handleType), fd), "vkGetMemoryFdKHR");
+                EXTMemoryObjectFD.glImportMemoryFdEXT(glm, size, EXTMemoryObjectFD.GL_HANDLE_TYPE_OPAQUE_FD_EXT, fd.get(0));
+            }
+            tex = GL11C.glGenTextures();
+            GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, tex);
+            EXTMemoryObject.glTexStorageMem2DEXT(GL11C.GL_TEXTURE_2D, 1, glFormat, w, h, glm, 0);
+            GL11C.glTexParameteri(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_MIN_FILTER, GL11C.GL_LINEAR);
+            GL11C.glTexParameteri(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_MAG_FILTER, GL11C.GL_LINEAR);
+            GL11C.glTexParameteri(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_WRAP_S, GL12C_CLAMP);
+            GL11C.glTexParameteri(GL11C.GL_TEXTURE_2D, GL11C.GL_TEXTURE_WRAP_T, GL12C_CLAMP);
+        }
+        GL11C.glBindTexture(GL11C.GL_TEXTURE_2D, prevTex);
+        VkCommandBuffer cb = beginOneShot();
+        imageBarrier(cb, img, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, 0, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT,
+                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT);
+        endOneShot(cb);
+        return new long[]{img, mem, view, vkFormat, w, h, usage, tex, glm};
+    }
+
+    private static final int GL12C_CLAMP = 0x812F; // GL_CLAMP_TO_EDGE
+
+    private void freeShared(long[] d) {
+        vkDestroyImageView(device, d[2], null);
+        vkDestroyImage(device, d[0], null);
+        buffers.removeIf(x -> x[0] == VK_NULL_HANDLE && x[1] == d[1]);
+        vkFreeMemory(device, d[1], null);
+        GL11C.glDeleteTextures((int) d[7]);
+        EXTMemoryObject.glDeleteMemoryObjectsEXT((int) d[8]);
+    }
+
+    /**
+     * DLSS: upscales the tone-mapped picture glColor (RGBA8, rw x rh) with its depth (R32F) and motion (RG16F, in
+     * screen units, pointing to last frame) to ow x oh. c: jitter x, y in pixels, tan(half fov y), near, camera
+     * position xyz, forward xyz, right xyz, up xyz. Returns the OpenGL texture with the result, or 0 (use FSR).
+     */
+    public int dlss(int glColor, int glDepth, int glMv, int rw, int rh, int ow, int oh, int mode, float[] c, boolean reset) {
+        if (!dlssReady()) return 0;
+        try {
+            waitDlss();
+            int[][] sz = {{rw, rh}, {rw, rh}, {rw, rh}, {ow, oh}};
+            for (int i = 0; i < 4; i++) {
+                if (dl[i] != null && dl[i][4] == sz[i][0] && dl[i][5] == sz[i][1]) continue;
+                if (dl[i] != null) { waitFrame(); vkDeviceWaitIdle(device); freeShared(dl[i]); dl[i] = null; }
+                dl[i] = sharedImage(sz[i][0], sz[i][1], DL_VK[i], DL_GL[i]);
+                reset = true;
+            }
+            if (dlssFence == 0) {
+                try (MemoryStack stack = MemoryStack.stackPush()) {
+                    LongBuffer lp = stack.mallocLong(1);
+                    check(vkCreateFence(device, VkFenceCreateInfo.calloc(stack).sType$Default(), null, lp), "DLSS fence");
+                    dlssFence = lp.get(0);
+                }
+            }
+            int[] src = {glColor, glDepth, glMv};
+            for (int i = 0; i < 3; i++)
+                GL43C.glCopyImageSubData(src[i], GL11C.GL_TEXTURE_2D, 0, 0, 0, 0, (int) dl[i][7], GL11C.GL_TEXTURE_2D, 0, 0, 0, 0, rw, rh, 1);
+            VkCommandBuffer cb = beginOneShot();
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                VkMemoryBarrier.Buffer all = VkMemoryBarrier.calloc(1, stack);
+                all.get(0).sType$Default().srcAccessMask(VK_ACCESS_MEMORY_WRITE_BIT).dstAccessMask(VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+                vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, all, null, null);
+                boolean ok = nv.dlssRecord(cb, mode, dl, c, reset);
+                vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, all, null, null);
+                if (!ok) {
+                    vkEndCommandBuffer(cb);
+                    vkFreeCommandBuffers(device, commandPool, cb);
+                    return 0;
+                }
+                if (!semaphores()) {
+                    GL11C.glFinish(); // OpenGL's copies are done
+                    endOneShot(cb);    // and so is DLSS
+                } else {
+                    check(vkEndCommandBuffer(cb), "end");
+                    IntBuffer texs = stack.mallocInt(4), layouts = stack.mallocInt(4);
+                    for (int i = 0; i < 4; i++) { texs.put(i, (int) dl[i][7]); layouts.put(i, EXTSemaphore.GL_LAYOUT_GENERAL_EXT); }
+                    EXTSemaphore.glSignalSemaphoreEXT(glDone, stack.mallocInt(0), texs, layouts);
+                    GL11C.glFlush();
+                    check(vkQueueSubmit(queue, VkSubmitInfo.calloc(stack).sType$Default()
+                            .waitSemaphoreCount(1).pWaitSemaphores(stack.longs(vkWaitGl)).pWaitDstStageMask(stack.ints(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT))
+                            .pCommandBuffers(stack.pointers(cb)).pSignalSemaphores(stack.longs(vkSignalGl)), dlssFence), "DLSS submit");
+                    dlssCb = cb;
+                    EXTSemaphore.glWaitSemaphoreEXT(glReady, stack.mallocInt(0), texs, layouts);
+                }
+            }
+            if (nvPending) { NvFeatures.markStarted(); nvPending = false; }
+            return (int) dl[3][7];
+        } catch (Throwable t) {
+            nv.dlssStatus = "DLSS stopped: " + t;
+            out.put("nvidia", nvStatus());
+            return 0;
+        }
+    }
+
+    // ---- Reflex
+
+    public boolean reflexOn() { return nv != null && nv.reflexOn(); }
+
+    /** 0: start of the frame (Reflex's sleep, then "simulation start"); 1..5: Reflex's markers for this frame. */
+    public void reflexFrame(int phase) {
+        if (!reflexOn()) return;
+        if (phase == 0) nv.reflexFrameStart();
+        else nv.marker(phase);
+    }
+
+
     public void close() {
         mesher.shutdownNow();
         try { mesher.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
@@ -1008,7 +1491,16 @@ public final class VkLive extends VkBase {
             if (skinImage != 0) vkDestroyImage(device, skinImage, null);
             if (pending != null) { try { endOneShot(pending); } catch (Throwable ignored) {} pending = null; }
             for (int s = 0; s < SLOTS; s++) dropChunk(s);
-            for (long[] r : retired) if (r.length >= 6) vkDestroyAccelerationStructureKHR(device, r[4], null);
+            for (long[] r : retired) {
+                if (r.length >= 6) vkDestroyAccelerationStructureKHR(device, r[4], null);
+                if (r.length >= 15 && r[12] != 0) EXTOpacityMicromap.vkDestroyMicromapEXT(device, r[12], null);
+            }
+            if (dlssCb != null) { vkFreeCommandBuffers(device, commandPool, dlssCb); dlssCb = null; }
+            if (dlssFence != 0) vkDestroyFence(device, dlssFence, null);
+            for (int i = 0; i < 4; i++) if (dl[i] != null) { freeShared(dl[i]); dl[i] = null; }
+            if (serPipeline != 0) vkDestroyPipeline(device, serPipeline, null);
+            if (serModule != 0) vkDestroyShaderModule(device, serModule, null);
+            if (nv != null) nv.close();
             retired.clear();
             if (tileStaging != null) { freeBuffer(tileStaging); tileStaging = null; }
             if (tlas != null) vkDestroyAccelerationStructureKHR(device, tlas[2], null);
@@ -1032,6 +1524,8 @@ public final class VkLive extends VkBase {
             glTex[i] = glMem[i] = 0;
         }
         if (chunkMemory != null && device != null) { chunkMemory.close(); chunkMemory = null; } // the pooled chunk buffers and their blocks
+        if (rgenRegion != null) { rgenRegion.free(); rgenRegion = null; }
+        if (emptyRegion != null) { emptyRegion.free(); emptyRegion = null; }
         cleanup(); // frees every buffer and memory, the device and the instance
         device = null;
     }

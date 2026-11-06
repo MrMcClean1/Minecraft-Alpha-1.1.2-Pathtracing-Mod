@@ -188,6 +188,11 @@ public final class VkBridge {
                     in.put("blockInfo", blockInfo);
                     in.put("blockBox", blockBoxes);
                     in.put("blockLum", blockLum());
+                    PathTracer nvp = PathTracer.INSTANCE; // NVIDIA RTX extras, each only if switched on
+                    in.put("dlss", nvp.upscaler == PathTracer.UPSCALER_DLSS);
+                    in.put("reflex", nvp.lowLatency == 2);
+                    in.put("ser", nvp.ser);
+                    in.put("omm", nvp.omm);
                     live = c.getMethod("open", Map.class).invoke(null, in);
                     mTrace = c.getMethod("trace", float[].class, int[].class, float[].class);
                     mSetChunk = c.getMethod("setChunk", int.class, int.class, int.class, short[].class, byte[].class, int[].class, int[].class);
@@ -199,6 +204,14 @@ public final class VkBridge {
                     mSetSkins = c.getMethod("setSkins", int[].class, int.class);
                     mSetTiles = c.getMethod("setTiles", int[].class, int[].class);
                     mSetFastLeaves = c.getMethod("setFastLeaves", boolean.class);
+                    mDlss = c.getMethod("dlss", int.class, int.class, int.class, int.class, int.class, int.class, int.class, int.class, float[].class, boolean.class);
+                    mDlssSizes = c.getMethod("dlssSizes", int.class, int.class, int.class);
+                    mDlssReady = c.getMethod("dlssReady");
+                    mReflex = c.getMethod("reflexFrame", int.class);
+                    mReflexOn = c.getMethod("reflexOn");
+                    mNvStatus = c.getMethod("nvStatus");
+                    nvStatus = (String) mNvStatus.invoke(live);
+                    System.out.println("[BetaPT] NVIDIA features: " + nvStatus);
                     sentFastLeaves = false;
                     AnimatedTiles.reset();
                     liveW = w; liveH = h;
@@ -253,6 +266,7 @@ public final class VkBridge {
                 Object m = info.get("meshedThisFrame");
                 chunksMeshed = m instanceof Integer ? (Integer) m : 0;
                 liveInfo = String.valueOf(info);
+                nvStatus = (String) mNvStatus.invoke(live);
                 liveCpuMs = (System.nanoTime() - t0) / 1e6;
                 return (int[]) mTextures.invoke(live);
             });
@@ -299,6 +313,36 @@ public final class VkBridge {
                 out[y * 256 + x] = (px.get(i + 3) & 255) << 24 | (px.get(i) & 255) << 16 | (px.get(i + 1) & 255) << 8 | (px.get(i + 2) & 255);
             }
         return out;
+    }
+
+    // ---- NVIDIA RTX extras (VkLive / NvFeatures)
+    private static Method mDlss, mDlssSizes, mDlssReady, mReflex, mReflexOn, mNvStatus;
+    /** What the NVIDIA extras are doing (Effects > NVIDIA RTX shows it). */
+    public static String nvStatus = "";
+
+    public static boolean dlssReady() {
+        try { return live != null && (Boolean) mDlssReady.invoke(live); } catch (Throwable t) { return false; }
+    }
+
+    public static int[] dlssSizes(int mode, int ow, int oh) {
+        if (live == null || mDlssSizes == null) return null;
+        try { return (int[]) withLwjgl3(() -> mDlssSizes.invoke(live, mode, ow, oh)); } catch (Throwable t) { return null; }
+    }
+
+    /** DLSS on the Vulkan side: the OpenGL texture with the window-sized picture, or 0 (then FSR). */
+    public static int dlss(int color, int depth, int motion, int rw, int rh, int ow, int oh, int mode, float[] c, boolean reset) {
+        if (live == null || liveFailed || mDlss == null) return 0;
+        try { return (Integer) withLwjgl3(() -> mDlss.invoke(live, color, depth, motion, rw, rh, ow, oh, mode, c, reset)); }
+        catch (Throwable t) { nvStatus = "DLSS: " + t; return 0; }
+    }
+
+    public static boolean reflexOn() {
+        try { return live != null && mReflexOn != null && (Boolean) mReflexOn.invoke(live); } catch (Throwable t) { return false; }
+    }
+
+    public static void reflexFrame(int phase) {
+        if (live == null || mReflex == null) return;
+        try { mReflex.invoke(live, phase); } catch (Throwable ignored) {}
     }
 
     private static void closeLive() throws Exception {

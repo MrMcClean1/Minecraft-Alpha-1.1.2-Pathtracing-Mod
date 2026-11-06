@@ -83,8 +83,11 @@ public final class PtSettings {
             pt.bounces = Math.max(1, Math.min(3, Integer.parseInt(p.getProperty("bounces", Integer.toString(pt.bounces)).trim())));
             pt.particleLight = Boolean.parseBoolean(p.getProperty("particleLight", Boolean.toString(pt.particleLight)));
             pt.heldLights = Math.max(0, Math.min(2, Integer.parseInt(p.getProperty("heldLights", Integer.toString(pt.heldLights)).trim())));
-            String up = p.getProperty("upscaler", pt.upscaler == PathTracer.UPSCALER_BASIC ? "basic" : pt.upscaler == PathTracer.UPSCALER_OFF ? "off" : "fsr");
-            pt.upscaler = "basic".equalsIgnoreCase(up) ? PathTracer.UPSCALER_BASIC : "off".equalsIgnoreCase(up) ? PathTracer.UPSCALER_OFF : PathTracer.UPSCALER_FSR;
+            String up = p.getProperty("upscaler", pt.upscaler == PathTracer.UPSCALER_BASIC ? "basic" : pt.upscaler == PathTracer.UPSCALER_OFF ? "off" : pt.upscaler == PathTracer.UPSCALER_DLSS ? "dlss" : "fsr");
+            pt.upscaler = "dlss".equalsIgnoreCase(up) ? PathTracer.UPSCALER_DLSS : "basic".equalsIgnoreCase(up) ? PathTracer.UPSCALER_BASIC : "off".equalsIgnoreCase(up) ? PathTracer.UPSCALER_OFF : PathTracer.UPSCALER_FSR;
+            pt.lowLatency = Math.max(0, Math.min(2, Integer.parseInt(p.getProperty("lowLatency", Integer.toString(pt.lowLatency)).trim())));
+            pt.ser = Boolean.parseBoolean(p.getProperty("ser", Boolean.toString(pt.ser)).trim());
+            pt.omm = Boolean.parseBoolean(p.getProperty("micromaps", Boolean.toString(pt.omm)).trim());
             pt.traceDistance = Math.max(0, Math.min(248, Integer.parseInt(p.getProperty("traceDistance", Integer.toString(pt.traceDistance)).trim())));
             pt.fastLeaves = "fast".equalsIgnoreCase(p.getProperty("leaves", pt.fastLeaves ? "fast" : "fancy").trim());
             String cs = p.getProperty("cloudShadows", Float.toString(pt.cloudShadows));
@@ -115,7 +118,10 @@ public final class PtSettings {
         p.setProperty("denoise", Boolean.toString(pt.denoise));
         p.setProperty("renderScale", Float.toString(pt.renderScale));
         p.setProperty("sharpen", Float.toString(pt.sharpen));
-        p.setProperty("upscaler", pt.upscaler == PathTracer.UPSCALER_BASIC ? "basic" : pt.upscaler == PathTracer.UPSCALER_OFF ? "off" : "fsr");
+        p.setProperty("lowLatency", Integer.toString(pt.lowLatency));
+        p.setProperty("ser", Boolean.toString(pt.ser));
+        p.setProperty("micromaps", Boolean.toString(pt.omm));
+        p.setProperty("upscaler", pt.upscaler == PathTracer.UPSCALER_BASIC ? "basic" : pt.upscaler == PathTracer.UPSCALER_OFF ? "off" : pt.upscaler == PathTracer.UPSCALER_DLSS ? "dlss" : "fsr");
         p.setProperty("cloudShadows", Float.toString(pt.cloudShadows));
         p.setProperty("traceDistance", Integer.toString(pt.traceDistance));
         p.setProperty("leaves", pt.fastLeaves ? "fast" : "fancy");

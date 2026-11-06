@@ -126,7 +126,7 @@ public class PathTracerOptionsScreen extends Screen {
     private String mobText() { return "Path-traced mobs: " + (PathTracer.INSTANCE.entityShadows ? "ON" : "OFF"); }
     private String upscalerText() {
         int u = PathTracer.INSTANCE.upscaler;
-        return "Upscaler: " + (u == PathTracer.UPSCALER_FSR ? "AMD FSR 3.1" : u == PathTracer.UPSCALER_BASIC ? "Basic" : "OFF (native)");
+        return "Upscaler: " + (u == PathTracer.UPSCALER_DLSS ? "NVIDIA DLSS" : u == PathTracer.UPSCALER_FSR ? "AMD FSR 3.1" : u == PathTracer.UPSCALER_BASIC ? "Basic" : "OFF (native)");
     }
     private String denoiseText() {
         PathTracer pt = PathTracer.INSTANCE;
@@ -177,7 +177,7 @@ public class PathTracerOptionsScreen extends Screen {
                 pt.apply(p == null ? PathTracer.Preset.FAITHFUL : all[(p.ordinal() + 1) % all.length]);
                 this.init(); // the sliders move to the preset's values
             }
-            case 9 -> { pt.upscaler = (pt.upscaler + 1) % 3; b.message = upscalerText(); } // FSR -> Basic -> OFF
+            case 9 -> { int was = pt.upscaler; pt.upscaler = was == 0 ? 3 : was == 3 ? 1 : was == 1 ? 2 : 0; if (was == 3 || pt.upscaler == 3) com.alexmcclellan.betapt.render.VkBridge.reopen(); b.message = upscalerText(); } // FSR -> DLSS -> Basic -> OFF
             case 5 -> {
                 pt.realism = PathTracer.DEFAULT_REALISM;
                 pt.brightness = 1f;

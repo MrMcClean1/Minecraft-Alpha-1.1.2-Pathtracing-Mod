@@ -327,11 +327,14 @@ vec3 godRays(vec3 d, float tEnd, float vis) {
     return sunLight() * vis * phase * 0.006 * tEnd;
 }
 
+#ifndef PT_PIXEL_ID
+#define PT_PIXEL_ID gl_GlobalInvocationID.xy
+#endif
 void main() {
 #ifdef PT_PROBE
     if (uProbeOnly != 0) { probeMain(); return; }
 #endif
-    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    ivec2 px = ivec2(PT_PIXEL_ID);
     if (px.x >= uResolution.x || px.y >= uResolution.y) return;
     rngState = pcg(uint(px.x) * 1973u + uint(px.y) * 9277u + uint(uFrame) * 26699u) | 1u;
 
@@ -340,6 +343,10 @@ void main() {
     vec3 d = normalize(uCamForward + ndc.x * uTanHalfFov * aspect * uCamRight + ndc.y * uTanHalfFov * uCamUp);
 
     Hit h = traceRay(uCamFrac, d, uMaxDist, true);
+#ifdef PT_SER
+    // SER: regroup the pixels by what the camera ray hit (sky, a mob, or the block type) before the bounces
+    reorderThreadNV(!h.hit ? 0u : h.ent != 0u ? 1u : 2u + h.id % 126u, 7u);
+#endif
 
     // Effects: their extra shadow rays all go through one loop. The tracer is inlined wherever it's called, so
     // every new call site makes the shader much bigger (slower to build, more registers): one site for all.
