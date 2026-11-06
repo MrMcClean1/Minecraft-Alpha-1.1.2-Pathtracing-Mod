@@ -184,6 +184,20 @@ vec3 lightsSteady(vec3 p, vec3 n) {
 
 // The second bounce (Bounces: 2): from where the first bounce landed, one more ray: sky light, or the sun
 // and glow on whatever it hits. Lights up rooms and caves the way light spills round corners.
+// A third bounce (Bounces: 3): the light off whatever the second bounce ray meets, sky or sun only
+vec3 thirdBounce(vec3 p, vec3 n) {
+    vec3 dir = cosineSample(n);
+    Hit b = traceRay(p + n * 1e-3, dir, 32.0, false);
+    if (!b.hit) {
+        vec3 sky = skyRadiance(dir);
+        sky = mix(vec3(dot(sky, vec3(0.2126, 0.7152, 0.0722))), sky, uSkySat);
+        return sky * (0.25 + 0.75 * uDaylight) * mix(1.0, uSkyFill, uDaylight) * b.transmit;
+    }
+    vec3 bp = p + n * 1e-3 + dir * b.t, bn = b.n;
+    if (dot(bn, dir) > 0.0) bn = -bn;
+    return (emission(b.id) * b.albedo * 1.5 * b.glow + b.albedo * sunSteady(bp, bn)) * b.transmit;
+}
+
 vec3 secondBounce(vec3 p, vec3 n) {
     vec3 dir = cosineSample(n);
     Hit b = traceRay(p + n * 1e-3, dir, 48.0, false);
@@ -194,7 +208,9 @@ vec3 secondBounce(vec3 p, vec3 n) {
     }
     vec3 bp = p + n * 1e-3 + dir * b.t, bn = b.n;
     if (dot(bn, dir) > 0.0) bn = -bn;
-    return (emission(b.id) * b.albedo * 1.5 * b.glow + b.albedo * sunSteady(bp, bn)) * b.transmit;
+    vec3 atC = sunSteady(bp, bn);
+    if (uBounces >= 3) atC += thirdBounce(bp, bn);
+    return (emission(b.id) * b.albedo * 1.5 * b.glow + b.albedo * atC) * b.transmit;
 }
 
 // One bounce: sky light, or light reflected off whatever the bounce ray hits.

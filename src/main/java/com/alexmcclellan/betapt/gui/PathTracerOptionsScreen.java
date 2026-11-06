@@ -151,7 +151,8 @@ public class PathTracerOptionsScreen extends Screen {
             }
             case 8 -> { pt.entityShadows = !pt.entityShadows; b.message = mobText(); }
             case 20 -> this.minecraft.openScreen(new EffectsScreen(this));
-            case 17 -> { pt.bounces = pt.bounces == 1 ? 2 : 1; b.message = bounceText(); }
+            case 17 -> { pt.bounces = pt.bounces % 3 + 1; // 1 -> 2 -> 3 (3: for a fast ray tracing card)
+                b.message = bounceText(); }
             case 19 -> { // GUI scale: Alpha makes a new Window every frame, so it applies at once; lay this screen out again
                 AlphaGui.cycle();
                 net.minecraft.client.render.Window win = new net.minecraft.client.render.Window(this.minecraft.width, this.minecraft.height);
