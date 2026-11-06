@@ -138,6 +138,7 @@ public final class VkLive extends VkBase {
                 : KHRExternalSemaphoreFd.VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME;
         if (glSem) optionalExtensions = new String[]{semExt};
         createDevice(uuid, windows ? KHRExternalMemoryWin32.VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME : KHRExternalMemoryFd.VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+        System.out.println("[BetaPT] Vulkan tracer on " + out.get("device") + ", " + out.get("vram") + " video memory; extra ray tracing hardware: " + out.get("rtExtras"));
         out.put("glRenderer", GL11C.glGetString(GL11C.GL_RENDERER));
         if (glSem && optionalEnabled.contains(semExt)) {
             try { createSemaphores(); }

@@ -80,7 +80,7 @@ public final class PtSettings {
             pt.handMode = "traced".equalsIgnoreCase(p.getProperty("hand", pt.handMode == PathTracer.HAND_TRACED ? "traced" : "beta").trim()) ? PathTracer.HAND_TRACED : PathTracer.HAND_BETA;
             pt.denoiserMode = "standard".equalsIgnoreCase(p.getProperty("denoiser", pt.denoiserMode == PathTracer.DENOISER_STANDARD ? "standard" : "advanced").trim()) ? PathTracer.DENOISER_STANDARD : PathTracer.DENOISER_ADVANCED;
             pt.reflections = Math.max(0, Math.min(2, Integer.parseInt(p.getProperty("reflections", Integer.toString(pt.reflections)).trim())));
-            pt.bounces = Math.max(1, Math.min(2, Integer.parseInt(p.getProperty("bounces", Integer.toString(pt.bounces)).trim())));
+            pt.bounces = Math.max(1, Math.min(3, Integer.parseInt(p.getProperty("bounces", Integer.toString(pt.bounces)).trim())));
             pt.particleLight = Boolean.parseBoolean(p.getProperty("particleLight", Boolean.toString(pt.particleLight)));
             pt.heldLights = Math.max(0, Math.min(2, Integer.parseInt(p.getProperty("heldLights", Integer.toString(pt.heldLights)).trim())));
             String up = p.getProperty("upscaler", pt.upscaler == PathTracer.UPSCALER_BASIC ? "basic" : pt.upscaler == PathTracer.UPSCALER_OFF ? "off" : "fsr");

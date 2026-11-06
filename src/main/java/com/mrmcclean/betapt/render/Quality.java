@@ -13,7 +13,9 @@ public enum Quality {
     LOW("Low", 0.60f, 96, 1, PathTracer.DENOISER_STANDARD, PathTracer.REFLECT_WATER, false, true),
     MEDIUM("Medium", 0.75f, 128, 1, PathTracer.DENOISER_ADVANCED, PathTracer.REFLECT_WATER, true, false),
     HIGH("High", 0.85f, 192, 1, PathTracer.DENOISER_ADVANCED, PathTracer.REFLECT_WATER, true, false),
-    VERY_HIGH("Very High", 1.00f, 248, 2, PathTracer.DENOISER_ADVANCED, PathTracer.REFLECT_ALL, true, false);
+    VERY_HIGH("Very High", 1.00f, 248, 2, PathTracer.DENOISER_ADVANCED, PathTracer.REFLECT_ALL, true, false),
+    /** For a fast ray tracing card (an RTX 4070 / 5070 class or better): a third bounce of light. */
+    ULTRA("Ultra", 1.00f, 248, 3, PathTracer.DENOISER_ADVANCED, PathTracer.REFLECT_ALL, true, false);
 
     public final String label;
     final float scale;
@@ -61,9 +63,9 @@ public enum Quality {
     /** What Auto last found, for the button ("" before it has run). */
     public static String lastResult() { return last; }
 
-    /** Starts Auto: the levels are tried from Very High down, about 3 seconds each, while you play or look on. */
+    /** Starts Auto: the levels are tried from Ultra down, about 3 seconds each, while you play or look on. */
     public static void startAuto(PathTracer pt) {
-        trying = VERY_HIGH;
+        trying = values()[values().length - 1]; // the best level first
         trying.apply(pt);
         settleUntil = System.nanoTime() + 1_200_000_000L; // FSR, the denoiser and the GPU copy settle first
         measureUntil = 0;
