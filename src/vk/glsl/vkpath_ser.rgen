@@ -1,0 +1,13 @@
+#version 460
+// The Vulkan tracer as a ray generation shader, for shader execution reordering (SER, RTX 40 series and newer):
+// after the camera ray, the GPU regroups pixels by what they hit, so the bounce rays and shading that follow run
+// side by side with similar work. Same body as vkpath.comp; picked in the game (NVIDIA RTX settings).
+#extension GL_EXT_ray_query : require
+#extension GL_EXT_ray_tracing : require
+#extension GL_NV_shader_invocation_reorder : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_GOOGLE_include_directive : require
+#define PT_SER 1
+#define PT_PIXEL_ID gl_LaunchIDEXT.xy
+#include "vkpath_body.glsl"

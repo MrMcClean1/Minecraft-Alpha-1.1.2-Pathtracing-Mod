@@ -146,8 +146,13 @@ public final class PathTracer {
     public int entityCount;
     private int upscaleProgram, rcasProgram;
     /** M8: which upscaler turns the render-scale picture into the window picture. */
-    public static final int UPSCALER_FSR = 0, UPSCALER_BASIC = 1, UPSCALER_OFF = 2; // OFF: always native size, no upscaling
+    public static final int UPSCALER_FSR = 0, UPSCALER_BASIC = 1, UPSCALER_OFF = 2, UPSCALER_DLSS = 3; // OFF: always native size, no upscaling
     public int upscaler = UPSCALER_FSR;
+    /** NVIDIA RTX extras (Effects > NVIDIA RTX), all off by default. lowLatency: 0 off, 1 on (any GPU), 2 NVIDIA Reflex. */
+    public int lowLatency = 0;
+    public boolean ser = false, omm = false;
+    /** DLSS made this frame's picture (else FSR, when DLSS can't run). */
+    public boolean dlssActive;
     private final Fsr3 fsr = new Fsr3();
     private int fsrInputsProgram;
     private int fsrDepth, fsrMotion;                 // render-size inputs FSR needs (fsr_inputs.comp)
@@ -510,6 +515,31 @@ public final class PathTracer {
      * vectors FSR wants, then Fsr3 runs AMD's passes. Returns false if FSR can't run (the
      * caller then uses the basic upscaler).
      */
+    /** DLSS's mode from the render scale: DLAA at 100%, then Quality, Balanced, Performance, Ultra Performance. */
+    private int dlssMode() {
+        float s = renderScale;
+        return s >= 0.99f ? 6 : s >= 0.64f ? 3 : s >= 0.55f ? 2 : s >= 0.45f ? 1 : 4;
+    }
+
+    private int[] dlssSizeCache;
+    private int dlssSizeKey;
+
+    private int[] dlssSizes(int dw, int dh) {
+        int key = (dlssMode() * 8191 + dw) * 8191 + dh;
+        if (dlssSizeCache == null || key != dlssSizeKey) { dlssSizeCache = VkBridge.dlssSizes(dlssMode(), dw, dh); dlssSizeKey = key; }
+        return dlssSizeCache;
+    }
+
+    /** NVIDIA DLSS on the Vulkan side, from the same inputs FSR gets. False if it can't run (FSR then does it). */
+    private boolean dlssUpscale(Camera cam, boolean reset) {
+        float[] c = {jitX, jitY, tanHalfFov, FSR_NEAR, (float) cam.x, (float) cam.y, (float) cam.z,
+                cam.fx, cam.fy, cam.fz, cam.rx, cam.ry, cam.rz, cam.ux, cam.uy, cam.uz};
+        int t = VkBridge.dlss(image, fsrDepth, fsrMotion, width, height, outW, outH, dlssMode(), c, reset);
+        if (t == 0) return false;
+        presentTex = t;
+        return true;
+    }
+
     private boolean fsrUpscale(Camera cam, long now) {
         boolean reset = fsrPrevCam == null || lightCut || now - fsrLastNanos > 250_000_000L
                 || Math.abs(cam.x - fsrPrevCam.x) + Math.abs(cam.y - fsrPrevCam.y) + Math.abs(cam.z - fsrPrevCam.z) > 8.0;
@@ -530,12 +560,14 @@ public final class PathTracer {
         GL43.glDispatchCompute((width + 7) / 8, (height + 7) / 8, 1);
         GL42.glMemoryBarrier(GL42.GL_TEXTURE_FETCH_BARRIER_BIT | GL42.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
         for (int u = 0; u < 4; u++) GL42.glBindImageTexture(u, 0, 0, false, 0, GL15.GL_READ_ONLY, GL11.GL_RGBA8);
-        boolean ran = fsr.dispatch(image, fsrDepth, fsrMotion, width, height, outW, outH, jitX, jitY, tanHalfFov, FSR_NEAR,
+        boolean dl = upscaler == UPSCALER_DLSS && dlssUpscale(cam, reset);
+        dlssActive = dl;
+        boolean ran = dl || fsr.dispatch(image, fsrDepth, fsrMotion, width, height, outW, outH, jitX, jitY, tanHalfFov, FSR_NEAR,
                 (float) (frameMs / 1000.0), sharpen, reset);
         fsrPrevCam = cam;
         fsrPrevTan = tanHalfFov;
         fsrLastNanos = now;
-        if (ran) presentTex = fsr.output();
+        if (ran && !dl) presentTex = fsr.output();
         return ran;
     }
 
@@ -622,6 +654,10 @@ public final class PathTracer {
         int dw = mc.width, dh = mc.height;
         float scale = upscaler == UPSCALER_OFF ? 1f : Math.max(0.25f, Math.min(1f, renderScale));
         int iw = Math.max(16, Math.round(dw * scale)), ih = Math.max(16, Math.round(dh * scale));
+        if (upscaler == UPSCALER_DLSS && pathView()) { // DLSS takes render sizes in a range per mode
+            int[] ds = dlssSizes(dw, dh);
+            if (ds != null && ds[2] > 0 && ds[4] > 0) { iw = Math.max(ds[2], Math.min(ds[4], iw)); ih = Math.max(ds[3], Math.min(ds[5], ih)); }
+        }
         if (iw != width || ih != height) resize(iw, ih);
         if (dw != outW || dh != outH) resizeOutput(dw, dh);
         if (broken) return;
@@ -643,9 +679,11 @@ public final class PathTracer {
         lightCut = lightingJumped(mc, tickDelta) || resumed;
         resumed = false;
 
+        if (lowLatency == 2 && VkBridge.reflexOn()) { VkBridge.reflexFrame(0); VkBridge.reflexFrame(1); VkBridge.reflexFrame(2); }
+        else if (lowLatency >= 1) GL11.glFinish(); // low latency: no frame waits in line, so input shows up sooner
         timer.begin();
         // M8: FSR needs the camera nudged by a different fraction of a pixel every frame
-        boolean useFsr = upscaler == UPSCALER_FSR && fsrInputsProgram != 0 && !fsr.failed() && pathView() && !legacyFrame;
+        boolean useFsr = (upscaler == UPSCALER_FSR || upscaler == UPSCALER_DLSS) && fsrInputsProgram != 0 && !fsr.failed() && pathView() && !legacyFrame;
         prevJitX = jitX; prevJitY = jitY;
         if (useFsr) { float[] j = Fsr3.jitter(jitterFrame++, width, outW); jitX = j[0]; jitY = j[1]; }
         else { jitX = 0f; jitY = 0f; }
@@ -728,6 +766,7 @@ public final class PathTracer {
             GL42.glBindImageTexture(1, 0, 0, false, 0, GL15.GL_READ_ONLY, GL30.GL_RGBA16F);
             stages.stamp(); // end of exposure + tone map
             fsrActive = useFsr && fsrUpscale(cam, now);
+            if (lowLatency == 2) VkBridge.reflexFrame(3); // Reflex: the frame's commands are all handed over
             if (!fsrActive) upscaleAndSharpen();
             stages.stamp(); // end of upscale + sharpen
         } else {
