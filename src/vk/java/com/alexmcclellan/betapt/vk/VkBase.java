@@ -92,6 +92,24 @@ abstract class VkBase {
                     + "." + VK_API_VERSION_PATCH(p.apiVersion()) + ", driver " + p.driverVersion());
             memProps = VkPhysicalDeviceMemoryProperties.malloc();
             vkGetPhysicalDeviceMemoryProperties(physical, memProps);
+            long vram = 0;
+            for (int h = 0; h < memProps.memoryHeapCount(); h++)
+                if ((memProps.memoryHeaps(h).flags() & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) != 0) vram = Math.max(vram, memProps.memoryHeaps(h).size());
+            out.put("vram", (vram >> 20) + " MB");
+            // hardware features past the basic ray queries, for the log (what a newer card could use)
+            String[][] extras = {
+                    {"VK_EXT_opacity_micromap", "opacity micromaps"},
+                    {"VK_NV_ray_tracing_invocation_reorder", "shader execution reordering"},
+                    {"VK_EXT_ray_tracing_invocation_reorder", "shader execution reordering (EXT)"},
+                    {"VK_KHR_ray_tracing_position_fetch", "ray hit position fetch"},
+                    {"VK_NV_cluster_acceleration_structure", "cluster acceleration structures (Mega Geometry)"},
+                    {"VK_NV_ray_tracing_linear_swept_spheres", "swept spheres"},
+                    {"VK_KHR_cooperative_matrix", "cooperative matrices (tensor cores)"},
+                    {"VK_NV_cooperative_vector", "cooperative vectors"},
+                    {"VK_NV_low_latency2", "Reflex low latency"}};
+            StringBuilder has = new StringBuilder();
+            for (String[] e : extras) if (hasExtensions(physical, e[0])) has.append(has.length() > 0 ? ", " : "").append(e[1]);
+            out.put("rtExtras", has.length() > 0 ? has.toString() : "none");
 
             vkGetPhysicalDeviceQueueFamilyProperties(physical, n, null);
             VkQueueFamilyProperties.Buffer qf = VkQueueFamilyProperties.calloc(n.get(0), stack);

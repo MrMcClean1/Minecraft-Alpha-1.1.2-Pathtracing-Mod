@@ -77,7 +77,7 @@ uniform int   uReflections;
 uniform int   uPbr;
 uniform int   uEffects;      // optional effects, FX_* bits (pt_base.glsl)
 uniform float uTime, uWind, uWet; // seconds of game time, wind 0..1, rain wetness here 0..1
-uniform int   uBounces;      // 1 or 2 bounces of light          // M9: 1 = use the texture pack's LabPBR maps  // M9: 0 off, 1 water and glass, 2 also metals, diamond, obsidian     // lava's own glow as seen, set from last frame's exposure (PathTracer.lavaGlow)
+uniform int   uBounces;      // 1, 2 or 3 bounces of light          // M9: 1 = use the texture pack's LabPBR maps  // M9: 0 off, 1 water and glass, 2 also metals, diamond, obsidian     // lava's own glow as seen, set from last frame's exposure (PathTracer.lavaGlow)
 
 const int SIZE = 512, SLOTS = 32;
 const uint CUBE = 1u, CROSS = 2u, BOX = 3u, LIQUID = 4u;
