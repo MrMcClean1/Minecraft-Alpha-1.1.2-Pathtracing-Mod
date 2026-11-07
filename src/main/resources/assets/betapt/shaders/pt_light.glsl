@@ -470,6 +470,14 @@ void main() {
         // exposure). Any brighter and the red channel overflows, the tone mapper blends it toward white, and
         // it turns pink, worst at night when the exposure opens up. The light it casts is unchanged.
         if (h.id == 10u || h.id == 11u) emit = h.albedo * uLavaGlow;
+        // every other light block seen directly the same way: its own texture at about 90% after exposure, not lit
+        // on top (glowstone, jack o'lanterns and sea lanterns went past white and came out pale or pink)
+        float glowAmt = 0.0;
+        if (h.id != 10u && h.id != 11u) {
+            vec3 e0 = emission(h.id) * 1.5 * h.glow;
+            float k = max(e0.r, max(e0.g, e0.b));
+            if (k > 0.0) { glowAmt = clamp(k / 1.5, 0.0, 1.0); emit = h.albedo * uLavaGlow * glowAmt; }
+        }
         vec3 direct = ((uDebugMask & 1) == 0 ? sunAndMoon(p, n, 256.0) : vec3(0.0))
                     + ((uDebugMask & 2) == 0 ? blockLights(p, n) : vec3(0.0));
 
@@ -484,6 +492,7 @@ void main() {
         if (lum > 12.0) light *= 12.0 / lum;
         // lava shows only its own glow: sunlight on top of it pushed it past white at midday
         if (h.id == 10u || h.id == 11u) light = vec3(0.0);
+        light *= 1.0 - glowAmt;
         albedo = h.albedo * h.transmit * (1.0 - 0.45 * wet); // wet things are darker
         extra = (emit + pbrGlow) * h.transmit;
 
