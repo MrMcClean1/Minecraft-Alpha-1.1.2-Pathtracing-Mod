@@ -293,8 +293,8 @@ public final class PathTracer {
         cloud[2] = fancy ? 1f / 12f : 256f / 2048f;                                // texels per block
         cloud[3] = fancy ? 0.33f : 0f;
         cloudStrength = Dim.nether(mc.world) ? 0f : Math.max(0f, Math.min(1f, cloudShadows));
-        GL20.glUniform4f(loc(p, "uCloud"), cloud[0], cloud[1], cloud[2], cloud[3]);
-        GL20.glUniform1f(loc(p, "uCloudShadow"), cloudStrength);
+        uni4f(p, "uCloud", cloud[0], cloud[1], cloud[2], cloud[3]);
+        uni1f(p, "uCloudShadow", cloudStrength);
         bindTexture(7, GL11.GL_TEXTURE_2D, mc.textureManager.load("/clouds.png"));
     }
 
@@ -465,8 +465,8 @@ public final class PathTracer {
         presentTex = image;
         if (width != outW || height != outH) {
             GL20.glUseProgram(upscaleProgram);
-            GL20.glUniform2i(loc(upscaleProgram, "uOutSize"), outW, outH);
-            GL20.glUniform2f(loc(upscaleProgram, "uSrcSize"), width, height);
+            uni2i(upscaleProgram, "uOutSize", outW, outH);
+            uni2f(upscaleProgram, "uSrcSize", width, height);
             bindTexture(0, GL11.GL_TEXTURE_2D, image);
             GL42.glBindImageTexture(0, upImage, 0, false, 0, GL15.GL_WRITE_ONLY, GL11.GL_RGBA8);
             GL43.glDispatchCompute((outW + 7) / 8, (outH + 7) / 8, 1);
@@ -475,8 +475,8 @@ public final class PathTracer {
         }
         if (sharpen > 0.001f) {
             GL20.glUseProgram(rcasProgram);
-            GL20.glUniform2i(loc(rcasProgram, "uSize"), outW, outH);
-            GL20.glUniform1f(loc(rcasProgram, "uSharpness"), (float) Math.pow(2.0, -2.0 * (1.0 - Math.min(1f, sharpen))));
+            uni2i(rcasProgram, "uSize", outW, outH);
+            uni1f(rcasProgram, "uSharpness", (float) Math.pow(2.0, -2.0 * (1.0 - Math.min(1f, sharpen))));
             bindTexture(0, GL11.GL_TEXTURE_2D, presentTex);
             GL42.glBindImageTexture(0, outImage, 0, false, 0, GL15.GL_WRITE_ONLY, GL11.GL_RGBA8);
             GL43.glDispatchCompute((outW + 7) / 8, (outH + 7) / 8, 1);
@@ -502,12 +502,12 @@ public final class PathTracer {
     }
 
     private void cameraUniforms(int p, Camera cam) {
-        GL20.glUniform2i(loc(p, "uResolution"), width, height);
-        GL20.glUniform3f(loc(p, "uCamForward"), cam.fx, cam.fy, cam.fz);
-        GL20.glUniform3f(loc(p, "uCamRight"), cam.rx, cam.ry, cam.rz);
-        GL20.glUniform3f(loc(p, "uCamUp"), cam.ux, cam.uy, cam.uz);
-        GL20.glUniform1f(loc(p, "uTanHalfFov"), tanHalfFov);
-        GL20.glUniform2f(loc(p, "uJitter"), jitX, jitY);
+        uni2i(p, "uResolution", width, height);
+        uni3f(p, "uCamForward", cam.fx, cam.fy, cam.fz);
+        uni3f(p, "uCamRight", cam.rx, cam.ry, cam.rz);
+        uni3f(p, "uCamUp", cam.ux, cam.uy, cam.uz);
+        uni1f(p, "uTanHalfFov", tanHalfFov);
+        uni2f(p, "uJitter", jitX, jitY);
     }
 
     /**
@@ -546,12 +546,12 @@ public final class PathTracer {
         Camera pc = fsrPrevCam != null && !reset ? fsrPrevCam : cam;
         GL20.glUseProgram(fsrInputsProgram);
         cameraUniforms(fsrInputsProgram, cam);
-        GL20.glUniform3f(loc(fsrInputsProgram, "uPrevForward"), pc.fx, pc.fy, pc.fz);
-        GL20.glUniform3f(loc(fsrInputsProgram, "uPrevRight"), pc.rx, pc.ry, pc.rz);
-        GL20.glUniform3f(loc(fsrInputsProgram, "uPrevUp"), pc.ux, pc.uy, pc.uz);
-        GL20.glUniform1f(loc(fsrInputsProgram, "uPrevTanHalfFov"), pc == cam ? tanHalfFov : fsrPrevTan);
-        GL20.glUniform3f(loc(fsrInputsProgram, "uEyeDelta"), (float) (cam.x - pc.x), (float) (cam.y - pc.y), (float) (cam.z - pc.z));
-        GL20.glUniform1f(loc(fsrInputsProgram, "uNear"), FSR_NEAR);
+        uni3f(fsrInputsProgram, "uPrevForward", pc.fx, pc.fy, pc.fz);
+        uni3f(fsrInputsProgram, "uPrevRight", pc.rx, pc.ry, pc.rz);
+        uni3f(fsrInputsProgram, "uPrevUp", pc.ux, pc.uy, pc.uz);
+        uni1f(fsrInputsProgram, "uPrevTanHalfFov", pc == cam ? tanHalfFov : fsrPrevTan);
+        uni3f(fsrInputsProgram, "uEyeDelta", (float) (cam.x - pc.x), (float) (cam.y - pc.y), (float) (cam.z - pc.z));
+        uni1f(fsrInputsProgram, "uNear", FSR_NEAR);
         entityMotion(fsrInputsProgram);
         GL42.glBindImageTexture(3, geom[cur], 0, false, 0, GL15.GL_READ_ONLY, GL30.GL_RGBA16F);
         GL42.glBindImageTexture(0, depthTex, 0, false, 0, GL15.GL_READ_ONLY, GL30.GL_R32F);
@@ -585,15 +585,15 @@ public final class PathTracer {
             GL20.glUseProgram(temporalProgram);
             cameraUniforms(temporalProgram, cam);
             Camera pc = prevCam != null ? prevCam : cam;
-            GL20.glUniform3f(loc(temporalProgram, "uPrevForward"), pc.fx, pc.fy, pc.fz);
-            GL20.glUniform3f(loc(temporalProgram, "uPrevRight"), pc.rx, pc.ry, pc.rz);
-            GL20.glUniform3f(loc(temporalProgram, "uPrevUp"), pc.ux, pc.uy, pc.uz);
-            GL20.glUniform1f(loc(temporalProgram, "uPrevTanHalfFov"), prevCam != null ? prevTanHalfFov : tanHalfFov);
-            GL20.glUniform2f(loc(temporalProgram, "uPrevJitter"), prevJitX, prevJitY);
-            GL20.glUniform3f(loc(temporalProgram, "uEyeDelta"), (float) (cam.x - pc.x), (float) (cam.y - pc.y), (float) (cam.z - pc.z));
-            GL20.glUniform1i(loc(temporalProgram, "uHistoryValid"), valid ? 1 : 0);
-            GL20.glUniform1f(loc(temporalProgram, "uMaxHistory"), 24f);
-            GL20.glUniform1i(loc(temporalProgram, "uAdvanced"), denoiserMode == DENOISER_ADVANCED ? 1 : 0);
+            uni3f(temporalProgram, "uPrevForward", pc.fx, pc.fy, pc.fz);
+            uni3f(temporalProgram, "uPrevRight", pc.rx, pc.ry, pc.rz);
+            uni3f(temporalProgram, "uPrevUp", pc.ux, pc.uy, pc.uz);
+            uni1f(temporalProgram, "uPrevTanHalfFov", prevCam != null ? prevTanHalfFov : tanHalfFov);
+            uni2f(temporalProgram, "uPrevJitter", prevJitX, prevJitY);
+            uni3f(temporalProgram, "uEyeDelta", (float) (cam.x - pc.x), (float) (cam.y - pc.y), (float) (cam.z - pc.z));
+            uni1i(temporalProgram, "uHistoryValid", valid ? 1 : 0);
+            uni1f(temporalProgram, "uMaxHistory", 24f);
+            uni1i(temporalProgram, "uAdvanced", denoiserMode == DENOISER_ADVANCED ? 1 : 0);
             entityMotion(temporalProgram);
             bindImage(0, light, R);
             bindImage(1, geom[cur], R);
@@ -618,8 +618,8 @@ public final class PathTracer {
         int passes = denoise ? ATROUS_STEPS.length : 1;
         for (int i = 0; i < passes; i++) {
             boolean last = i == passes - 1;
-            GL20.glUniform1i(loc(atrousProgram, "uStep"), denoise ? ATROUS_STEPS[i] : 0);
-            GL20.glUniform1i(loc(atrousProgram, "uFinal"), last ? 1 : 0);
+            uni1i(atrousProgram, "uStep", denoise ? ATROUS_STEPS[i] : 0);
+            uni1i(atrousProgram, "uFinal", last ? 1 : 0);
             int out = filt[(i + 1) & 1];
             bindImage(0, input, R);
             bindImage(2, out, W);
@@ -694,34 +694,34 @@ public final class PathTracer {
             setupScene(mc, cam, tickDelta, pathProgram);
             voxels.gatherLights((int) Math.floor(cam.x), (int) Math.floor(cam.y), (int) Math.floor(cam.z), heldLightList(mc, cam, tickDelta));
             readHandProbe();
-            GL20.glUniform1f(loc(pathProgram, "uLavaGlow"), lavaGlow);
-            GL20.glUniform1i(loc(pathProgram, "uReflections"), reflections);
-            GL20.glUniform1i(loc(pathProgram, "uPbr"), pbrActive() ? 1 : 0);
-            GL20.glUniform1i(loc(pathProgram, "uBounces"), bounces);
-            GL20.glUniform1i(loc(pathProgram, "uLightCount"), voxels.lightCount);
-            GL20.glUniform1i(loc(pathProgram, "uFrame"), frameIndex++);
-            GL20.glUniform1i(loc(pathProgram, "uDebugMask"), debugMask);
-            GL20.glUniform2f(loc(pathProgram, "uJitter"), jitX, jitY);
+            uni1f(pathProgram, "uLavaGlow", lavaGlow);
+            uni1i(pathProgram, "uReflections", reflections);
+            uni1i(pathProgram, "uPbr", pbrActive() ? 1 : 0);
+            uni1i(pathProgram, "uBounces", bounces);
+            uni1i(pathProgram, "uLightCount", voxels.lightCount);
+            uni1i(pathProgram, "uFrame", frameIndex++);
+            uni1i(pathProgram, "uDebugMask", debugMask);
+            uni2f(pathProgram, "uJitter", jitX, jitY);
             // M6: last frame's mob boxes, positioned relative to this frame's camera block
             entityCount = !legacyFrame // mobs when they're traced, and blocks drawn by block entity renderers always
                     ? EntityCapture.upload((int) Math.floor(cam.x), (int) Math.floor(cam.y), (int) Math.floor(cam.z)) : 0;
-            GL20.glUniform1i(loc(pathProgram, "uEntityCount"), entityCount);
-            GL20.glUniform1i(loc(pathProgram, "uHandEnt"), handEntity());
+            uni1i(pathProgram, "uEntityCount", entityCount);
+            uni1i(pathProgram, "uHandEnt", handEntity());
             GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 7, EntityCapture.boxBuffer());
             GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 8, EntityCapture.entityBuffer());
             bindTexture(6, GL30.GL_TEXTURE_2D_ARRAY, EntityCapture.skinArray());
             // Beta end calibrated to vanilla's measured midnight (sand ~27/255); realistic end: no light floor at all
-            GL20.glUniform1f(loc(pathProgram, "uAmbient"), look(0.005f, 0.008f, 0.0005f)); // light floor in caves / at night
-            GL20.glUniform1f(loc(pathProgram, "uMoon"), look(0.013f, 0.02f, 0.006f));      // moonlight
-            GL20.glUniform1f(loc(pathProgram, "uSkyFill"), look(1.8f, 1.0f, 1.0f));        // daylight in shadows: Beta barely has shadows
+            uni1f(pathProgram, "uAmbient", look(0.005f, 0.008f, 0.0005f)); // light floor in caves / at night
+            uni1f(pathProgram, "uMoon", look(0.013f, 0.02f, 0.006f));      // moonlight
+            uni1f(pathProgram, "uSkyFill", look(1.8f, 1.0f, 1.0f));        // daylight in shadows: Beta barely has shadows
             cloudUniforms(mc, tickDelta, pathProgram);
-            GL20.glUniform1f(loc(pathProgram, "uLowSunK"), look(0.2f, 0.45f, 1.0f));       // sunset ground: stays lit .. real angle
-            GL20.glUniform1f(loc(pathProgram, "uSkySat"), look(0.4f, 0.6f, 1.0f));         // sky light: soft .. Beta's full blue
-            GL20.glUniform1f(loc(pathProgram, "uRain"), Dim.rain(mc.world, tickDelta));
+            uni1f(pathProgram, "uLowSunK", look(0.2f, 0.45f, 1.0f));       // sunset ground: stays lit .. real angle
+            uni1f(pathProgram, "uSkySat", look(0.4f, 0.6f, 1.0f));         // sky light: soft .. Beta's full blue
+            uni1f(pathProgram, "uRain", Dim.rain(mc.world, tickDelta));
             effectUniforms(mc, tickDelta, pathProgram);
             float[] sunrise = Dim.sunrise(mc.world.getTimeOfDay(tickDelta));
-            if (sunrise != null) GL20.glUniform4f(loc(pathProgram, "uSunrise"), sunrise[0], sunrise[1], sunrise[2], sunrise[3]);
-            else GL20.glUniform4f(loc(pathProgram, "uSunrise"), 0, 0, 0, 0);
+            if (sunrise != null) uni4f(pathProgram, "uSunrise", sunrise[0], sunrise[1], sunrise[2], sunrise[3]);
+            else uni4f(pathProgram, "uSunrise", 0, 0, 0, 0);
             GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 5, voxels.lightBuffer());
             bindImage(0, light, GL15.GL_WRITE_ONLY);
             bindImage(1, skyFog, GL15.GL_WRITE_ONLY);
@@ -744,21 +744,21 @@ public final class PathTracer {
             GL20.glUseProgram(exposureProgram);
             bindTexture(1, GL11.GL_TEXTURE_2D, hdr);
             GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 6, exposureBuffer);
-            GL20.glUniform1f(loc(exposureProgram, "uDeltaTime"), snapExposure ? 100f : (float) Math.min(0.1, frameMs / 1000.0));
+            uni1f(exposureProgram, "uDeltaTime", snapExposure ? 100f : (float) Math.min(0.1, frameMs / 1000.0));
             // Nights: Dark scales the whole exposure down as the sun sets (not where there's no day: Nether, Twilight Forest)
             float night = 1f - Math.max(0f, Math.min(1f, sunDir[1] * 2f + 0.5f));
             float dim = darkNights && mc.world != null && !Dim.nether(mc.world) && fxDayCycle(mc) ? 1f - 0.4f * night : 1f;
-            GL20.glUniform1f(loc(exposureProgram, "uKey"), 0.5f * dim);
-            GL20.glUniform1f(loc(exposureProgram, "uAdapt"), look(0.2f, 0.45f, 0.8f));     // eye adjustment: fixed .. strong
-            GL20.glUniform1f(loc(exposureProgram, "uMinExposure"), 0.1f * dim);
-            GL20.glUniform1f(loc(exposureProgram, "uMaxExposure"), look(1.0f, 1.25f, 2.5f) * dim); // how far darkness gets brightened
+            uni1f(exposureProgram, "uKey", 0.5f * dim);
+            uni1f(exposureProgram, "uAdapt", look(0.2f, 0.45f, 0.8f));     // eye adjustment: fixed .. strong
+            uni1f(exposureProgram, "uMinExposure", 0.1f * dim);
+            uni1f(exposureProgram, "uMaxExposure", look(1.0f, 1.25f, 2.5f) * dim); // how far darkness gets brightened
             GL43.glDispatchCompute(1, 1, 1);
             GL42.glMemoryBarrier(GL43.GL_SHADER_STORAGE_BARRIER_BIT);
 
             // 3. tone map into the 8-bit image that gets shown
             GL20.glUseProgram(tonemapProgram);
-            GL20.glUniform2i(loc(tonemapProgram, "uResolution"), width, height);
-            GL20.glUniform1f(loc(tonemapProgram, "uBrightness"), brightness);
+            uni2i(tonemapProgram, "uResolution", width, height);
+            uni1f(tonemapProgram, "uBrightness", brightness);
             GL42.glBindImageTexture(0, image, 0, false, 0, GL15.GL_WRITE_ONLY, GL11.GL_RGBA8);
             GL42.glBindImageTexture(1, skyFog, 0, false, 0, GL15.GL_READ_ONLY, GL30.GL_RGBA16F);
             GL43.glDispatchCompute(groupsX, groupsY, 1);
@@ -828,11 +828,11 @@ public final class PathTracer {
         GL11.glViewport(0, 0, outW, outH);
 
         GL20.glUseProgram(presentProgram);
-        GL20.glUniform2i(loc(presentProgram, "uResolution"), width, height);
-        GL20.glUniform2i(loc(presentProgram, "uOutSize"), outW, outH);
+        uni2i(presentProgram, "uResolution", width, height);
+        uni2i(presentProgram, "uOutSize", outW, outH);
         float aspect = (float) width / height;
-        GL20.glUniform2f(loc(presentProgram, "uTan"), tanHalfFov * aspect, tanHalfFov);
-        GL20.glUniform4f(loc(presentProgram, "uProjZ"), Camera.projZ[0], Camera.projZ[1], Camera.projZ[2], Camera.projZ[3]);
+        uni2f(presentProgram, "uTan", tanHalfFov * aspect, tanHalfFov);
+        uni4f(presentProgram, "uProjZ", Camera.projZ[0], Camera.projZ[1], Camera.projZ[2], Camera.projZ[3]);
         GL13.glActiveTexture(GL13.GL_TEXTURE0);
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, presentTex);
         GL42.glBindImageTexture(0, depthTex, 0, false, 0, GL15.GL_READ_ONLY, GL30.GL_R32F);
@@ -852,11 +852,11 @@ public final class PathTracer {
 
     private void setupMap(Camera cam) {
         GL20.glUseProgram(program);
-        GL20.glUniform2i(loc(program, "uResolution"), width, height);
-        GL20.glUniform3f(loc(program, "uCamPos"), (float) cam.x, (float) cam.y, (float) cam.z);
-        GL20.glUniform2f(loc(program, "uCamDirXZ"), cam.fx, cam.fz);
-        GL20.glUniform1f(loc(program, "uBlocksPerPixel"), 320f / height); // about 320 blocks top to bottom
-        GL20.glUniform1i(loc(program, "uStartY"), view == View.MAP_CUTAWAY ? Math.min(127, (int) Math.floor(cam.y) + 1) : 127);
+        uni2i(program, "uResolution", width, height);
+        uni3f(program, "uCamPos", (float) cam.x, (float) cam.y, (float) cam.z);
+        uni2f(program, "uCamDirXZ", cam.fx, cam.fz);
+        uni1f(program, "uBlocksPerPixel", 320f / height); // about 320 blocks top to bottom
+        uni1i(program, "uStartY", view == View.MAP_CUTAWAY ? Math.min(127, (int) Math.floor(cam.y) + 1) : 127);
         bindTexture(1, GL12.GL_TEXTURE_3D, voxels.texture());
         GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 1, palette.buffer());
         GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 2, voxels.slotBuffer());
@@ -893,39 +893,39 @@ public final class PathTracer {
     /** Uniforms and bindings shared by the flat (M3) and path traced (M4) shaders. */
     private void setupScene(Minecraft mc, Camera cam, float tickDelta, int p) {
         GL20.glUseProgram(p);
-        GL20.glUniform2i(loc(p, "uResolution"), width, height);
+        uni2i(p, "uResolution", width, height);
         int bx = (int) Math.floor(cam.x), by = (int) Math.floor(cam.y), bz = (int) Math.floor(cam.z);
-        GL20.glUniform3i(loc(p, "uCamBlock"), bx, by, bz);
-        GL20.glUniform3f(loc(p, "uCamFrac"), (float) (cam.x - bx), (float) (cam.y - by), (float) (cam.z - bz));
-        GL20.glUniform3f(loc(p, "uCamForward"), cam.fx, cam.fy, cam.fz);
-        GL20.glUniform3f(loc(p, "uCamRight"), cam.rx, cam.ry, cam.rz);
-        GL20.glUniform3f(loc(p, "uCamUp"), cam.ux, cam.uy, cam.uz);
+        uni3i(p, "uCamBlock", bx, by, bz);
+        uni3f(p, "uCamFrac", (float) (cam.x - bx), (float) (cam.y - by), (float) (cam.z - bz));
+        uni3f(p, "uCamForward", cam.fx, cam.fy, cam.fz);
+        uni3f(p, "uCamRight", cam.rx, cam.ry, cam.rz);
+        uni3f(p, "uCamUp", cam.ux, cam.uy, cam.uz);
         float fov = mc.player.isSubmergedIn(net.minecraft.block.material.Material.WATER) ? 60f : 70f;
         tanHalfFov = Float.isNaN(cam.tanHalfFov) ? (float) Math.tan(Math.toRadians(fov) / 2.0) : cam.tanHalfFov;
-        GL20.glUniform1f(loc(p, "uTanHalfFov"), tanHalfFov);
+        uni1f(p, "uTanHalfFov", tanHalfFov);
 
         net.minecraft.util.math.Vec3d skyC = mc.world.getSkyColor(tickDelta);
         net.minecraft.util.math.Vec3d fogC = mc.world.getFogColor(tickDelta);
-        GL20.glUniform3f(loc(p, "uSkyColor"), (float) skyC.x, (float) skyC.y, (float) skyC.z);
-        GL20.glUniform3f(loc(p, "uFogColor"), (float) fogC.x, (float) fogC.y, (float) fogC.z);
+        uni3f(p, "uSkyColor", (float) skyC.x, (float) skyC.y, (float) skyC.z);
+        uni3f(p, "uFogColor", (float) fogC.x, (float) fogC.y, (float) fogC.z);
         lastFog[0] = (float) fogC.x; lastFog[1] = (float) fogC.y; lastFog[2] = (float) fogC.z;
         float angle = mc.world.getTimeOfDay(tickDelta) * (float) (Math.PI * 2.0);
         // Beta 1.7.3 spins the sun around the X axis, so it rises in -Z and sets in +Z
         // (the famous "sun rises in the north"). Later versions added a 90 degree turn.
-        GL20.glUniform3f(loc(p, "uSunDir"), 0f, (float) Math.cos(angle), (float) Math.sin(angle));
+        uni3f(p, "uSunDir", 0f, (float) Math.cos(angle), (float) Math.sin(angle));
         sunDir[0] = 0f; sunDir[1] = (float) Math.cos(angle); sunDir[2] = (float) Math.sin(angle);
         float daylight = Math.max(0f, Math.min(1f, (float) Math.cos(angle) * 2f + 0.5f));
-        GL20.glUniform1f(loc(p, "uDaylight"), daylight);
+        uni1f(p, "uDaylight", daylight);
         // Same distances as GameRenderer: fog from a quarter of the view distance to all of it.
         float betaDist = 256 >> Math.max(0, Math.min(3, mc.options.viewDistance));
         // the menu's trace distance, or Beta's render distance on Auto
         float viewDist = traceDistance > 0 ? Math.min(traceDistance, 248) : betaDist;
-        GL20.glUniform1f(loc(p, "uMaxDist"), Math.min(viewDist, 248f));
-        GL20.glUniform1i(loc(p, "uFastLeaves"), fastLeaves ? 1 : 0);
+        uni1f(p, "uMaxDist", Math.min(viewDist, 248f));
+        uni1i(p, "uFastLeaves", fastLeaves ? 1 : 0);
         // Fancy graphics: Beta lays tile 38 over grass sides in the biome's grass colour (Fast leaves the plain side)
         // Alpha's grass side tile has its green fringe drawn in, and its tile 38 is the iron block's side, not an overlay
         grassOverlay = 0;
-        GL20.glUniform1i(loc(p, "uGrassOverlay"), grassOverlay);
+        uni1i(p, "uGrassOverlay", grassOverlay);
         camInWater = mc.player.isSubmergedIn(net.minecraft.block.material.Material.WATER);
         maxDist = Math.min(viewDist, 248f);
         // Effects: rain haze pulls the fog in (at full rain it starts at 40% of the usual distance, ends at 65%)
@@ -933,19 +933,19 @@ public final class PathTracer {
         if (camInWater) {
             // under water, Beta's thick blue fog (exponential, density 0.1: nearly all fog by 28 blocks)
             float b = 0.2f + 0.8f * daylight;
-            GL20.glUniform3f(loc(p, "uFogColor"), 0.02f * b, 0.02f * b, 0.2f * b);
-            GL20.glUniform1f(loc(p, "uFogStart"), 0f);
-            GL20.glUniform1f(loc(p, "uFogEnd"), 28f);
+            uni3f(p, "uFogColor", 0.02f * b, 0.02f * b, 0.2f * b);
+            uni1f(p, "uFogStart", 0f);
+            uni1f(p, "uFogEnd", 28f);
         } else {
-            GL20.glUniform1f(loc(p, "uFogStart"), viewDist * 0.25f * (1f - 0.6f * haze));
-            GL20.glUniform1f(loc(p, "uFogEnd"), viewDist * (1f - 0.35f * haze));
+            uni1f(p, "uFogStart", viewDist * 0.25f * (1f - 0.6f * haze));
+            uni1f(p, "uFogEnd", viewDist * (1f - 0.35f * haze));
         }
 
         int terrain = StationCompat.terrainTexture(mc.textureManager.load("/terrain.png"));
         bindTexture(8, GL11.GL_TEXTURE_2D, palette.pbrSpecular());
         bindTexture(9, GL11.GL_TEXTURE_2D, palette.pbrNormal());
         bindTexture(2, GL11.GL_TEXTURE_2D, terrain);
-        GL20.glUniform1i(loc(p, "uTileSize"), Math.max(1, GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_WIDTH) / 16));
+        uni1i(p, "uTileSize", Math.max(1, GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_WIDTH) / 16));
         bindTexture(1, GL12.GL_TEXTURE_3D, voxels.texture());
         bindTexture(3, GL11.GL_TEXTURE_2D, voxels.grassTexture());
         bindTexture(4, GL11.GL_TEXTURE_2D, voxels.foliageTexture());
@@ -974,10 +974,10 @@ public final class PathTracer {
         fxWind = 0.35f + 0.65f * rain;
         float wetHere = 0f;
         fxWetness = rain * wetHere;
-        GL20.glUniform1i(loc(p, "uEffects"), Dim.nether(mc.world) ? effects() & ~(FX_WET | FX_GODRAYS | FX_HAZE) : effects());
-        GL20.glUniform1f(loc(p, "uTime"), fxTime);
-        GL20.glUniform1f(loc(p, "uWind"), fxWind);
-        GL20.glUniform1f(loc(p, "uWet"), fxWetness);
+        uni1i(p, "uEffects", Dim.nether(mc.world) ? effects() & ~(FX_WET | FX_GODRAYS | FX_HAZE) : effects());
+        uni1f(p, "uTime", fxTime);
+        uni1f(p, "uWind", fxWind);
+        uni1f(p, "uWet", fxWetness);
     }
 
     private static void bindTexture(int unit, int target, int tex) {
@@ -1117,20 +1117,20 @@ public final class PathTracer {
         }
         GL20.glUseProgram(pathProgram);
         // where the hand is drawn: right of and below the view centre, a little ahead; facing back at the camera and up
-        GL20.glUniform3f(loc(pathProgram, "uProbeOffset"), cam.fx * 0.5f + cam.rx * 0.35f - cam.ux * 0.3f,
+        uni3f(pathProgram, "uProbeOffset", cam.fx * 0.5f + cam.rx * 0.35f - cam.ux * 0.3f,
                 cam.fy * 0.5f + cam.ry * 0.35f - cam.uy * 0.3f, cam.fz * 0.5f + cam.rz * 0.35f - cam.uz * 0.3f);
         float nx = -cam.fx + cam.ux * 0.6f, ny = -cam.fy + cam.uy * 0.6f, nz = -cam.fz + cam.uz * 0.6f;
         float nl = (float) Math.sqrt(nx * nx + ny * ny + nz * nz);
-        GL20.glUniform3f(loc(pathProgram, "uProbeNormal"), nx / nl, ny / nl, nz / nl);
+        uni3f(pathProgram, "uProbeNormal", nx / nl, ny / nl, nz / nl);
         // the particle/rain grid: 32 x 16 x 32 blocks around the camera, lined up with the world every 2 blocks
         int bx = (int) Math.floor(cam.x), by = (int) Math.floor(cam.y), bz = (int) Math.floor(cam.z);
         pendingOrigin[0] = Math.floorDiv(bx, 2) * 2 - 16; pendingOrigin[1] = Math.floorDiv(by, 2) * 2 - 8; pendingOrigin[2] = Math.floorDiv(bz, 2) * 2 - 16;
-        GL20.glUniform3f(loc(pathProgram, "uGridOrigin"), pendingOrigin[0] - bx, pendingOrigin[1] - by, pendingOrigin[2] - bz);
+        uni3f(pathProgram, "uGridOrigin", pendingOrigin[0] - bx, pendingOrigin[1] - by, pendingOrigin[2] - bz);
         pendingGrid = particleLight && (frameIndex & 1) == 0; // the grid every other frame: half the cost, smoothed anyway
-        GL20.glUniform1i(loc(pathProgram, "uProbeOnly"), 1);
+        uni1i(pathProgram, "uProbeOnly", 1);
         GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 9, probeBuffer);
         GL43.glDispatchCompute(pendingGrid ? 1 + GRID : 1, 1, 1);
-        GL20.glUniform1i(loc(pathProgram, "uProbeOnly"), 0);
+        uni1i(pathProgram, "uProbeOnly", 0);
     }
 
     private boolean vulkanTrace(Minecraft mc) {
@@ -1138,7 +1138,9 @@ public final class PathTracer {
         int k = 0;
         for (String[] u : VK_FLOATS) {
             int n = Integer.parseInt(u[1]);
-            int l = u[0].equals("-") ? -1 : GL20.glGetUniformLocation(pathProgram, u[0]);
+            float[] kept = u[0].equals("-") ? null : pathUniF.get(u[0]);
+            if (kept != null) for (int i = 0; i < Math.min(n, kept.length); i++) f[k + i] = kept[i];
+            int l = kept != null || u[0].equals("-") ? -1 : GL20.glGetUniformLocation(pathProgram, u[0]);
             if (l >= 0) {
                 uf.clear();
                 GL20.glGetUniform(pathProgram, l, uf);
@@ -1151,7 +1153,9 @@ public final class PathTracer {
         k = 0;
         for (String[] u : ints) {
             int n = Integer.parseInt(u[1]);
-            int l = GL20.glGetUniformLocation(pathProgram, u[0]);
+            int[] kept = pathUniI.get(u[0]);
+            if (kept != null) for (int i = 0; i < Math.min(n, kept.length); i++) iv[k + i] = kept[i];
+            int l = kept != null ? -1 : GL20.glGetUniformLocation(pathProgram, u[0]);
             if (l >= 0) {
                 ui.clear();
                 GL20.glGetUniform(pathProgram, l, ui);
@@ -1186,9 +1190,26 @@ public final class PathTracer {
     /** How far each traced mob moved since last frame, for the denoiser and FSR (geometry w = 2 + mob index). */
     private void entityMotion(int program) {
         boolean on = entityCount > 0 && EntityCapture.motionBuffer() != 0;
-        GL20.glUniform1i(loc(program, "uEntMotionCount"), on ? EntityCapture.motionCount() : 0);
+        uni1i(program, "uEntMotionCount", on ? EntityCapture.motionCount() : 0);
         if (on) GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 0, EntityCapture.motionBuffer());
     }
+
+
+    // ---- uniforms: set through these so the values given to the path tracer's program are known on the CPU too
+    // (the Vulkan tracer gets the same numbers; reading them back with glGetUniform made the CPU wait for the GPU)
+    private final java.util.HashMap<String, float[]> pathUniF = new java.util.HashMap<>();
+    private final java.util.HashMap<String, int[]> pathUniI = new java.util.HashMap<>();
+    private int keptProgram;
+    private void newProgram() { if (keptProgram != pathProgram) { pathUniF.clear(); pathUniI.clear(); keptProgram = pathProgram; } }
+    private void keepF(int prog, String name, float... v) { if (prog == pathProgram && prog != 0) { newProgram(); pathUniF.put(name, v); } }
+    private void keepI(int prog, String name, int... v) { if (prog == pathProgram && prog != 0) { newProgram(); pathUniI.put(name, v); } }
+    private void uni1f(int prog, String name, float a) { GL20.glUniform1f(loc(prog, name), a); keepF(prog, name, a); }
+    private void uni2f(int prog, String name, float a, float b) { GL20.glUniform2f(loc(prog, name), a, b); keepF(prog, name, a, b); }
+    private void uni3f(int prog, String name, float a, float b, float c) { GL20.glUniform3f(loc(prog, name), a, b, c); keepF(prog, name, a, b, c); }
+    private void uni4f(int prog, String name, float a, float b, float c, float d) { GL20.glUniform4f(loc(prog, name), a, b, c, d); keepF(prog, name, a, b, c, d); }
+    private void uni1i(int prog, String name, int a) { GL20.glUniform1i(loc(prog, name), a); keepI(prog, name, a); }
+    private void uni2i(int prog, String name, int a, int b) { GL20.glUniform2i(loc(prog, name), a, b); keepI(prog, name, a, b); }
+    private void uni3i(int prog, String name, int a, int b, int c) { GL20.glUniform3i(loc(prog, name), a, b, c); keepI(prog, name, a, b, c); }
 
     private static int loc(int program, String name) {
         return GL20.glGetUniformLocation(program, name);
