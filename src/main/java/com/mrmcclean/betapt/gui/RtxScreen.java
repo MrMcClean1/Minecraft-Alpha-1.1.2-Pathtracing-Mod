@@ -24,10 +24,22 @@ public class RtxScreen extends Screen {
         this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(2, right, top, 150, 20, text(2)));
         this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(3, left, top + 24, 150, 20, text(3)));
         this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(4, right, top + 24, 150, 20, text(4)));
-        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(200, this.width / 2 - 100, top + 108, 200, 20, "Done"));
+        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(5, left, top + 48, 150, 20, text(5)));
+        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(6, right, top + 48, 150, 20, text(6)));
+        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(7, left, top + 72, 150, 20, text(7)));
+        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(200, this.width / 2 - 100, top + 156, 200, 20, "Done"));
     }
 
     private static String onOff(boolean b) { return b ? "ON" : "OFF"; }
+
+    /** Dynamic Vibrance's steps: {intensity, saturation boost}; Medium is NVIDIA's default. */
+    private static final float[][] DVC_LEVELS = {{0.25f, 0.1f}, {0.5f, 0.25f}, {0.8f, 0.5f}};
+    private static final String[] DVC_NAMES = {"Low", "Medium", "High"};
+    private static int dvcLevel(PathTracer pt) {
+        int best = 0;
+        for (int i = 1; i < DVC_LEVELS.length; i++) if (Math.abs(DVC_LEVELS[i][0] - pt.dvcIntensity) < Math.abs(DVC_LEVELS[best][0] - pt.dvcIntensity)) best = i;
+        return best;
+    }
 
     private static String text(int id) {
         PathTracer pt = PathTracer.INSTANCE;
@@ -36,6 +48,9 @@ public class RtxScreen extends Screen {
             case 2 -> "Low latency: " + (pt.lowLatency == 2 ? "NVIDIA Reflex" : pt.lowLatency == 1 ? "ON" : "OFF");
             case 3 -> "Ray reordering (SER): " + onOff(pt.ser);
             case 4 -> "Opacity micromaps: " + onOff(pt.omm);
+            case 5 -> "Ray Reconstruction: " + onOff(pt.rayReconstruction);
+            case 6 -> "Dynamic Vibrance: " + (!pt.deepDvc ? "OFF" : DVC_NAMES[dvcLevel(pt)]);
+            case 7 -> "Frame Generation: " + onOff(pt.frameGeneration);
             default -> "";
         };
     }
@@ -46,6 +61,9 @@ public class RtxScreen extends Screen {
             "ON: no frames wait in line (any GPU). Reflex: NVIDIA's.",
             "RTX 40/50: regroups rays by what they hit. Same picture.",
             "RTX 40/50: plants' see-through pixels skipped in hardware.",
+            "With DLSS: NVIDIA's ray tracing denoiser replaces ours.",
+            "RTX: AI colour vibrance on the finished picture.",
+            "With DLSS: shown through Vulkan, for NVIDIA Frame Generation.",
     };
 
     @Override
@@ -56,6 +74,15 @@ public class RtxScreen extends Screen {
             case 2 -> { pt.lowLatency = (pt.lowLatency + 1) % 3; VkBridge.reopen(); }
             case 3 -> { pt.ser = !pt.ser; VkBridge.reopen(); }
             case 4 -> { pt.omm = !pt.omm; VkBridge.reopen(); }
+            case 5 -> { pt.rayReconstruction = !pt.rayReconstruction; VkBridge.reopen(); }
+            case 7 -> { pt.frameGeneration = !pt.frameGeneration; VkBridge.reopen(); }
+            case 6 -> { // OFF, Low, Medium, High, then OFF again
+                int next = !pt.deepDvc ? 0 : dvcLevel(pt) + 1;
+                boolean wasOn = pt.deepDvc;
+                pt.deepDvc = next < DVC_LEVELS.length;
+                if (pt.deepDvc) { pt.dvcIntensity = DVC_LEVELS[next][0]; pt.dvcSaturation = DVC_LEVELS[next][1]; }
+                if (wasOn != pt.deepDvc) VkBridge.reopen();
+            }
             case 200 -> { this.minecraft.openScreen(this.parent); return; }
             default -> { return; }
         }
@@ -70,10 +97,10 @@ public class RtxScreen extends Screen {
         int hovered = 0;
         for (Object o : this.buttons) {
             ButtonWidget w = (ButtonWidget) o;
-            if (w.id >= 1 && w.id <= 4 && mouseX >= w.x && mouseY >= w.y && mouseX < w.x + 150 && mouseY < w.y + 20) hovered = w.id;
+            if (w.id >= 1 && w.id <= 7 && mouseX >= w.x && mouseY >= w.y && mouseX < w.x + 150 && mouseY < w.y + 20) hovered = w.id;
         }
         String status = VkBridge.nvStatus.isEmpty() ? "Status shows once the Vulkan tracer runs (Hardware RT: ON)." : VkBridge.nvStatus;
-        this.drawCenteredString(this.textRenderer, hovered > 0 ? HELP[hovered] : "", this.width / 2, top + 54, 0xA0A0A0);
+        this.drawCenteredString(this.textRenderer, hovered > 0 ? HELP[hovered] : "", this.width / 2, top + 102, 0xA0A0A0);
         // the status can be long: split it over lines that fit
         java.util.List<String> lines = new java.util.ArrayList<>();
         StringBuilder line = new StringBuilder();
@@ -84,7 +111,7 @@ public class RtxScreen extends Screen {
         }
         lines.add(line.toString());
         for (int i = 0; i < Math.min(3, lines.size()); i++)
-            this.drawCenteredString(this.textRenderer, lines.get(i), this.width / 2, top + 68 + i * 11, 0x80FF80);
+            this.drawCenteredString(this.textRenderer, lines.get(i), this.width / 2, top + 116 + i * 11, 0x80FF80);
         super.render(mouseX, mouseY, delta);
     }
 }

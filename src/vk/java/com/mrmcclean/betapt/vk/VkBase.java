@@ -55,18 +55,71 @@ abstract class VkBase {
             EXT_OMM = "VK_EXT_opacity_micromap", EXT_SYNC2 = "VK_KHR_synchronization2";
     /** Newer features the device was made with (each only when asked for through optionalExtensions and the GPU has it). */
     protected boolean timelineOn, rtPipelineOn, serOn, ommOn;
+    /** The instance has the window-surface extensions (VkPresent). */
+    protected boolean surfaceOn;
+    protected static final String EXT_SWAPCHAIN = "VK_KHR_swapchain";
 
     /**
      * @param uuid  if not null, only the Vulkan device with this UUID (the one OpenGL is running on,
      *              so the two can share memory); extra device extensions follow
      */
+    /**
+     * NVIDIA Streamline (DLSS, NvFeatures) works with one Vulkan device per process ("Applications can create multiple
+     * devices but SL only works with one"): a second one made it throw on every frame and the game died. So once it has
+     * started, the first device made through it is kept for the whole game, and every later tracer (a new render size,
+     * DLSS mode or setting) uses that one, with a command pool of its own. Only the tracer's own resources come and go.
+     */
+    private static Kept kept;
+    private boolean usesKept;
+    /** The kept device's handles and features, apart from the tracer that made it (which clears its own when it closes). */
+    private static final class Kept {
+        VkInstance instance; VkPhysicalDevice physical; VkDevice device; VkQueue queue; int queueFamily;
+        VkPhysicalDeviceMemoryProperties memProps;
+        java.util.Set<String> optionalEnabled;
+        boolean timelineOn, rtPipelineOn, serOn, ommOn, surfaceOn;
+        Map<String, Object> out;
+    }
+    /** Only the live tracer keeps or reuses it (the probe makes its device without the memory sharing the tracer needs). */
+    protected boolean keepsDevice() { return false; }
+    protected final boolean keepDevice() { return keepsDevice() && NvFeatures.streamlineStarted(); }
+
+    private void keep() {
+        Kept k = new Kept();
+        k.instance = instance; k.physical = physical; k.device = device; k.queue = queue; k.queueFamily = queueFamily;
+        k.memProps = memProps; k.optionalEnabled = new java.util.LinkedHashSet<>(optionalEnabled);
+        k.timelineOn = timelineOn; k.rtPipelineOn = rtPipelineOn; k.serOn = serOn; k.ommOn = ommOn; k.surfaceOn = surfaceOn;
+        k.out = new HashMap<>(out);
+        kept = k; usesKept = true;
+    }
+
+    private void adopt(Kept k, MemoryStack stack) {
+        instance = k.instance; physical = k.physical; device = k.device; queue = k.queue; queueFamily = k.queueFamily;
+        memProps = k.memProps;
+        optionalEnabled.clear(); optionalEnabled.addAll(k.optionalEnabled);
+        timelineOn = k.timelineOn; rtPipelineOn = k.rtPipelineOn; serOn = k.serOn; ommOn = k.ommOn; surfaceOn = k.surfaceOn;
+        for (String key : new String[]{"devices", "device", "vram", "rtExtras"}) out.put(key, k.out.get(key));
+        usesKept = true;
+        LongBuffer lp = stack.mallocLong(1);
+        check(vkCreateCommandPool(device, VkCommandPoolCreateInfo.calloc(stack).sType$Default()
+                .queueFamilyIndex(queueFamily).flags(VK_COMMAND_POOL_CREATE_TRANSIENT_BIT), null, lp), "command pool");
+        commandPool = lp.get(0);
+    }
+
     protected void createDevice(byte[] uuid, String... extraExtensions) {
+        if (keepDevice() && kept != null) {
+            try (MemoryStack stack = MemoryStack.stackPush()) { adopt(kept, stack); }
+            return;
+        }
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkApplicationInfo app = VkApplicationInfo.calloc(stack).sType$Default()
                     .pApplicationName(stack.UTF8("BetaPT RT probe")).apiVersion(VK_API_VERSION_1_2);
             PointerBuffer pp = stack.mallocPointer(1);
-            check(vkCreateInstance(VkInstanceCreateInfo.calloc(stack).sType$Default().pApplicationInfo(app), null, pp), "vkCreateInstance");
-            instance = new VkInstance(pp.get(0), VkInstanceCreateInfo.calloc(stack).sType$Default().pApplicationInfo(app));
+            VkInstanceCreateInfo ici = VkInstanceCreateInfo.calloc(stack).sType$Default().pApplicationInfo(app);
+            // the kept device (Streamline) can also show frames in a window (VkPresent, for Frame Generation)
+            surfaceOn = keepDevice() && org.lwjgl.system.Platform.get() == org.lwjgl.system.Platform.WINDOWS;
+            if (surfaceOn) ici.ppEnabledExtensionNames(stack.pointers(stack.UTF8("VK_KHR_surface"), stack.UTF8("VK_KHR_win32_surface")));
+            check(vkCreateInstance(ici, null, pp), "vkCreateInstance");
+            instance = new VkInstance(pp.get(0), ici);
 
             IntBuffer n = stack.mallocInt(1);
             vkEnumeratePhysicalDevices(instance, n, null);
@@ -179,6 +232,7 @@ abstract class VkBase {
                     .queueFamilyIndex(queueFamily).flags(VK_COMMAND_POOL_CREATE_TRANSIENT_BIT), null, lp), "command pool");
             commandPool = lp.get(0);
         }
+        if (keepDevice()) keep(); // made through Streamline: kept for the whole game
     }
 
     protected static byte[] deviceUuid(VkPhysicalDevice d) {
@@ -195,14 +249,19 @@ abstract class VkBase {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             IntBuffer n = stack.mallocInt(1);
             vkEnumerateDeviceExtensionProperties(d, (ByteBuffer) null, n, null);
-            VkExtensionProperties.Buffer ext = VkExtensionProperties.malloc(n.get(0), stack);
-            vkEnumerateDeviceExtensionProperties(d, (ByteBuffer) null, n, ext);
-            outer:
-            for (String name : names) {
-                for (int i = 0; i < ext.capacity(); i++) if (ext.get(i).extensionNameString().equals(name)) continue outer;
-                return false;
+            // on the heap: NVIDIA lists about 250 device extensions of 260 bytes each, more than LWJGL's 64 KB stack
+            VkExtensionProperties.Buffer ext = VkExtensionProperties.malloc(n.get(0));
+            try {
+                vkEnumerateDeviceExtensionProperties(d, (ByteBuffer) null, n, ext);
+                outer:
+                for (String name : names) {
+                    for (int i = 0; i < ext.capacity(); i++) if (ext.get(i).extensionNameString().equals(name)) continue outer;
+                    return false;
+                }
+                return true;
+            } finally {
+                ext.free();
             }
-            return true;
         }
     }
 
@@ -411,8 +470,10 @@ abstract class VkBase {
                 vkFreeMemory(device, b[1], null);
             }
             if (commandPool != 0) vkDestroyCommandPool(device, commandPool, null);
+            if (usesKept) return; // the kept device (and its instance) outlive every tracer: see kept
             vkDestroyDevice(device, null);
         }
+        if (usesKept) return;
         if (memProps != null) memProps.free();
         if (instance != null) vkDestroyInstance(instance, null);
     }

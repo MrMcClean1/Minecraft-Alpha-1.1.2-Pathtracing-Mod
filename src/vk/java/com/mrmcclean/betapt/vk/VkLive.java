@@ -97,6 +97,8 @@ public final class VkLive extends VkBase {
      * in: width, height (the path tracer's resolution), atlas (int[] ARGB of terrain.png), atlasW, atlasH,
      * clouds (int[] ARGB, 256 x 256), blockInfo (BlockTable's table). Call on the render thread.
      */
+    @Override protected boolean keepsDevice() { return true; }
+
     public static Object open(Map<String, Object> in) {
         VkLive v = new VkLive();
         try {
@@ -119,13 +121,13 @@ public final class VkLive extends VkBase {
         blockInfo = (int[]) in.get("blockInfo");
         blockBoxes = (float[]) in.get("blockBox");
 
-        boolean wantDlss = Boolean.TRUE.equals(in.get("dlss")), wantReflex = Boolean.TRUE.equals(in.get("reflex"));
+        boolean wantDlss = Boolean.TRUE.equals(in.get("dlss")), wantReflex = Boolean.TRUE.equals(in.get("reflex")), wantDvc = Boolean.TRUE.equals(in.get("dvc"));
         boolean wantSer = Boolean.TRUE.equals(in.get("ser"));
         wantOmm = Boolean.TRUE.equals(in.get("omm"));
         ommLeaves = Boolean.getBoolean("betapt.omm.leaves");
-        if ((wantDlss || wantReflex) && NvFeatures.crashedLastTime()) { wantDlss = false; wantReflex = false; }
-        if (wantDlss || wantReflex) { NvFeatures.markStarting(); nvPending = true; }
-        if (wantDlss) NvFeatures.startStreamline(); // before any Vulkan instance: it becomes the Vulkan library
+        if ((wantDlss || wantReflex || wantDvc) && NvFeatures.crashedLastTime()) { wantDlss = false; wantReflex = false; wantDvc = false; }
+        if (wantDlss || wantReflex || wantDvc) { NvFeatures.markStarting(); nvPending = true; }
+        if (wantDlss || wantDvc) NvFeatures.startStreamline(); // before any Vulkan instance: it becomes the Vulkan library
 
         GLCapabilities caps;
         try { caps = GL.getCapabilities(); } catch (IllegalStateException e) { caps = GL.createCapabilities(); }
@@ -148,19 +150,28 @@ public final class VkLive extends VkBase {
                 : KHRExternalSemaphoreFd.VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME;
         List<String> opt = new ArrayList<>();
         if (glSem) opt.add(semExt);
-        if (wantSer) { opt.add(EXT_RT_PIPELINE); opt.add(EXT_SER); }
-        if (wantOmm) { opt.add(EXT_OMM); opt.add(EXT_SYNC2); }
+        // with Streamline the device is kept for the whole game (VkBase.kept): it gets SER and micromaps whenever the GPU
+        // has them, and each tracer turns them on or off for itself (serOn, ommOn below)
+        if (wantSer || keepDevice()) { opt.add(EXT_RT_PIPELINE); opt.add(EXT_SER); }
+        if (wantOmm || keepDevice()) { opt.add(EXT_OMM); opt.add(EXT_SYNC2); }
+        if (keepDevice()) opt.add(EXT_SWAPCHAIN); // VkPresent (Frame Generation)
         optionalExtensions = opt.toArray(new String[0]);
         createDevice(uuid, windows ? KHRExternalMemoryWin32.VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME : KHRExternalMemoryFd.VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+        serOn &= wantSer;
+        ommOn &= wantOmm;
         System.out.println("[BetaPT] Vulkan tracer on " + out.get("device") + ", " + out.get("vram") + " video memory; extra ray tracing hardware: " + out.get("rtExtras"));
         out.put("glRenderer", GL11C.glGetString(GL11C.GL_RENDERER));
         nv = new NvFeatures();
         if (wantDlss) nv.dlssAfterDevice(physical);
-        if (wantReflex) {
+        if (wantDlss && Boolean.TRUE.equals(in.get("rr"))) nv.rrAfterDevice(); // Ray Reconstruction rides on DLSS
+        if (wantDvc) nv.dvcAfterDevice(physical);
+        if (wantDlss) nv.fgCheck(); // Frame Generation: what it says about this GPU (the log)
+        if (wantDlss && Boolean.TRUE.equals(in.get("fg"))) nv.fgStart(Integer.getInteger("betapt.fg.generated", 1)); // with Streamline's Reflex
+        if (wantReflex && !nv.fgOn()) {
             if (timelineOn) nv.reflexStart(device, Boolean.TRUE.equals(in.get("reflexBoost")));
             else nv.reflexStatus = "Reflex: this driver has no timeline semaphores";
         }
-        if (nvPending && !nv.dlssReady()) { NvFeatures.markStarted(); nvPending = false; } // DLSS clears it after its first frame
+        if (nvPending && !nv.dlssReady() && !nv.dvcReady()) { NvFeatures.markStarted(); nvPending = false; } // DLSS or DVC clears it after its first frame
         serStatus = !wantSer ? "off" : serOn ? "starting" : "not on this GPU/driver (needs VK_NV_ray_tracing_invocation_reorder)";
         ommStatus = !wantOmm ? "off" : ommOn ? "on" : "not on this GPU/driver (needs VK_EXT_opacity_micromap)";
         out.put("nvidia", nvStatus());
@@ -1008,8 +1019,8 @@ public final class VkLive extends VkBase {
     }
 
     // ---- GPU hand-off between OpenGL and Vulkan ----
-    private long vkWaitGl, vkSignalGl, frameFence; // Vulkan's ends of the two semaphores, and this frame's fence
-    private int glDone, glReady;                   // OpenGL's ends
+    long vkWaitGl, vkSignalGl; private long frameFence; // Vulkan's ends of the two semaphores, and this frame's fence
+    int glDone, glReady;                           // OpenGL's ends
     private VkCommandBuffer frameCb;               // the frame in flight, if any
     private double lastGpuMs;
 
@@ -1069,7 +1080,7 @@ public final class VkLive extends VkBase {
 
     // ================================================================== NVIDIA RTX features (all optional)
 
-    private NvFeatures nv;
+    NvFeatures nv;
     private boolean nvPending;            // the "starting" breadcrumb is still there (cleared after DLSS's first frame)
     private int traceStage = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT; // where the tracer runs (ray tracing stage with SER)
     private String serStatus = "off", ommStatus = "off";
@@ -1080,7 +1091,10 @@ public final class VkLive extends VkBase {
         if (nv != null) {
             if (!nv.dlssStatus.isEmpty()) s.append(nv.dlssStatus);
             else if (NvFeatures.status.contains("skipped")) s.append(NvFeatures.status);
+            if (!nv.rrStatus.isEmpty()) s.append(s.length() > 0 ? "; " : "").append(nv.rrStatus);
+            if (!nv.dvcStatus.isEmpty()) s.append(s.length() > 0 ? "; " : "").append(nv.dvcStatus);
             if (!nv.reflexStatus.isEmpty()) s.append(s.length() > 0 ? "; " : "").append(nv.reflexStatus);
+            if (!nv.fgRunStatus.isEmpty()) s.append(s.length() > 0 ? "; " : "").append(nv.fgRunStatus);
         }
         s.append(s.length() > 0 ? "; " : "").append("SER ").append(serStatus).append("; micromaps ").append(ommStatus);
         return s.toString();
@@ -1338,7 +1352,7 @@ public final class VkLive extends VkBase {
     /** {optimal width, height, min width, height, max width, height} for a DLSS mode and window size, or null. */
     public int[] dlssSizes(int mode, int ow, int oh) { return dlssReady() ? nv.dlssSizes(mode, ow, oh) : null; }
 
-    private boolean semaphores() { return glDone != 0; }
+    boolean semaphores() { return glDone != 0; }
 
     private void waitDlss() {
         if (dlssCb == null) return;
@@ -1351,7 +1365,7 @@ public final class VkLive extends VkBase {
     }
 
     /** An image Vulkan and OpenGL share, in GENERAL layout. */
-    private long[] sharedImage(int w, int h, int vkFormat, int glFormat) {
+    long[] sharedImage(int w, int h, int vkFormat, int glFormat) {
         int handleType = windows ? VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT : VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
         int usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
         long img = image(w, h, vkFormat, usage, handleType);
@@ -1391,7 +1405,7 @@ public final class VkLive extends VkBase {
 
     private static final int GL12C_CLAMP = 0x812F; // GL_CLAMP_TO_EDGE
 
-    private void freeShared(long[] d) {
+    void freeShared(long[] d) {
         vkDestroyImageView(device, d[2], null);
         vkDestroyImage(device, d[0], null);
         buffers.removeIf(x -> x[0] == VK_NULL_HANDLE && x[1] == d[1]);
@@ -1407,13 +1421,59 @@ public final class VkLive extends VkBase {
      */
     public int dlss(int glColor, int glDepth, int glMv, int rw, int rh, int ow, int oh, int mode, float[] c, boolean reset) {
         if (!dlssReady()) return 0;
+        return runNv(NV_DLSS, dl, DL_VK, DL_GL, new int[]{glColor, glDepth, glMv}, rw, rh, ow, oh, mode, c, reset);
+    }
+
+    /**
+     * DLSS Ray Reconstruction: denoises and upscales in one go. glColor: the noisy HDR picture (RGBA16F, albedo x light +
+     * glow, not denoised); depth and motion as for dlss; glAlbedo the diffuse albedo, glSpec the specular albedo, glNormal
+     * the world normal with roughness in w (all RGBA16F, rw x rh). Returns the OpenGL texture with the HDR result
+     * (RGBA16F, ow x oh, to be exposed and tone mapped), or 0.
+     */
+    public int dlssRR(int glColor, int glDepth, int glMv, int glAlbedo, int glSpec, int glNormal, int rw, int rh, int ow, int oh, int mode, float[] c, boolean reset) {
+        if (!rrReady()) return 0;
+        return runNv(NV_RR, rr, RR_VK, RR_GL, new int[]{glColor, glDepth, glMv, glAlbedo, glSpec, glNormal}, rw, rh, ow, oh, mode, c, reset);
+    }
+
+    public boolean rrReady() { return nv != null && nv.rrReady(); }
+    public int[] rrSizes(int mode, int ow, int oh) { return rrReady() ? nv.rrSizes(mode, ow, oh) : null; }
+
+    private static final int[] RR_VK = {VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R32_SFLOAT, VK_FORMAT_R16G16_SFLOAT, VK_FORMAT_R16G16B16A16_SFLOAT,
+            VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R16G16B16A16_SFLOAT};
+    private static final int[] RR_GL = {GL30C.GL_RGBA16F, GL30C.GL_R32F, GL30C.GL_RG16F, GL30C.GL_RGBA16F, GL30C.GL_RGBA16F, GL30C.GL_RGBA16F, GL30C.GL_RGBA16F};
+    private final long[][] rr = new long[NvFeatures.RR_IMAGES][]; // as dl: the inputs at render size, the output at window size
+
+    /**
+     * Copies OpenGL's inputs (src, rw x rh) into images Vulkan shares, records DLSS or Ray Reconstruction into them
+     * (the last image, ow x oh, is the output) and submits it. Returns the output's OpenGL texture, or 0.
+     */
+    private static final int NV_DLSS = 0, NV_RR = 1, NV_DVC = 2;
+    private final long[][] dvc = new long[1][]; // the finished picture, filtered in place
+    private float dvcIntensity, dvcSaturation;
+
+    public boolean dvcReady() { return nv != null && nv.dvcReady(); }
+
+    /**
+     * RTX Dynamic Vibrance on the finished picture glTex (w x h, RGBA8, or RGBA16F when hdr16: tone mapped either way).
+     * Returns the OpenGL texture with the filtered picture, or 0.
+     */
+    public int deepDvc(int glTex, int w, int h, boolean hdr16, float intensity, float saturation) {
+        if (!dvcReady()) return 0;
+        int vkf = hdr16 ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM, glf = hdr16 ? GL30C.GL_RGBA16F : GL11C.GL_RGBA8;
+        if (dvc[0] != null && dvc[0][3] != vkf) { waitDlss(); waitFrame(); vkDeviceWaitIdle(device); freeShared(dvc[0]); dvc[0] = null; }
+        dvcIntensity = intensity; dvcSaturation = saturation;
+        return runNv(NV_DVC, dvc, new int[]{vkf}, new int[]{glf}, new int[]{glTex}, w, h, w, h, 0, null, false);
+    }
+
+    private int runNv(int kind, long[][] imgs, int[] vkFormats, int[] glFormats, int[] src, int rw, int rh, int ow, int oh, int mode, float[] c, boolean reset) {
+        int n = imgs.length;
         try {
             waitDlss();
-            int[][] sz = {{rw, rh}, {rw, rh}, {rw, rh}, {ow, oh}};
-            for (int i = 0; i < 4; i++) {
-                if (dl[i] != null && dl[i][4] == sz[i][0] && dl[i][5] == sz[i][1]) continue;
-                if (dl[i] != null) { waitFrame(); vkDeviceWaitIdle(device); freeShared(dl[i]); dl[i] = null; }
-                dl[i] = sharedImage(sz[i][0], sz[i][1], DL_VK[i], DL_GL[i]);
+            for (int i = 0; i < n; i++) {
+                int w = i == n - 1 ? ow : rw, h = i == n - 1 ? oh : rh;
+                if (imgs[i] != null && imgs[i][4] == w && imgs[i][5] == h) continue;
+                if (imgs[i] != null) { waitFrame(); vkDeviceWaitIdle(device); freeShared(imgs[i]); imgs[i] = null; }
+                imgs[i] = sharedImage(w, h, vkFormats[i], glFormats[i]);
                 reset = true;
             }
             if (dlssFence == 0) {
@@ -1423,19 +1483,22 @@ public final class VkLive extends VkBase {
                     dlssFence = lp.get(0);
                 }
             }
-            int[] src = {glColor, glDepth, glMv};
-            for (int i = 0; i < 3; i++)
-                GL43C.glCopyImageSubData(src[i], GL11C.GL_TEXTURE_2D, 0, 0, 0, 0, (int) dl[i][7], GL11C.GL_TEXTURE_2D, 0, 0, 0, 0, rw, rh, 1);
+            for (int i = 0; i < src.length; i++)
+                GL43C.glCopyImageSubData(src[i], GL11C.GL_TEXTURE_2D, 0, 0, 0, 0, (int) imgs[i][7], GL11C.GL_TEXTURE_2D, 0, 0, 0, 0, rw, rh, 1);
             VkCommandBuffer cb = beginOneShot();
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 VkMemoryBarrier.Buffer all = VkMemoryBarrier.calloc(1, stack);
                 all.get(0).sType$Default().srcAccessMask(VK_ACCESS_MEMORY_WRITE_BIT).dstAccessMask(VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
                 vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, all, null, null);
-                boolean ok = nv.dlssRecord(cb, mode, dl, c, reset);
+                boolean ok = kind == NV_RR ? nv.rrRecord(cb, mode, imgs, c, reset) : kind == NV_DVC ? nv.dvcRecord(cb, imgs[0], dvcIntensity, dvcSaturation) : nv.dlssRecord(cb, mode, imgs, c, reset);
                 vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, all, null, null);
                 if (!ok) {
                     vkEndCommandBuffer(cb);
                     vkFreeCommandBuffers(device, commandPool, cb);
+                    // it refused (the reason is in nv.dlssStatus / rrStatus) and the game carries on: that's no crash, so
+                    // the next start mustn't skip the NVIDIA features
+                    if (nvPending) { NvFeatures.markStarted(); nvPending = false; }
+                    out.put("nvidia", nvStatus());
                     return 0;
                 }
                 if (!semaphores()) {
@@ -1443,8 +1506,8 @@ public final class VkLive extends VkBase {
                     endOneShot(cb);    // and so is DLSS
                 } else {
                     check(vkEndCommandBuffer(cb), "end");
-                    IntBuffer texs = stack.mallocInt(4), layouts = stack.mallocInt(4);
-                    for (int i = 0; i < 4; i++) { texs.put(i, (int) dl[i][7]); layouts.put(i, EXTSemaphore.GL_LAYOUT_GENERAL_EXT); }
+                    IntBuffer texs = stack.mallocInt(n), layouts = stack.mallocInt(n);
+                    for (int i = 0; i < n; i++) { texs.put(i, (int) imgs[i][7]); layouts.put(i, EXTSemaphore.GL_LAYOUT_GENERAL_EXT); }
                     EXTSemaphore.glSignalSemaphoreEXT(glDone, stack.mallocInt(0), texs, layouts);
                     GL11C.glFlush();
                     check(vkQueueSubmit(queue, VkSubmitInfo.calloc(stack).sType$Default()
@@ -1455,21 +1518,46 @@ public final class VkLive extends VkBase {
                 }
             }
             if (nvPending) { NvFeatures.markStarted(); nvPending = false; }
-            return (int) dl[3][7];
+            return (int) imgs[n - 1][7];
         } catch (Throwable t) {
-            nv.dlssStatus = "DLSS stopped: " + t;
+            if (kind == NV_RR) nv.rrStatus = "Ray Reconstruction stopped: " + t; else if (kind == NV_DVC) nv.dvcStatus = "Dynamic Vibrance stopped: " + t; else nv.dlssStatus = "DLSS stopped: " + t;
             out.put("nvidia", nvStatus());
             return 0;
         }
     }
+    // ---- showing frames through Vulkan (VkPresent, for Frame Generation)
+
+    private VkPresent presenter;
+    private boolean presentFailed;
+    private long presented;
+
+    /** Shows Minecraft's finished frame (OpenGL texture glTex, w x h, RGBA8) in a Vulkan window over the game's; false if it can't. */
+    public boolean present(int glTex, int w, int h, boolean vsync) {
+        if (presentFailed) return false;
+        if (!surfaceOn || !optionalEnabled.contains(EXT_SWAPCHAIN)) { presentFailed = true; out.put("present", "Vulkan window: needs NVIDIA Streamline (DLSS on)"); return false; }
+        if (presenter == null) presenter = new VkPresent(this);
+        if (!presenter.present(glTex, w, h, vsync)) { presentFailed = true; presenter = null; }
+        out.put("present", presenter != null ? presenter.status : "Vulkan window: off after an error");
+        if (nv != null && nv.fgOn() && ++presented % 600 == 0) System.out.println("[BetaPT] " + nv.fgReport());
+        return !presentFailed;
+    }
+
+    /** The game's own picture shows again. */
+    public void stopPresent() {
+        if (presenter != null) { presenter.close(); presenter = null; }
+        presentFailed = false;
+    }
+
+    public String presentStatus() { Object s = out.get("present"); return s != null ? s.toString() : ""; }
 
     // ---- Reflex
 
-    public boolean reflexOn() { return nv != null && nv.reflexOn(); }
+    public boolean reflexOn() { return nv != null && (nv.reflexOn() || nv.fgOn()); }
 
     /** 0: start of the frame (Reflex's sleep, then "simulation start"); 1..5: Reflex's markers for this frame. */
     public void reflexFrame(int phase) {
         if (!reflexOn()) return;
+        if (nv.fgOn()) { if (phase == 0) nv.fgFrameStart(); else nv.pcl(phase); return; } // Streamline's Reflex
         if (phase == 0) nv.reflexFrameStart();
         else nv.marker(phase);
     }
@@ -1479,6 +1567,7 @@ public final class VkLive extends VkBase {
         mesher.shutdownNow();
         try { mesher.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS); } catch (InterruptedException ignored) {}
         if (device != null) {
+            stopPresent();
             for (Object[] r; (r = meshed.poll()) != null; ) { discard((Part) r[4]); discard((Part) r[5]); }
             vkDeviceWaitIdle(device);
             if (frameCb != null) { vkFreeCommandBuffers(device, commandPool, frameCb); frameCb = null; }
@@ -1498,6 +1587,8 @@ public final class VkLive extends VkBase {
             if (dlssCb != null) { vkFreeCommandBuffers(device, commandPool, dlssCb); dlssCb = null; }
             if (dlssFence != 0) vkDestroyFence(device, dlssFence, null);
             for (int i = 0; i < 4; i++) if (dl[i] != null) { freeShared(dl[i]); dl[i] = null; }
+            for (int i = 0; i < rr.length; i++) if (rr[i] != null) { freeShared(rr[i]); rr[i] = null; }
+            if (dvc[0] != null) { freeShared(dvc[0]); dvc[0] = null; }
             if (serPipeline != 0) vkDestroyPipeline(device, serPipeline, null);
             if (serModule != 0) vkDestroyShaderModule(device, serModule, null);
             if (nv != null) nv.close();

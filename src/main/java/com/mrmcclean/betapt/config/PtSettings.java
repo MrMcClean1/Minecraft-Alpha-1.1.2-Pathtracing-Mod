@@ -88,6 +88,11 @@ public final class PtSettings {
             pt.lowLatency = Math.max(0, Math.min(2, Integer.parseInt(p.getProperty("lowLatency", Integer.toString(pt.lowLatency)).trim())));
             pt.ser = Boolean.parseBoolean(p.getProperty("ser", Boolean.toString(pt.ser)).trim());
             pt.omm = Boolean.parseBoolean(p.getProperty("micromaps", Boolean.toString(pt.omm)).trim());
+            pt.rayReconstruction = Boolean.parseBoolean(p.getProperty("rayReconstruction", Boolean.toString(pt.rayReconstruction)).trim());
+            pt.frameGeneration = Boolean.parseBoolean(p.getProperty("frameGeneration", Boolean.toString(pt.frameGeneration)).trim());
+            pt.deepDvc = Boolean.parseBoolean(p.getProperty("dynamicVibrance", Boolean.toString(pt.deepDvc)).trim());
+            try { pt.dvcIntensity = Math.max(0f, Math.min(1f, Float.parseFloat(p.getProperty("dynamicVibrance.intensity", Float.toString(pt.dvcIntensity)).trim()))); } catch (NumberFormatException ignored) {}
+            try { pt.dvcSaturation = Math.max(0f, Math.min(1f, Float.parseFloat(p.getProperty("dynamicVibrance.saturation", Float.toString(pt.dvcSaturation)).trim()))); } catch (NumberFormatException ignored) {}
             pt.traceDistance = Math.max(0, Math.min(248, Integer.parseInt(p.getProperty("traceDistance", Integer.toString(pt.traceDistance)).trim())));
             pt.fastLeaves = "fast".equalsIgnoreCase(p.getProperty("leaves", pt.fastLeaves ? "fast" : "fancy").trim());
             String cs = p.getProperty("cloudShadows", Float.toString(pt.cloudShadows));
@@ -121,6 +126,11 @@ public final class PtSettings {
         p.setProperty("lowLatency", Integer.toString(pt.lowLatency));
         p.setProperty("ser", Boolean.toString(pt.ser));
         p.setProperty("micromaps", Boolean.toString(pt.omm));
+        p.setProperty("rayReconstruction", Boolean.toString(pt.rayReconstruction));
+        p.setProperty("frameGeneration", Boolean.toString(pt.frameGeneration));
+        p.setProperty("dynamicVibrance", Boolean.toString(pt.deepDvc));
+        p.setProperty("dynamicVibrance.intensity", Float.toString(pt.dvcIntensity));
+        p.setProperty("dynamicVibrance.saturation", Float.toString(pt.dvcSaturation));
         p.setProperty("upscaler", pt.upscaler == PathTracer.UPSCALER_BASIC ? "basic" : pt.upscaler == PathTracer.UPSCALER_OFF ? "off" : pt.upscaler == PathTracer.UPSCALER_DLSS ? "dlss" : "fsr");
         p.setProperty("cloudShadows", Float.toString(pt.cloudShadows));
         p.setProperty("traceDistance", Integer.toString(pt.traceDistance));

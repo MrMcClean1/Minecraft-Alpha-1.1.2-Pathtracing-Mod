@@ -83,15 +83,17 @@ float cloudCover(vec3 p, vec3 l) {
     return texelFetch(uClouds, px, 0).a > 0.5 ? 1.0 : 0.0;
 }
 
-// Direct light from the sun or moon at point p (relative to uCamBlock) with normal n.
-vec3 sunAndMoon(vec3 p, vec3 n, float maxT) {
+// Direct light from the sun or moon at point p (relative to uCamBlock) with normal n. soft: the ray goes to a random
+// point of a sun about 1 degree across (soft but defined shadows); otherwise straight at its centre (steady light,
+// for reflections and the later bounces, which aren't denoised or don't need the softness).
+vec3 sunAt(vec3 p, vec3 n, float maxT, bool soft) {
     vec3 result = vec3(0.0);
     bool day = uSunDir.y > -0.1;
     vec3 dir = day ? uSunDir : -uSunDir;
     vec3 light = day ? sunLight() : moonLight();
     float cosN = dot(n, dir);
     if (cosN > 0.0 && max(light.r, light.b) > 0.0) {
-        vec3 l = coneSample(dir, 0.99985); // about 1 degree across: soft but defined shadows
+        vec3 l = soft ? coneSample(dir, 0.99985) : dir;
         Hit s = traceShadow(p + n * 1e-3, l, maxT);
         // "In between" sunset look: with the sun low, a real sun barely lights flat ground
         // (cos 78 deg = 0.2), while Beta keeps it at full daylight. Flattening the angle
@@ -101,6 +103,7 @@ vec3 sunAndMoon(vec3 p, vec3 n, float maxT) {
     }
     return result;
 }
+vec3 sunAndMoon(vec3 p, vec3 n, float maxT) { return sunAt(p, n, maxT, true); }
 
 // Light from one torch / lava / glowstone block, picked from the light list.
 // The list is sorted nearest-first, and candidates are drawn with a strong bias toward
@@ -147,16 +150,7 @@ vec3 blockLights(vec3 p, vec3 n) {
 // M9: steady light for reflections. A mirror shows its reflection sharp and undenoised, so the light at
 // the reflected spot must not flicker: the sun without the soft-shadow jitter, and the two torches (of the 16
 // nearest) that give the most there, each with a shadow ray, instead of a random pick.
-vec3 sunSteady(vec3 p, vec3 n) {
-    bool day = uSunDir.y > -0.1;
-    vec3 dir = day ? uSunDir : -uSunDir, light = day ? sunLight() : moonLight();
-    float cosN = dot(n, dir);
-    if (cosN <= 0.0 || max(light.r, light.b) <= 0.0) return vec3(0.0);
-    Hit s = traceShadow(p + n * 1e-3, dir, 128.0);
-    if (s.hit) return vec3(0.0);
-    float k = day ? mix(uLowSunK, 1.0, smoothstep(0.1, 0.5, uSunDir.y)) : 1.0;
-    return light * s.transmit * pow(cosN, k) * (1.0 - uCloudShadow * cloudCover(p, dir));
-}
+vec3 sunSteady(vec3 p, vec3 n) { return sunAt(p, n, 128.0, false); }
 vec3 lightsSteady(vec3 p, vec3 n) {
     int best[2] = int[](-1, -1);
     float bw[2] = float[](0.0, 0.0);
@@ -169,7 +163,8 @@ vec3 lightsSteady(vec3 p, vec3 n) {
         else if (w > bw[1]) { bw[1] = w; best[1] = k; }
     }
     vec3 sum = vec3(0.0);
-    for (int j = 0; j < 2; j++) {
+    int nb = best[1] >= 0 ? 2 : best[0] >= 0 ? 1 : 0; // not a fixed 2: a loop the compiler unrolls inlines its tracer twice
+    for (int j = 0; j < nb; j++) {
         // a torch too far away to show in a reflection isn't worth a shadow ray (most of the cost at noon)
         if (best[j] < 0 || bw[j] < 0.004) continue;
         vec4 L = lights[best[j]];
@@ -182,62 +177,36 @@ vec3 lightsSteady(vec3 p, vec3 n) {
     return sum;
 }
 
-// The second bounce (Bounces: 2): from where the first bounce landed, one more ray: sky light, or the sun
-// and glow on whatever it hits. Lights up rooms and caves the way light spills round corners.
-// A third bounce (Bounces: 3): the light off whatever the second bounce ray meets, sky or sun only
-vec3 thirdBounce(vec3 p, vec3 n) {
-    vec3 dir = cosineSample(n);
-    Hit b = traceRay(p + n * 1e-3, dir, 32.0, false);
-    if (!b.hit) {
-        vec3 sky = skyRadiance(dir);
-        sky = mix(vec3(dot(sky, vec3(0.2126, 0.7152, 0.0722))), sky, uSkySat);
-        return sky * (0.25 + 0.75 * uDaylight) * mix(1.0, uSkyFill, uDaylight) * b.transmit;
-    }
-    vec3 bp = p + n * 1e-3 + dir * b.t, bn = b.n;
-    if (dot(bn, dir) > 0.0) bn = -bn;
-    return (emission(b.id) * b.albedo * 1.5 * b.glow + b.albedo * sunSteady(bp, bn)) * b.transmit;
-}
-
-vec3 secondBounce(vec3 p, vec3 n) {
-    vec3 dir = cosineSample(n);
-    Hit b = traceRay(p + n * 1e-3, dir, 48.0, false);
-    if (!b.hit) {
-        vec3 sky = skyRadiance(dir);
-        sky = mix(vec3(dot(sky, vec3(0.2126, 0.7152, 0.0722))), sky, uSkySat);
-        return sky * (0.25 + 0.75 * uDaylight) * mix(1.0, uSkyFill, uDaylight) * b.transmit;
-    }
-    vec3 bp = p + n * 1e-3 + dir * b.t, bn = b.n;
-    if (dot(bn, dir) > 0.0) bn = -bn;
-    vec3 atC = sunSteady(bp, bn);
-    if (uBounces >= 3) atC += thirdBounce(bp, bn);
-    return (emission(b.id) * b.albedo * 1.5 * b.glow + b.albedo * atC) * b.transmit;
-}
-
-// One bounce: sky light, or light reflected off whatever the bounce ray hits.
+// The bounces (Bounces: 1 to 3), one ray each: sky light, or the glow and sunlight on whatever it hits, then the next
+// bounce from there. Lights up rooms and caves the way light spills round corners. Ray lengths 96, 48, 32 blocks; the
+// first bounce's sun ray is soft, the later ones steady. One loop, so the tracer is inlined once for all the bounces
+// (one function per bounce made the OpenGL shader too big for NVIDIA's compiler: "too many instructions").
 vec3 bounceLight(vec3 p, vec3 n) {
-    gSolidLeaves = true; // the bounce, its sun ray and the second bounce: leaves as solid blocks
-    vec3 indirect = vec3(0.0);
-    vec3 bdir = cosineSample(n);
-    Hit b;
-    if ((uDebugMask & 4) == 0) b = traceRay(p + n * 1e-3, bdir, 96.0, false);
-    if ((uDebugMask & 4) != 0) {
-    } else if (!b.hit) {
-        // Beta's sky blue is very saturated; as light on the ground it reads too blue
-        // (grey-blue sand at sunset), so the light it casts is partly desaturated.
-        vec3 sky = skyRadiance(bdir);
-        sky = mix(vec3(dot(sky, vec3(0.2126, 0.7152, 0.0722))), sky, uSkySat);
-        indirect = sky * (0.25 + 0.75 * uDaylight) * mix(1.0, uSkyFill, uDaylight) * b.transmit
-                 * (1.0 - 0.4 * uCloudShadow * cloudCover(p, bdir)); // clouds dim the sky light a little too
-    } else {
-        vec3 bp = p + n * 1e-3 + bdir * b.t;
-        vec3 bn = b.n;
-        if (dot(bn, bdir) > 0.0) bn = -bn;
-        vec3 atB = (uDebugMask & 8) == 0 ? sunAndMoon(bp, bn, 128.0) : vec3(0.0);
-        if (uBounces >= 2) atB += secondBounce(bp, bn);
-        indirect = (emission(b.id) * b.albedo * 1.5 * b.glow + b.albedo * atB) * b.transmit;
+    gSolidLeaves = true; // the bounces and their sun rays: leaves as solid blocks
+    vec3 total = vec3(0.0), through = vec3(1.0); // light gathered so far, and what the surfaces so far pass on
+    int levels = (uDebugMask & 4) != 0 ? 0 : clamp(uBounces, 1, 3);
+    for (int lvl = 0; lvl < levels; lvl++) {
+        vec3 dir = cosineSample(n);
+        Hit b = traceRay(p + n * 1e-3, dir, lvl == 0 ? 96.0 : lvl == 1 ? 48.0 : 32.0, false);
+        if (!b.hit) {
+            // Beta's sky blue is very saturated; as light on the ground it reads too blue
+            // (grey-blue sand at sunset), so the light it casts is partly desaturated.
+            vec3 sky = skyRadiance(dir);
+            sky = mix(vec3(dot(sky, vec3(0.2126, 0.7152, 0.0722))), sky, uSkySat);
+            sky *= (0.25 + 0.75 * uDaylight) * mix(1.0, uSkyFill, uDaylight) * b.transmit;
+            if (lvl == 0) sky *= 1.0 - 0.4 * uCloudShadow * cloudCover(p, dir); // clouds dim the sky light a little too
+            total += through * sky;
+            break;
+        }
+        vec3 bp = p + n * 1e-3 + dir * b.t, bn = b.n;
+        if (dot(bn, dir) > 0.0) bn = -bn;
+        vec3 sun = lvl > 0 || (uDebugMask & 8) == 0 ? sunAt(bp, bn, 128.0, lvl == 0) : vec3(0.0);
+        total += through * (emission(b.id) * b.albedo * 1.5 * b.glow + b.albedo * sun) * b.transmit;
+        through *= b.albedo * b.transmit;
+        p = bp; n = bn;
     }
     gSolidLeaves = false;
-    return indirect;
+    return total;
 }
 
 #ifdef PT_PROBE
@@ -424,19 +393,15 @@ void main() {
         if (traceShadow(ro, rd, rt).hit) fxHits |= 1u << uint(i);
     }
     gSolidLeaves = false;
-    vec3 light = vec3(0.0), albedo = vec3(0.0), extra = vec3(0.0);
-    vec4 geom = vec4(0.0, 0.0, 0.0, 0.0);
-    vec4 skyFog = vec4(0.0);
-    if (!h.hit) {
-        extra = skyView(d) * h.transmit; // kept here too so auto exposure still sees the sky
-        skyFog = vec4(extra, 1.0);
-    } else {
-        vec3 p = uCamFrac + d * h.t;
-        vec3 gn = h.n;
-        if (dot(gn, d) > 0.0) gn = -gn; // plants: face the camera
-        vec3 n = gn;                    // the normal light sees (bumped by a LabPBR normal map); gn goes to the denoiser
-        vec4 m = material(h.id);
-        vec3 pbrGlow = vec3(0.0);
+
+    // the surface the camera ray hit: where, which way it faces, what it's made of (and so whether it mirrors)
+    vec3 p = uCamFrac + d * h.t;
+    vec3 gn = dot(h.n, d) > 0.0 ? -h.n : h.n; // plants: face the camera
+    vec3 n = gn;                    // the normal light sees (bumped by a LabPBR normal map); gn goes to the denoiser
+    vec4 m = material(h.id);
+    vec3 pbrGlow = vec3(0.0);
+    float wet = 0.0, puddle = 0.0, refScale = 1.0;
+    if (h.hit) {
         if (uPbr != 0 && h.tile < 256u) {
             vec3 T, B;
             vec4 nm = pbrTexel(uAtlasN, h.tile, h.uv);
@@ -454,7 +419,6 @@ void main() {
         }
         // Effects: wet surfaces. While it rains here, whatever is open to the sky darkens and turns glossy, and
         // flat ground gathers puddles (smooth noise over the world) that reflect like still water.
-        float wet = 0.0, puddle = 0.0;
         if (iWet >= 0) {
             if ((fxHits & (1u << uint(iWet))) == 0u) {
                 wet = uWet * (gn.y > 0.7 ? 1.0 : 0.45);
@@ -465,6 +429,50 @@ void main() {
                 }
             }
         }
+        // the wet sheen and puddles reflect like water (Reflect: Water or All); a shiny block keeps its own
+        float wetR = max(wet * 0.6, puddle);
+        if (!(m.x < 0.9 && float(uReflections) >= m.w) && wetR > 0.0 && uReflections >= 1) {
+            m = vec4(mix(0.3, 0.0, puddle), 0.02, 0.0, 1.0);
+            refScale = wetR;
+            if (puddle > 0.5) n = gn; // puddles are flat
+        }
+    }
+
+    // M9 reflections, up to three mirror rays: the surface's own (Reflections setting: 1 = water and glass, 2 = also
+    // metals, diamond, obsidian; a LabPBR pack's surfaces count as 1), the water or ice surface's, and clear glass's.
+    // All three go through one call of reflectedLight below: each call site inlines its rays, and three of them made
+    // the OpenGL shader too big for NVIDIA's compiler.
+    int nRef = 0, rS = -1, rW = -1, rG = -1;
+    vec3 sR = vec3(0.0), wp = vec3(0.0), wn = vec3(0.0, 1.0, 0.0), wR = vec3(0.0, 1.0, 0.0), gp = vec3(0.0), gnm = vec3(0.0, 1.0, 0.0);
+    if (h.hit && m.x < 0.9 && float(uReflections) >= m.w) { sR = glossy(reflect(d, n), n, m.x); rS = nRef++; }
+    if (h.water && uReflections >= 1 && d.y < -0.01) {
+        wp = uCamFrac + d * h.waterT + wn * 1e-3;
+        wR = reflect(d, wn);
+        if (fxOn(FX_WAVES)) { // Effects: water waves tilt the surface; a ray bent below it keeps the flat one
+            vec3 ww = waveNormal(wp.xz + vec2(uCamBlock.xz));
+            vec3 r2 = reflect(d, ww);
+            if (r2.y > 0.02) { wn = ww; wR = r2; }
+        }
+        rW = nRef++;
+    }
+    if (h.glass && uReflections >= 1 && (!h.hit || h.glassT < h.t)) {
+        gnm = dot(h.glassN, d) > 0.0 ? -h.glassN : h.glassN;
+        gp = uCamFrac + d * h.glassT + gnm * 1e-3;
+        rG = nRef++;
+    }
+    vec3 RS = vec3(0.0), RW = vec3(0.0), RG = vec3(0.0);
+    for (int i = 0; i < nRef; i++) {
+        vec3 R = reflectedLight(i == rS ? p + gn * 1e-3 : i == rW ? wp : gp, i == rS ? sR : i == rW ? wR : reflect(d, gnm));
+        if (i == rS) RS = R; else if (i == rW) RW = R; else RG = R;
+    }
+
+    vec3 light = vec3(0.0), albedo = vec3(0.0), extra = vec3(0.0);
+    vec4 geom = vec4(0.0, 0.0, 0.0, 0.0);
+    vec4 skyFog = vec4(0.0);
+    if (!h.hit) {
+        extra = skyView(d) * h.transmit; // kept here too so auto exposure still sees the sky
+        skyFog = vec4(extra, 1.0);
+    } else {
         vec3 emit = emission(h.id) * h.albedo * 1.5 * h.glow; // glow follows the texture: a torch's flame shines, its stick doesn't
         // lava as seen: its own texture colours at about 90% after exposure (uLavaGlow = 0.9 / last frame's
         // exposure). Any brighter and the red channel overflows, the tone mapper blends it toward white, and
@@ -499,19 +507,9 @@ void main() {
         // Effects: snow sparkle: a glinting texel that sees the sun, drawn sharp on top
         if (iSpark >= 0 && (fxHits & (1u << uint(iSpark))) == 0u) extra += sunLight() * sparkle * 8.0 * h.transmit;
 
-        // M9 reflections (Reflections setting: 1 = water and glass, 2 = also metals, diamond, obsidian;
-        // a LabPBR pack's surfaces count as 1)
-        // Effects: the wet sheen and puddles reflect like water (Reflect: Water or All), through the same
-        // reflection as shiny blocks (one call site: see the effect rays above); a shiny block keeps its own
-        float wetR = max(wet * 0.6, puddle), refScale = 1.0;
-        if (!(m.x < 0.9 && float(uReflections) >= m.w) && wetR > 0.0 && uReflections >= 1) {
-            m = vec4(mix(0.3, 0.0, puddle), 0.02, 0.0, 1.0);
-            refScale = wetR;
-            if (puddle > 0.5) n = gn; // puddles are flat
-        }
-        if (m.x < 0.9 && float(uReflections) >= m.w) {
-            vec3 r = glossy(reflect(d, n), n, m.x);
-            vec3 R = reflectedLight(p + gn * 1e-3, r);
+        // the surface's own reflection (traced above)
+        if (rS >= 0) {
+            vec3 R = RS;
             if (m.z > 0.5) {
                 // metal: mostly mirror, tinted by its own colour (albedo), so it stays in the denoised light
                 light = mix(light, R, 0.8);
@@ -554,31 +552,22 @@ void main() {
         albedo *= 1.0 - a;
         extra = mix(extra, surf, a);
         if (!h.hit) skyFog.rgb = mix(skyFog.rgb, surf, a);
-        // M9: the water (or ice) surface reflects, a lot at a glancing angle, little straight down
-        if (uReflections >= 1 && d.y < -0.01) {
-            vec3 wn = vec3(0.0, 1.0, 0.0);
-            vec3 wp = uCamFrac + d * h.waterT + wn * 1e-3;
-            vec3 rd = reflect(d, wn);
-            if (fxOn(FX_WAVES)) { // Effects: water waves tilt the surface; a ray bent below it keeps the flat one
-                vec3 ww = waveNormal(wp.xz + vec2(uCamBlock.xz));
-                vec3 r2 = reflect(d, ww);
-                if (r2.y > 0.02) { wn = ww; rd = r2; }
-            }
+        // M9: the water (or ice) surface reflects, a lot at a glancing angle, little straight down (traced above)
+        if (rW >= 0) {
             // the light on the water sets how well it mirrors: bright (open sky, sun, a torch beside it) it is a clear
             // mirror, in a dark cave it is a dull black pool; lava is opaque and glows, so it never mirrors
             float wLit = clamp(max(skyVis * (0.25 + 0.75 * uDaylight), dot(sunW, vec3(0.3, 0.6, 0.1)) + 2.0 * dot(torch, vec3(0.3, 0.6, 0.1))), 0.0, 1.0);
             float F = fresnel(0.02, dot(-d, wn)) * mix(0.3, 1.0, sqrt(wLit));
-            vec3 R = reflectedLight(wp, rd);
+            vec3 R = RW;
             albedo *= 1.0 - F;
             extra = extra * (1.0 - F) + F * R;
             if (!h.hit) skyFog.rgb = skyFog.rgb * (1.0 - F) + F * R;
         }
     }
-    // M9: the clear part of glass reflects a little too (4% straight on, much more at a glancing angle)
-    if (h.glass && uReflections >= 1 && (!h.hit || h.glassT < h.t)) {
-        vec3 gnm = dot(h.glassN, d) > 0.0 ? -h.glassN : h.glassN;
+    // M9: the clear part of glass reflects a little too (4% straight on, much more at a glancing angle; traced above)
+    if (rG >= 0) {
         float F = fresnel(0.04, dot(-d, gnm));
-        vec3 R = reflectedLight(uCamFrac + d * h.glassT + gnm * 1e-3, reflect(d, gnm));
+        vec3 R = RG;
         albedo *= 1.0 - F;
         extra = extra * (1.0 - F) + F * R;
         if (!h.hit) skyFog.rgb = skyFog.rgb * (1.0 - F) + F * R;
@@ -597,8 +586,15 @@ void main() {
     }
 
     imageStore(outLight, px, vec4(max(light, vec3(0.0)), 1.0));
-    imageStore(outAlbedo, px, vec4(albedo, 1.0));
-    imageStore(outExtra, px, vec4(max(extra, vec3(0.0)), 1.0));
+    // DLSS Ray Reconstruction's guides (rr_guides.comp) ride in the spare alphas: the roughness of what the camera sees
+    // (1 = matte) and its reflectance (F0; -1 = a metal, whose colour is its reflectance). Only where a mirror ray was
+    // traced: a surface the tracer doesn't reflect on is matte to it too.
+    float gRough = 1.0, gF0 = 0.0;
+    if (rS >= 0) { gRough = m.x; gF0 = m.z > 0.5 ? -1.0 : m.y; }
+    if (rG >= 0) { gRough = 0.0; gF0 = 0.04; } // clear glass in front
+    if (rW >= 0) { gRough = 0.0; gF0 = 0.02; } // a water or ice surface in front
+    imageStore(outAlbedo, px, vec4(albedo, gRough));
+    imageStore(outExtra, px, vec4(max(extra, vec3(0.0)), gF0));
     storeGeom(px, geom);
     imageStore(outDepth, px, vec4(h.water ? h.waterT : (h.hit ? h.t : -1.0)));
     imageStore(outSkyFog, px, max(skyFog, vec4(0.0)));
