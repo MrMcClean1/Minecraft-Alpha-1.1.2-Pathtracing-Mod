@@ -68,10 +68,15 @@ public final class GlProbe {
     }
 
     /** Route driver warnings and errors into latest.log. AMD may only send these on debug contexts. */
+    private static final java.util.Set<Integer> SEEN = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     private static void installDebugOutput() {
         GL11.glEnable(GL43.GL_DEBUG_OUTPUT);
         GL43.glDebugMessageCallback(new KHRDebugCallback((source, type, id, severity, message) -> {
             if (severity == GL43.GL_DEBUG_SEVERITY_HIGH || severity == GL43.GL_DEBUG_SEVERITY_MEDIUM) {
+                // performance notes (NVIDIA: two "buffer is being copied" a frame) once each: logged every frame they
+                // were thousands of lines a minute, which itself cost frame time
+                if (type == GL43.GL_DEBUG_TYPE_PERFORMANCE && !SEEN.add(id)) return;
                 BetaPT.LOGGER.warn("[GL debug] {}", message);
             }
         }));
