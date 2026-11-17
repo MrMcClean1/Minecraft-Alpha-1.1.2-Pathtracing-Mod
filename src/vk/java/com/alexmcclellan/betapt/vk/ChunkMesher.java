@@ -22,6 +22,8 @@ final class ChunkMesher {
     static final int FLAG_CUTOUT = 4;
 
     /** One group: corners (x, y, z), 6 indices per square, 2 x 12 ints per square. */
+    private static final int[][] CORNERS = {{0, 1, 2}, {0, 2, 3}}; // the quad's two triangles
+
     static final class Group {
         float[] v = new float[3 * 4 * 256];
         int[] idx = new int[6 * 256];
@@ -40,7 +42,7 @@ final class ChunkMesher {
             idx[i] = base; idx[i + 1] = base + 1; idx[i + 2] = base + 2;
             idx[i + 3] = base; idx[i + 4] = base + 2; idx[i + 5] = base + 3;
             int n = packNormal(nx, ny, nz);
-            int[][] corners = {{0, 1, 2}, {0, 2, 3}};
+            int[][] corners = CORNERS;
             for (int t = 0; t < 2; t++) {
                 int o = (quads * 2 + t) * INTS_PER_TRI;
                 tri[o] = id | kind << 12 | tile << 16;
