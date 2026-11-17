@@ -168,7 +168,11 @@ public final class AlphaTest {
     }
 
     /** Frames to let the traced picture settle after the camera moves (fewer on a slow software renderer). */
-    private static int settle() { return PathTracer.INSTANCE.frameMs > 200 ? 8 : PathTracer.INSTANCE.vkActive ? 180 : 60; }
+    // in time, not frames: at 340 fps 180 frames was half a second, too little for the Vulkan tracer to get the platform
+    private static int settle() {
+        PathTracer pt = PathTracer.INSTANCE;
+        return pt.frameMs > 200 ? 8 : (int) ((pt.vkActive ? 3000 : 1000) / Math.max(1f, pt.frameMs));
+    }
 
     private static void checks(Minecraft mc) {
         PathTracer pt = PathTracer.INSTANCE;
@@ -215,11 +219,11 @@ public final class AlphaTest {
                 net.minecraft.client.render.Window w = new net.minecraft.client.render.Window(size[0], size[1]);
                 layout(mc, new net.minecraft.client.gui.screen.menu.options.OptionsScreen(null, mc.options), "Options", w, size, s);
                 layout(mc, new com.alexmcclellan.betapt.gui.PathTracerOptionsScreen(null), "Path Tracer", w, size, s);
-                layout(mc, new com.alexmcclellan.betapt.gui.EffectsScreen(null), "Effects", w, size, s);
+                layout(mc, new com.alexmcclellan.betapt.gui.EffectsScreen(null), "Effects", w, size, s); layout(mc, new com.alexmcclellan.betapt.gui.BotsScreen(null), "Bots", w, size, s);
             }
         }
         AlphaGui.scale = saved;
-        if (menuProblems.isEmpty()) check(true, "Options, Path Tracer and Effects screens at 5 window sizes x 4 GUI scales");
+        if (menuProblems.isEmpty()) check(true, "Options, Path Tracer, Effects and Bots screens at 5 window sizes x 4 GUI scales");
         else { for (String p : menuProblems) note(p); check(false, menuProblems.size() + " menu layout problems"); }
         boolean ptButton = false;
         Screen o = new net.minecraft.client.gui.screen.menu.options.OptionsScreen(null, mc.options);
