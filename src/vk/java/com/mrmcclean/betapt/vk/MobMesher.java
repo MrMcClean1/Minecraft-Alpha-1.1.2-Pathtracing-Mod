@@ -12,7 +12,12 @@ package com.mrmcclean.betapt.vk;
  */
 final class MobMesher {
     static final int KIND_MOB = 2;
-    final ChunkMesher.Group g = new ChunkMesher.Group();
+    final ChunkMesher.Group g;
+    /**
+     * The mob mesh is rebuilt every frame something moves: one group kept for the whole game, so its arrays stay at
+     * the size they grew to (a new one each frame started at 256 quads and doubled its way up, copying as it went).
+     */
+    private static final ChunkMesher.Group REUSED = new ChunkMesher.Group();
 
     private static final int[][][] CORNER = {
             {{0, 0, 0}, {1, 0, 0}, {1, 0, 1}, {0, 0, 1}},
@@ -32,6 +37,8 @@ final class MobMesher {
 
     /** ent: per box, which mob it belongs to; stored (+1, as a float) in each triangle's spare slot for motion. */
     MobMesher(float[] b, int count, int[] ent) {
+        g = REUSED;
+        g.quads = 0;
         int[] firstQuad = new int[count];
         float[][] p = new float[4][3], uv = new float[4][2];
         for (int i = 0; i < count; i++) {
