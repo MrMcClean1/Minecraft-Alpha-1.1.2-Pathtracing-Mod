@@ -21,6 +21,10 @@ public final class BotConfig {
     public static boolean allowGrief = false;
     /** Show bots on the minimap (Rei's Minimap waypoints, where the pack has it). */
     public static boolean showOnMap = true;
+    /** Holding Tab in single player shows the bots (name, health, what each is doing): Options > Bots.... */
+    public static boolean tabList = true;
+    /** What a bot puts into a hut or house it has just built (Options > Bots...). */
+    public static boolean houseDoor = true, houseTorches = true, houseBed = true, houseChest = true, houseFurnace = true;
     public static int maxBotsPerPlayer = 4;
     /** Language model: an Ollama (or OpenAI-style) server. Empty url = no model; the bots still work by rules. */
     public static String modelUrl = "http://127.0.0.1:11434";
@@ -41,6 +45,9 @@ public final class BotConfig {
         othersChests = b(p, "othersChests", othersChests);
         allowGrief = b(p, "allowGrief", allowGrief);
         showOnMap = b(p, "showOnMap", showOnMap);
+        tabList = b(p, "tabList", tabList);
+        houseDoor = b(p, "house.door", houseDoor); houseTorches = b(p, "house.torches", houseTorches); houseBed = b(p, "house.bed", houseBed);
+        houseChest = b(p, "house.chest", houseChest); houseFurnace = b(p, "house.furnace", houseFurnace);
         maxBotsPerPlayer = i(p, "maxBotsPerPlayer", maxBotsPerPlayer);
         modelOn = b(p, "model.enabled", modelOn);
         modelUrl = p.getProperty("model.url", modelUrl).trim();
@@ -59,6 +66,9 @@ public final class BotConfig {
         p.setProperty("othersChests", "" + othersChests);
         p.setProperty("allowGrief", "" + allowGrief);
         p.setProperty("showOnMap", "" + showOnMap);
+        p.setProperty("tabList", "" + tabList);
+        p.setProperty("house.door", "" + houseDoor); p.setProperty("house.torches", "" + houseTorches); p.setProperty("house.bed", "" + houseBed);
+        p.setProperty("house.chest", "" + houseChest); p.setProperty("house.furnace", "" + houseFurnace);
         p.setProperty("maxBotsPerPlayer", "" + maxBotsPerPlayer);
         p.setProperty("model.enabled", "" + modelOn);
         p.setProperty("model.url", modelUrl);

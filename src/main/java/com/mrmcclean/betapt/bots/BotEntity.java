@@ -74,7 +74,12 @@ public class BotEntity extends MobEntity {
                 botName(), x, y, z, forwardSpeed, yaw, onGround, brain.mode, brain.job, path != null, brain.jobTicks, brain.enemy == null ? "-" : brain.enemy.getClass().getSimpleName() + " d" + Math.round(distanceTo(brain.enemy)),
                 Bots.player(world, owner) == null ? "-" : String.format("%.1f %.1f %.1f", Bots.player(world, owner).x, Bots.player(world, owner).y, Bots.player(world, owner).z)));
     }
-    static final boolean DEBUG = Boolean.getBoolean("classicbots.debug");
+    static final boolean DEBUG = Boolean.getBoolean("classicbots.debug") || debugFile(); // or the file .minecraft/classicbots-test/debug
+
+    private static boolean debugFile() {
+        try { return net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("classicbots-test").resolve("debug").toFile().isFile(); }
+        catch (Throwable t) { return false; }
+    }
 
     @Override
     public void tick() {
@@ -132,6 +137,8 @@ public class BotEntity extends MobEntity {
         forwardSpeed = walkSpeed;
         if (gy > shape.minY + 0.5 || collidingHorizontally) jumping = true;
     }
+
+    boolean walking() { return forwardSpeed > 0; }
 
     public void stopMoving() { path = null; forwardSpeed = 0; }
 

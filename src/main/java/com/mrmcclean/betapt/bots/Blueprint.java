@@ -107,7 +107,10 @@ public final class Blueprint {
         for (int x = x0; x < x0 + w; x++) for (int z = z0; z < z0 + d; z++) put(x, y, z, id);
     }
 
-    private void door(int x, int z) { put(x, 0, z, 0); put(x, 1, z, 0); }
+    /** The (first) doorway, plan x and z (-1: none), for the door a bot puts in when it's done. */
+    public int doorX = -1, doorZ = -1;
+
+    private void door(int x, int z) { put(x, 0, z, 0); put(x, 1, z, 0); if (doorX < 0) { doorX = x; doorZ = z; } }
 
     private void window(int x, int y, int z) { put(x, y, z, 0); }
 

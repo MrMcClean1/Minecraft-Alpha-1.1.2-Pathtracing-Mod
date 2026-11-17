@@ -147,6 +147,7 @@ public final class BotTest {
                 bot.add(new ItemStack(3, 10, 0));
                 bot.takeDamage(null, 100);
                 if (bot.health == 20 && bot.brain.job == Brain.Job.RECOVER) pass("knocked out: woke up, going back for its things");
+                else if (bot.health == 20 && bot.brain.lastReport.contains("not going back")) pass("knocked out: woke up; its things went into water, so it stays out (as meant)");
                 else fail("knocked out: health " + bot.health + ", job " + bot.brain.job);
                 return;
             }

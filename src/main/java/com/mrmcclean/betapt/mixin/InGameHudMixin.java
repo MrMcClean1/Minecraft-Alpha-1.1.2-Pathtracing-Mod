@@ -69,6 +69,9 @@ public abstract class InGameHudMixin extends GuiElement {
         }
     }
 
+    /** The test: the file .minecraft/classicbots-test/showlist keeps the list up without the key (for a picture of it). */
+    private static final boolean SHOW_LIST = new java.io.File(net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().toFile(), "classicbots-test/showlist").isFile();
+
     @Inject(method = "render", at = @At("TAIL"))
     private void betapt$drawAutotestBanner(float tickDelta, boolean screenOpen, int mouseX, int mouseY, CallbackInfo ci) {
         if (com.mrmcclean.betapt.test.AutoTest.running() || com.mrmcclean.betapt.test.ModTest.running()) {
@@ -80,4 +83,25 @@ public abstract class InGameHudMixin extends GuiElement {
     private static String yesNo(boolean b) {
         return b ? "yes" : "NO";
     }
-}
+
+    /**
+     * Hold Tab in single player: the bots, like the player list in multiplayer (name, health, what each is doing, how
+     * far away). In multiplayer the server's player list shows them already.
+     */
+    @Inject(method = "render", at = @At("TAIL"))
+    private void betapt$botList(float tickDelta, boolean screenOpen, int mouseX, int mouseY, CallbackInfo ci) {
+        Minecraft mc = this.minecraft;
+        if (mc.world == null || mc.player == null || mc.world.isMultiplayer || mc.screen != null || !(com.mrmcclean.betapt.bots.BotConfig.tabList && org.lwjgl.input.Keyboard.isKeyDown(org.lwjgl.input.Keyboard.KEY_TAB) || SHOW_LIST)) return;
+        java.util.List<com.mrmcclean.betapt.bots.BotEntity> bots = com.mrmcclean.betapt.bots.Bots.bots(mc.world);
+        TextRenderer text = this.minecraft.textRenderer;
+        int y = 16, h = 12 + Math.max(1, bots.size()) * 10; // under the version line in the corner
+        this.fill(2, 14, 360, 14 + h, 0x90000000);
+        this.drawString(text, "Bots (" + bots.size() + ")", 6, y, 0xFFFF55);
+        if (bots.isEmpty()) this.drawString(text, "none in this world (/bot spawn)", 6, y += 10, 0xA0A0A0);
+        for (com.mrmcclean.betapt.bots.BotEntity b : bots) {
+            int hp = Math.max(0, b.health);
+            String line = b.botName() + "  " + hp / 2 + (hp % 2 == 1 ? ".5" : "") + "/10 hearts  " + (int) mc.player.distanceTo(b) + " m  " + b.brain.statusLine();
+            if (line.length() > 70) line = line.substring(0, 69) + "...";
+            this.drawString(text, line, 6, y += 10, hp <= 6 ? 0xFF7777 : 0xFFFFFF);
+        }
+    }}

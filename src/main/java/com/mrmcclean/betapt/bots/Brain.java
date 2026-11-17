@@ -63,6 +63,7 @@ public class Brain {
         if (attackCooldown > 0) attackCooldown--;
         if (eatCooldown > 0) eatCooldown--;
         b.pickUp();
+        doors();
         PlayerEntity owner = Bots.player(Names.world(b), b.owner);
         if (fight(owner)) return;
         if (b.health < 14 && eatCooldown == 0) eat();
@@ -258,7 +259,7 @@ public class Brain {
         }
     }
 
-    void startJob(Job j) { job = j; jobTicks = 0; target = null; digProgress = 0; skip.clear(); if (j == Job.FARM) farmSkip.clear(); }
+    void startJob(Job j) { job = j; jobTicks = 0; target = null; digProgress = 0; skip.clear(); looks = 0; if (j == Job.FARM) farmSkip.clear(); }
 
     private void endJob(String report) { job = Job.NONE; target = null; after = Job.NONE; b.stopMoving(); if (report != null) say(report); }
 
@@ -312,7 +313,23 @@ public class Brain {
     private void gather(PlayerEntity owner) {
         int have = b.count(want.items);
         if (have >= wantCount || b.freeSlots() == 0) { done(have); return; }
+        // a side errand (wood or cobblestone for a pickaxe) ends as soon as it isn't needed: the pickaxe got made from
+        // what it already carries, or what the errand was for is in hand (a bot with 32 cobblestone and 3 sticks kept
+        // looking for wood)
+        if (!stack.isEmpty() && jobTicks % 20 == 0) {
+            craftTools(false);
+            Object[] parent = stack.peek();
+            boolean met = b.count(((Want) parent[0]).items) >= (Integer) parent[1];
+            if (met || want.label.equals("wood") && pickTier() >= 1 || want.label.equals("cobblestone") && pickTier() >= 3) { done(have); return; }
+        }
         if (want.smeltFrom != 0 && b.count(want.smeltFrom) > 0 && smelt()) return;
+        // what it broke dropped out of its reach (down a hole, over an edge, 4 blocks off): go and pick it up first
+        ItemEntity loot = dropNear(want.items, 8);
+        if (loot != null) {
+            if (loot != lootFor) { lootFor = loot; lootTicks = 0; }
+            if (++lootTicks > 200) lootSkip.add(loot); // 10 s and still not there: it can't be reached
+            else { b.walkTo(loot.x, loot.y, loot.z, 0.5); return; }
+        }
         if (jobTicks > 20 * 60 * 6 && after != Job.NONE) { Job a = after; after = Job.NONE; startJob(a); return; }
         if (jobTicks > 20 * 60 * 6) { endJob("I only found " + have + " " + want.label + ". " + (have > 0 ? "Bringing them." : "")); if (have > 0) startDeliver(); return; }
         if (target != null && !want.mine.contains(Names.world(b).getBlock(target[0], target[1], target[2]))) target = null;
@@ -322,7 +339,7 @@ public class Brain {
             if (target != null && Names.world(b).getBlock(target[0], target[1], target[2]) == 17)
                 while (target[1] > 1 && Names.world(b).getBlock(target[0], target[1] - 1, target[2]) == 17 && !skip.contains(key(target[0], target[1] - 1, target[2]))) target[1]--;
             if (target == null) { // look further away
-                if (jobTicks % 400 == 1) { double a = rnd.nextDouble() * Math.PI * 2; tx = MathHelper.floor(b.x + Math.cos(a) * 40); tz = MathHelper.floor(b.z + Math.sin(a) * 40); ty = Names.world(b).getHeight(tx, tz); }
+                if (jobTicks % 400 == 1) pickLookSpot();
                 exploring = true;
             } else exploring = false;
         }
@@ -352,6 +369,41 @@ public class Brain {
         mineAt(target);
     }
 
+    private ItemEntity lootFor;
+    private int lootTicks;
+    private final Set<ItemEntity> lootSkip = Collections.newSetFromMap(new WeakHashMap<>());
+
+    /** The nearest of these items on the ground within r blocks (not one it gave up on), or null. */
+    private ItemEntity dropNear(Set<Integer> ids, double r) {
+        ItemEntity best = null;
+        double bd = r;
+        for (Object o : Names.world(b).getEntitiesOfType(ItemEntity.class, b.shape.grown(r, 4, r))) {
+            ItemEntity e = (ItemEntity) o;
+            if (e.removed || e.item == null || !ids.contains(e.item.id) || lootSkip.contains(e)) continue;
+            double dd = b.distanceTo(e);
+            if (dd < bd) { bd = dd; best = e; }
+        }
+        return best;
+    }
+    private int looks;
+
+    /**
+     * Where to walk to look when nothing's in sight: a spot on dry land (a random way 40 blocks out kept a bot by the
+     * sea swimming back and forth for minutes), a little further out each time it comes up empty.
+     */
+    private void pickLookSpot() {
+        int dist = Math.min(40 + 20 * looks++, 120);
+        for (int k = 0; k < 16; k++) {
+            double a = rnd.nextDouble() * Math.PI * 2;
+            int x = MathHelper.floor(b.x + Math.cos(a) * dist), z = MathHelper.floor(b.z + Math.sin(a) * dist);
+            int y = Names.world(b).getHeight(x, z);
+            tx = x; tz = z; ty = y; // the last try stays if every way is water (an island)
+            if (y <= 1) continue; // not loaded yet
+            int top = Names.world(b).getBlock(x, y - 1, z);
+            if (top >= 8 && top <= 11) continue; // water or lava
+            return;
+        }
+    }
     private final Deque<Object[]> stack = new ArrayDeque<>();
 
     /** Get something needed first (cobblestone for a pickaxe), then carry on. */
@@ -406,7 +458,7 @@ public class Brain {
             if (d < best) { best = d; prey = e; }
         }
         if (prey == null) {
-            if (jobTicks % 400 == 1) { double a = rnd.nextDouble() * Math.PI * 2; tx = MathHelper.floor(b.x + Math.cos(a) * 40); tz = MathHelper.floor(b.z + Math.sin(a) * 40); ty = Names.world(b).getHeight(tx, tz); }
+            if (jobTicks % 400 == 1) pickLookSpot();
             b.walkTo(tx + 0.5, ty, tz + 0.5, 3);
             return;
         }
@@ -808,7 +860,7 @@ public class Brain {
     /** Acknowledge an order: the model words it if it's running, else the plain line. */
     private void ack(String who, String asked, String plain) {
         if (!Model.ready()) { say(plain); return; }
-        Model.ask(persona(), who + " said to you: \"" + asked + "\". You will do this: " + plain + " Reply in one short, friendly sentence, no quotes.", this::say, () -> say(plain));
+        Model.ask(persona(), who + " said to you: \"" + asked + "\". You will do this: " + plain + " Reply in one short, friendly sentence, no quotes. You haven't done it yet: say you will, never that you already have or that you're handing it over now.", this::say, () -> say(plain));
     }
 
     /** Chat that isn't an order: the model answers (and may turn it into an order), or a plain reply. */
@@ -910,7 +962,7 @@ public class Brain {
             if (pb[3] == 0 ? replaceable(id) || !mayBreak(w[0], w[1], w[2], id) : id == pb[3]) planIndex++;
             else break;
         }
-        if (planIndex >= plan.blocks.size()) { String n = plan.name; plan = null; endJob("Finished the " + n + "."); return; }
+        if (planIndex >= plan.blocks.size()) { String n = plan.name; String in = furnish(plan, planX, planY, planZ, planF); plan = null; endJob("Finished the " + n + "." + in); return; }
         int[] pb = plan.blocks.get(planIndex);
         int[] w = Blueprint.place(pb, planX, planY, planZ, planF);
         int id = pb[3];
@@ -971,6 +1023,70 @@ public class Brain {
     }
 
     private int farReach;
+
+    /**
+     * Puts what the settings ask for into a hut or house it has just built (Path Tracer > Effects > Bots...): a door in
+     * the doorway, a torch, a chest and a furnace in the corners, each from what it carries or can make
+     * there. Returns " Put in a door, a torch." or "".
+     */
+    private String furnish(Blueprint p, int ox, int oy, int oz, int f) {
+        List<String> did = new ArrayList<>();
+        int w = p.width, d = p.depth;
+        if (BotConfig.houseDoor && p.doorX >= 0) {
+            int[] dp = Blueprint.place(new int[]{p.doorX, 0, p.doorZ, 0}, ox, oy, oz, f);
+            if (b.count(324) == 0 && b.count(5) >= 6) craft(324, 1, new int[]{5, 6});
+            if (b.count(324) > 0 && Names.world(b).getBlock(dp[0], dp[1], dp[2]) == 0 && Names.world(b).getBlock(dp[0], dp[1] + 1, dp[2]) == 0) {
+                int m = new int[]{1, 0, 3, 2}[f & 3]; // the panel along the wall
+                Names.world(b).setBlockWithMetadata(dp[0], dp[1], dp[2], 64, m); Names.world(b).setBlockWithMetadata(dp[0], dp[1] + 1, dp[2], 64, m | 8);
+                b.take(324, 1); did.add("a door");
+            }
+        }
+        if (w >= 5 && d >= 5) { // inside: the corners, the middle row kept free from the door
+            craftTools(false); // torches, if it has coal
+            int[] torch = Blueprint.place(new int[]{1, 0, 1, 0}, ox, oy, oz, f), chest = Blueprint.place(new int[]{1, 0, d - 2, 0}, ox, oy, oz, f),
+                    furnace = Blueprint.place(new int[]{w - 2, 0, d - 2, 0}, ox, oy, oz, f);
+            if (BotConfig.houseTorches && b.count(50) > 0 && free(torch)) { Names.world(b).setBlockWithMetadata(torch[0], torch[1], torch[2], 50, 5); b.take(50, 1); did.add("a torch"); }
+            if (BotConfig.houseChest && homeChest() == null) {
+                if (b.count(54) == 0 && b.count(5) >= 8) craft(54, 1, new int[]{5, 8});
+                if (b.count(54) > 0 && free(chest)) { Names.world(b).setBlockWithMetadata(chest[0], chest[1], chest[2], 54, 0); b.take(54, 1); did.add("a chest"); }
+            }
+            if (BotConfig.houseFurnace) {
+                if (b.count(61) == 0 && b.count(4) >= 8) craft(61, 1, new int[]{4, 8});
+                if (b.count(61) > 0 && free(furnace)) { Names.world(b).setBlockWithMetadata(furnace[0], furnace[1], furnace[2], 61, 0); b.take(61, 1); did.add("a furnace"); }
+            }
+        }
+        return did.isEmpty() ? "" : " Put in " + String.join(", ", did) + ".";
+    }
+
+    /** Air with something solid under it. */
+    private boolean free(int[] p) {
+        int below = Names.world(b).getBlock(p[0], p[1] - 1, p[2]);
+        return Names.world(b).getBlock(p[0], p[1], p[2]) == 0 && below != 0 && !(below >= 8 && below <= 11);
+    }
+
+    private int[] openDoor;
+
+    /** A closed wooden door it walks up to gets opened, and closed again once it's 3 blocks past. */
+    private void doors() {
+        if (openDoor != null && Math.abs(b.x - openDoor[0] - 0.5) + Math.abs(b.z - openDoor[2] - 0.5) > 3) { door(openDoor, false); openDoor = null; }
+        if (!b.walking() || b.ticks % 5 != 0) return;
+        int fx = MathHelper.floor(b.x), fy = MathHelper.floor(b.shape.minY + 0.01), fz = MathHelper.floor(b.z);
+        for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) {
+            if (Names.world(b).getBlock(fx + dx, fy, fz + dz) != 64) continue;
+            int[] p = {fx + dx, fy, fz + dz};
+            if ((Names.world(b).getBlockMetadata(p[0], p[1], p[2]) & 4) != 0) continue; // open already
+            if (openDoor != null) door(openDoor, false);
+            door(p, true); openDoor = p;
+            return;
+        }
+    }
+
+    private void door(int[] p, boolean open) {
+        if (Names.world(b).getBlock(p[0], p[1], p[2]) != 64) return;
+        int m = Names.world(b).getBlockMetadata(p[0], p[1], p[2]), n = open ? m | 4 : m & ~4;
+        Names.world(b).setBlockWithMetadata(p[0], p[1], p[2], 64, n);
+        if (Names.world(b).getBlock(p[0], p[1] + 1, p[2]) == 64) Names.world(b).setBlockWithMetadata(p[0], p[1] + 1, p[2], 64, n | 8);
+    }
 
     /** The nearest place to stand (air for feet and head, something under) within 3 blocks of a column, around the plan's ground level. */
     private int[] standFor(int x, int z) {
@@ -1043,6 +1159,7 @@ public class Brain {
         if (w == null || jobTicks > 20 * 60 * 4) {
             String r = harvested > 0 ? "Harvested " + harvested + " wheat" + (planted > 0 ? " and replanted." : ".") : planted > 0 ? "Planted " + planted + " seeds." : null;
             if (b.count(295) == 0 && w == null && harvested == 0 && planted == 0 && countFarmland() > 0 && countCrops() == 0) r = "The field is tilled, but I have no seeds. Tilling grass turns some up; give me some if you have them.";
+            if (w == null && harvested == 0 && planted == 0 && countFarmland() == 0 && countCrops() == 0) r = "There's no grass or dirt here I can till (sand, water or stone). Try a grassy spot."; // said, not silent
             endJob(r);
             if (b.hasHome && b.count(296) >= 16) startJob(Job.DEPOSIT);
             return;

@@ -73,6 +73,7 @@ public class EffectsScreen extends Screen {
             "OFF: walls you stand at don't hide the traced hand (Beta).",
             "Traced light: smoke, bits and rain lit by the path tracer.",
             "Land past the tracer's range: distance, shadows, water...",
+            "NVIDIA RTX: DLSS, Ray Reconstruction, Frame Generation...",
     };
     private int hovered;
 
@@ -115,7 +116,7 @@ public class EffectsScreen extends Screen {
         for (Object o : this.buttons) {
             ButtonWidget w = (ButtonWidget) o;
             int bw = w.id == 7 || w.id == 10 || w.id == 11 ? 200 : 150;
-            if (w.id >= 1 && w.id <= 11 && mouseX >= w.x && mouseY >= w.y && mouseX < w.x + bw && mouseY < w.y + 20) hovered = w.id;
+            if (w.id >= 1 && w.id <= 12 && mouseX >= w.x && mouseY >= w.y && mouseX < w.x + bw && mouseY < w.y + 20) hovered = w.id;
         }
         String help = hovered > 0 ? HELP[hovered] : "Presets set these too. Done on the main page saves.";
         this.drawCenteredString(this.textRenderer, help, this.width / 2, Math.min(this.height - 10, top + 194), 0xA0A0A0); // under Done
