@@ -21,7 +21,7 @@ import org.lwjgl.opengl.GL43;
 public final class PathTracer {
     public static final PathTracer INSTANCE = new PathTracer();
 
-    /** Toggled with F7. When false, Beta renders normally. */
+    /** Toggled with F6 (BetaPTKeys.TOGGLE). When false, Minecraft renders normally. */
     public boolean enabled = true;
     /** Trace with the GPU's ray-tracing hardware (Vulkan) when it can; OpenGL otherwise. */
     public boolean hardwareRt = true;
@@ -153,6 +153,27 @@ public final class PathTracer {
     public boolean ser = false, omm = false;
     /** DLSS made this frame's picture (else FSR, when DLSS can't run). */
     public boolean dlssActive;
+    /**
+     * DLSS Ray Reconstruction (with DLSS on): NVIDIA's denoiser trained for ray tracing denoises and upscales in one go,
+     * in place of this tracer's own denoiser (temporal + a-trous). Needs sl.dlss_d.dll and nvngx_dlssd.dll in betapt-nvidia.
+     */
+    public boolean rayReconstruction = false;
+    /**
+     * Frame Generation (NVIDIA DLSS-G, Vulkan tracer with Streamline): the finished frame, world and GUI, is shown through a
+     * Vulkan swap chain on a window over the game's (VkPresent), which DLSS-G needs to put generated frames in between.
+     */
+    public boolean frameGeneration = false;
+    /** Ray Reconstruction made this frame's picture. */
+    public boolean rrActive;
+    /** It failed once since the Vulkan tracer last (re)started: the tracer's own denoiser until the next restart. */
+    boolean rrFailed;
+    private boolean rrThisFrame;
+    private int rrGuidesProgram, rrNormal, rrSpecular, rrW, rrH, rrOut, rrOutW, rrOutH;
+    /** RTX Dynamic Vibrance: NVIDIA's AI filter for vibrance and saturation on the finished picture (Vulkan tracer only). */
+    public boolean deepDvc = false;
+    public float dvcIntensity = 0.5f, dvcSaturation = 0.25f;
+    /** Dynamic Vibrance filtered this frame's picture. */
+    public boolean dvcActive;
     private final Fsr3 fsr = new Fsr3();
     private int fsrInputsProgram;
     private int fsrDepth, fsrMotion;                 // render-size inputs FSR needs (fsr_inputs.comp)
@@ -364,6 +385,7 @@ public final class PathTracer {
         temporalProgram = ShaderUtil.loadCompute("temporal.comp");
         atrousProgram = ShaderUtil.loadCompute("atrous.comp");
         fsrInputsProgram = ShaderUtil.loadCompute("fsr_inputs.comp"); // 0 = FSR unavailable, basic upscaler used
+        rrGuidesProgram = ShaderUtil.loadCompute("rr_guides.comp");   // 0 = no Ray Reconstruction
         if (program == 0 || traceProgram == 0 || pathProgram == 0 || exposureProgram == 0 || tonemapProgram == 0
                 || temporalProgram == 0 || atrousProgram == 0 || presentProgram == 0 || upscaleProgram == 0 || rcasProgram == 0) {
             broken = true;
@@ -540,6 +562,82 @@ public final class PathTracer {
         return true;
     }
 
+    /**
+     * DLSS Ray Reconstruction: the noisy HDR picture (hdr: albedo x light + glow, not denoised this frame), its depth and
+     * motion (fsr_inputs.comp), the diffuse albedo and the guides from rr_guides.comp go to the Vulkan side; the
+     * denoised, window-sized HDR picture that comes back is exposed and tone mapped here at the window's size.
+     */
+    private boolean rrUpscale(Camera cam, boolean reset) {
+        if (rrW != width || rrH != height) {
+            if (rrNormal != 0) { GL11.glDeleteTextures(rrNormal); GL11.glDeleteTextures(rrSpecular); }
+            rrNormal = newImage(width, height); rrSpecular = newImage(width, height);
+            rrW = width; rrH = height;
+        }
+        if (rrOutW != outW || rrOutH != outH) {
+            if (rrOut != 0) GL11.glDeleteTextures(rrOut);
+            rrOut = GL11.glGenTextures();
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, rrOut);
+            GL42.glTexStorage2D(GL11.GL_TEXTURE_2D, 1, GL11.GL_RGBA8, outW, outH);
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
+            rrOutW = outW; rrOutH = outH;
+        }
+        GL20.glUseProgram(rrGuidesProgram);
+        cameraUniforms(rrGuidesProgram, cam); // resolution and view rays (the specular albedo depends on the view angle)
+        bindImage(0, geom[cur ^ 1], GL15.GL_READ_ONLY); // this frame's (see fsrUpscale)
+        bindImage(1, rrNormal, GL15.GL_WRITE_ONLY);
+        bindImage(2, rrSpecular, GL15.GL_WRITE_ONLY);
+        bindImage(3, albedoTex, GL15.GL_READ_ONLY); // roughness in a
+        bindImage(4, extraTex, GL15.GL_READ_ONLY);  // reflectance in a
+        GL43.glDispatchCompute((width + 7) / 8, (height + 7) / 8, 1);
+        GL42.glMemoryBarrier(GL42.GL_TEXTURE_UPDATE_BARRIER_BIT | GL42.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
+        for (int u = 0; u < 5; u++) GL42.glBindImageTexture(u, 0, 0, false, 0, GL15.GL_READ_ONLY, GL11.GL_RGBA8);
+        float[] c = {jitX, jitY, tanHalfFov, FSR_NEAR, (float) cam.x, (float) cam.y, (float) cam.z,
+                cam.fx, cam.fy, cam.fz, cam.rx, cam.ry, cam.rz, cam.ux, cam.uy, cam.uz};
+        int t = VkBridge.dlssRR(hdr, fsrDepth, fsrMotion, albedoTex, rrSpecular, rrNormal, width, height, outW, outH, dlssMode(), c, reset);
+        if (t == 0) return false;
+        // exposure (measured on this frame's noisy picture) and the tone map, at the window's size
+        GL20.glUseProgram(tonemapProgram);
+        uni2i(tonemapProgram, "uResolution", outW, outH);
+        uni1f(tonemapProgram, "uBrightness", brightness);
+        bindTexture(1, GL11.GL_TEXTURE_2D, t);
+        bindSkyFog();
+        GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 6, exposureBuffer);
+        GL42.glBindImageTexture(0, rrOut, 0, false, 0, GL15.GL_WRITE_ONLY, GL11.GL_RGBA8);
+        GL43.glDispatchCompute((outW + 7) / 8, (outH + 7) / 8, 1);
+        GL42.glMemoryBarrier(GL42.GL_FRAMEBUFFER_BARRIER_BIT | GL42.GL_TEXTURE_FETCH_BARRIER_BIT);
+        GL42.glBindImageTexture(0, 0, 0, false, 0, GL15.GL_READ_ONLY, GL11.GL_RGBA8);
+        bindTexture(2, GL11.GL_TEXTURE_2D, 0);
+        bindTexture(1, GL11.GL_TEXTURE_2D, 0);
+        GL13.glActiveTexture(GL13.GL_TEXTURE0);
+        presentTex = rrOut;
+        return true;
+    }
+
+    /** RTX Dynamic Vibrance on the finished picture, when it is window sized (it is after every upscaler) and 8 or 16 bit. */
+    private void applyDvc() {
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, presentTex);
+        int w = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_WIDTH), h = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_HEIGHT);
+        int fmt = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_INTERNAL_FORMAT);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
+        if (w != outW || h != outH || (fmt != GL11.GL_RGBA8 && fmt != GL30.GL_RGBA16F)) return;
+        int t = VkBridge.deepDvc(presentTex, w, h, fmt == GL30.GL_RGBA16F, dvcIntensity, dvcSaturation);
+        if (t == 0) return;
+        presentTex = t;
+        dvcActive = true;
+    }
+
+    /** The sky/fog picture for tonemap.comp, which samples it (it may be at another size than the picture it tone maps). */
+    private void bindSkyFog() {
+        bindTexture(2, GL11.GL_TEXTURE_2D, skyFog);
+        // one level, no mipmaps: without these the texture isn't complete and samples as black
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE);
+    }
+
     private boolean fsrUpscale(Camera cam, long now) {
         boolean reset = fsrPrevCam == null || lightCut || now - fsrLastNanos > 250_000_000L
                 || Math.abs(cam.x - fsrPrevCam.x) + Math.abs(cam.y - fsrPrevCam.y) + Math.abs(cam.z - fsrPrevCam.z) > 8.0;
@@ -553,13 +651,26 @@ public final class PathTracer {
         uni3f(fsrInputsProgram, "uEyeDelta", (float) (cam.x - pc.x), (float) (cam.y - pc.y), (float) (cam.z - pc.z));
         uni1f(fsrInputsProgram, "uNear", FSR_NEAR);
         entityMotion(fsrInputsProgram);
-        GL42.glBindImageTexture(3, geom[cur], 0, false, 0, GL15.GL_READ_ONLY, GL30.GL_RGBA16F);
+        // this frame's geometry: denoiseAndCompose has already flipped cur, so geom[cur] would be last frame's (it was,
+        // and moving mobs got last frame's mob index for their motion)
+        GL42.glBindImageTexture(3, geom[cur ^ 1], 0, false, 0, GL15.GL_READ_ONLY, GL30.GL_RGBA16F);
         GL42.glBindImageTexture(0, depthTex, 0, false, 0, GL15.GL_READ_ONLY, GL30.GL_R32F);
         GL42.glBindImageTexture(1, fsrDepth, 0, false, 0, GL15.GL_WRITE_ONLY, GL30.GL_R32F);
         GL42.glBindImageTexture(2, fsrMotion, 0, false, 0, GL15.GL_WRITE_ONLY, GL30.GL_RG16F);
         GL43.glDispatchCompute((width + 7) / 8, (height + 7) / 8, 1);
         GL42.glMemoryBarrier(GL42.GL_TEXTURE_FETCH_BARRIER_BIT | GL42.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT);
         for (int u = 0; u < 4; u++) GL42.glBindImageTexture(u, 0, 0, false, 0, GL15.GL_READ_ONLY, GL11.GL_RGBA8);
+        rrActive = false;
+        if (rrThisFrame) {
+            if (rrUpscale(cam, reset)) {
+                rrActive = true; dlssActive = true;
+                fsrPrevCam = cam; fsrPrevTan = tanHalfFov; fsrLastNanos = now;
+                return true;
+            }
+            // it refused (the reason is in VkBridge.nvStatus): the tracer's own denoiser from the next frame, DLSS or FSR now
+            rrFailed = true;
+            BetaPT.LOGGER.warn("Ray Reconstruction failed, back to the path tracer's own denoiser: {}", VkBridge.nvStatus);
+        }
         boolean dl = upscaler == UPSCALER_DLSS && dlssUpscale(cam, reset);
         dlssActive = dl;
         boolean ran = dl || fsr.dispatch(image, fsrDepth, fsrMotion, width, height, outW, outH, jitX, jitY, tanHalfFov, FSR_NEAR,
@@ -579,7 +690,9 @@ public final class PathTracer {
         int prev = cur ^ 1;
         final int R = GL15.GL_READ_ONLY, W = GL15.GL_WRITE_ONLY;
         int input = light;
-        if (denoise) {
+        // with Ray Reconstruction this frame, the noisy light is only composed (its own denoiser does the rest)
+        boolean denoiseHere = denoise && !rrThisFrame;
+        if (denoiseHere) {
             boolean valid = historyValid && !lightCut && prevCam != null && now - lastPathNanos < 250_000_000L
                     && Math.abs(cam.x - prevCam.x) + Math.abs(cam.y - prevCam.y) + Math.abs(cam.z - prevCam.z) < 8.0;
             GL20.glUseProgram(temporalProgram);
@@ -615,10 +728,10 @@ public final class PathTracer {
         bindImage(3, albedoTex, R);
         bindImage(4, extraTex, R);
         bindImage(5, hdr, W);
-        int passes = denoise ? ATROUS_STEPS.length : 1;
+        int passes = denoiseHere ? ATROUS_STEPS.length : 1;
         for (int i = 0; i < passes; i++) {
             boolean last = i == passes - 1;
-            uni1i(atrousProgram, "uStep", denoise ? ATROUS_STEPS[i] : 0);
+            uni1i(atrousProgram, "uStep", denoiseHere ? ATROUS_STEPS[i] : 0);
             uni1i(atrousProgram, "uFinal", last ? 1 : 0);
             int out = filt[(i + 1) & 1];
             bindImage(0, input, R);
@@ -629,7 +742,7 @@ public final class PathTracer {
         }
         stages.stamp(); // end of spatial
 
-        historyValid = denoise; // with the denoiser off, nothing was accumulated: start fresh when it comes back
+        historyValid = denoiseHere; // with the denoiser off, nothing was accumulated: start fresh when it comes back
         prevCam = cam;
         prevTanHalfFov = tanHalfFov;
         lastPathNanos = now;
@@ -679,7 +792,7 @@ public final class PathTracer {
         lightCut = lightingJumped(mc, tickDelta) || resumed;
         resumed = false;
 
-        if (lowLatency == 2 && VkBridge.reflexOn()) { VkBridge.reflexFrame(0); VkBridge.reflexFrame(1); VkBridge.reflexFrame(2); }
+        if ((lowLatency == 2 || frameGeneration) && VkBridge.reflexOn()) { VkBridge.reflexFrame(0); VkBridge.reflexFrame(1); VkBridge.reflexFrame(2); }
         else if (lowLatency >= 1) GL11.glFinish(); // low latency: no frame waits in line, so input shows up sooner
         timer.begin();
         // M8: FSR needs the camera nudged by a different fraction of a pixel every frame
@@ -737,7 +850,9 @@ public final class PathTracer {
             GL42.glMemoryBarrier(GL42.GL_TEXTURE_FETCH_BARRIER_BIT | GL42.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL43.GL_SHADER_STORAGE_BARRIER_BIT);
 
             stages.stamp(); // end of trace
-            // 1b. denoise the light and combine it with the textures into the HDR image
+            // 1b. denoise the light and combine it with the textures into the HDR image (with Ray Reconstruction only combine:
+            // it denoises and upscales the noisy picture itself, in fsrUpscale)
+            rrThisFrame = upscaler == UPSCALER_DLSS && rayReconstruction && !rrFailed && rrGuidesProgram != 0 && useFsr && vkActive && VkBridge.rrReady();
             denoiseAndCompose(cam, now, groupsX, groupsY);
 
             // 2. adapt exposure to the scene
@@ -760,13 +875,14 @@ public final class PathTracer {
             uni2i(tonemapProgram, "uResolution", width, height);
             uni1f(tonemapProgram, "uBrightness", brightness);
             GL42.glBindImageTexture(0, image, 0, false, 0, GL15.GL_WRITE_ONLY, GL11.GL_RGBA8);
-            GL42.glBindImageTexture(1, skyFog, 0, false, 0, GL15.GL_READ_ONLY, GL30.GL_RGBA16F);
+            bindSkyFog();
             GL43.glDispatchCompute(groupsX, groupsY, 1);
             GL42.glMemoryBarrier(GL42.GL_FRAMEBUFFER_BARRIER_BIT);
-            GL42.glBindImageTexture(1, 0, 0, false, 0, GL15.GL_READ_ONLY, GL30.GL_RGBA16F);
+            bindTexture(2, GL11.GL_TEXTURE_2D, 0);
+            GL13.glActiveTexture(GL13.GL_TEXTURE0);
             stages.stamp(); // end of exposure + tone map
             fsrActive = useFsr && fsrUpscale(cam, now);
-            if (lowLatency == 2) VkBridge.reflexFrame(3); // Reflex: the frame's commands are all handed over
+            if (lowLatency == 2 || frameGeneration) VkBridge.reflexFrame(3); // Reflex: the frame's commands are all handed over
             if (!fsrActive) upscaleAndSharpen();
             stages.stamp(); // end of upscale + sharpen
         } else {
@@ -792,6 +908,8 @@ public final class PathTracer {
         GL20.glUseProgram(0);
 
         if (pathView() && !legacyFrame) {
+            dvcActive = false;
+            if (deepDvc && vkActive) applyDvc();
             present();
         } else {
             // Debug views: copy the image and clear depth, so Beta's entities draw on top of everything.

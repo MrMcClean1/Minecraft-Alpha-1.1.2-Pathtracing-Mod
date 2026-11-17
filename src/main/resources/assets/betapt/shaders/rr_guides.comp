@@ -1,0 +1,57 @@
+#version 430
+// The guides DLSS Ray Reconstruction takes besides the noisy picture (PathTracer.rrUpscale): the surface normal with its
+// roughness in w, and the specular albedo. From the geometry picture, and the roughness and reflectance the tracer
+// writes into the albedo's and glow's spare alphas (pt_light.glsl, end of main: 1 and 0 where no mirror ray was traced).
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(rgba16f, binding = 0) uniform readonly image2D uGeom;          // xy = packed normal, z = distance, w = 0 sky / 1+ surface
+layout(rgba16f, binding = 1) uniform writeonly image2D outNormalRough; // xyz = world normal, w = linear roughness
+layout(rgba16f, binding = 2) uniform writeonly image2D outSpecular;    // specular albedo
+layout(rgba16f, binding = 3) uniform readonly image2D uAlbedo;        // rgb = diffuse albedo, a = roughness
+layout(rgba16f, binding = 4) uniform readonly image2D uExtra;         // a = reflectance F0, -1 for a metal
+uniform ivec2 uResolution;
+uniform vec3  uCamForward, uCamRight, uCamUp;
+uniform float uTanHalfFov;
+uniform vec2  uJitter;
+
+vec3 octDecode(vec2 e) {
+    vec3 n = vec3(e, 1.0 - abs(e.x) - abs(e.y));
+    if (n.z < 0.0) n.xy = (1.0 - abs(n.yx)) * vec2(n.x >= 0.0 ? 1.0 : -1.0, n.y >= 0.0 ? 1.0 : -1.0);
+    return normalize(n);
+}
+
+vec3 rayDir(ivec2 pixel) {
+    vec2 ndc = (vec2(pixel) + uJitter + 0.5) / vec2(uResolution) * 2.0 - 1.0;
+    float aspect = float(uResolution.x) / float(uResolution.y);
+    return normalize(uCamForward + ndc.x * uTanHalfFov * aspect * uCamRight + ndc.y * uTanHalfFov * uCamUp);
+}
+
+// NVIDIA's DLSS-RR guide, 4.2.1 (Ray Tracing Gems, ch. 32): the specular albedo of a surface with reflectance f0 and
+// GGX alpha a seen at n.v. HLSL's float2x2 / float3x3 rows written out as dot products.
+vec3 envBrdfApprox(vec3 f0, float a, float nov) {
+    nov = abs(nov);
+    vec4 x = vec4(1.0, nov, nov * nov, nov * nov * nov);
+    vec4 y = vec4(1.0, a, a * a, a * a * a);
+    vec2 m1 = vec2(dot(vec2(0.99044, -1.28514), x.xy), dot(vec2(1.29678, -0.755907), x.xy));
+    vec3 m2 = vec3(dot(vec3(1.0, 2.92338, 59.4188), x.xyw), dot(vec3(20.3225, -27.0302, 222.592), x.xyw), dot(vec3(121.563, 626.13, 316.627), x.xyw));
+    vec2 m3 = vec2(dot(vec2(0.0365463, 3.32707), x.xy), dot(vec2(9.0632, -9.04756), x.xy));
+    vec3 m4 = vec3(dot(vec3(1.0, 3.59685, -1.36772), x.xzw), dot(vec3(9.04401, -16.3174, 9.22949), x.xzw), dot(vec3(5.56589, 19.7886, -20.2123), x.xzw));
+    float bias = dot(m1, y.xy) / dot(m2, y.xyw);
+    float scale = dot(m3, y.xy) / dot(m4, y.xyw);
+    bias *= clamp(f0.g * 50.0, 0.0, 1.0); // a reflectance of 0 has none
+    return f0 * max(0.0, scale) + max(0.0, bias);
+}
+
+void main() {
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    if (px.x >= uResolution.x || px.y >= uResolution.y) return;
+    vec4 g = imageLoad(uGeom, px);
+    bool surface = g.w > 0.5;
+    vec3 n = surface ? octDecode(g.xy) : vec3(0.0, 1.0, 0.0);
+    vec4 al = imageLoad(uAlbedo, px);
+    float rough = surface ? clamp(al.a, 0.0, 1.0) : 1.0;
+    float f0a = imageLoad(uExtra, px).a;
+    vec3 f0 = f0a < 0.0 ? al.rgb : vec3(max(f0a, 0.0));
+    imageStore(outNormalRough, px, vec4(n, rough));
+    vec3 spec = surface ? envBrdfApprox(f0, rough * rough, dot(n, -rayDir(px))) : vec3(0.0);
+    imageStore(outSpecular, px, vec4(spec, 1.0));
+}

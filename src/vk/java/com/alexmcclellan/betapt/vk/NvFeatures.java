@@ -66,10 +66,38 @@ public final class NvFeatures {
             DLSSOptimalSettings_renderHeightMax = 56, DLSSOptimalSettings_VERSION = 1;
     static final byte[] DLSSOptimalSettings_GUID = g(0x57, 0x09, 0x1d, 0xef, 0x58, 0xfd, 0xf7, 0x4d, 0xb5, 0x04, 0x8b, 0x69, 0xd8, 0xaa, 0x6b, 0x76);
     static final int RENDER_API_VULKAN = 2, ENGINE_CUSTOM = 0, LOG_DEFAULT = 1, LOG_VERBOSE = 2;
-    static final long PREF_DISABLE_CL_STATE_TRACKING = 1;
+    // sl_core_types.h PreferenceFlags: eDisableCLStateTracking 1 << 0, eUseFrameBasedResourceTagging 1 << 7. The second is
+    // required for slSetTagForFrame: without it every tag call fails with eErrorInvalidIntegration (19)
+    static final long PREF_DISABLE_CL_STATE_TRACKING = 1, PREF_FRAME_BASED_TAGGING = 1L << 7, PREF_ALLOW_OTA = 1L << 3, PREF_LOAD_DOWNLOADED = 1L << 6;
     public static final int DLSS_PERF = 1, DLSS_BALANCED = 2, DLSS_QUALITY = 3, DLSS_ULTRA_PERF = 4, DLSS_DLAA = 6;
     static final int B_FALSE = 0, B_TRUE = 1, RESULT_OK = 0;
     // ---- end of generated part
+
+    // ---- DLSS Ray Reconstruction (sl_dlss_d.h, sl_core_types.h of the Streamline 2.14.16 SDK). Offsets worked out from
+    // the header by hand: BaseStructure is 32 bytes, Boolean one byte, enums 4, float4x4 sixteen floats (row major).
+    static final int FEATURE_DLSS_RR = 1001;
+    static final int BUF_ALBEDO = 7, BUF_SPECULAR_ALBEDO = 8, BUF_NORMAL_ROUGHNESS = 14;
+    static final int DLSSDOptions_SIZE = 224, DLSSDOptions_mode = 32, DLSSDOptions_outputWidth = 36, DLSSDOptions_outputHeight = 40,
+            DLSSDOptions_sharpness = 44, DLSSDOptions_preExposure = 48, DLSSDOptions_exposureScale = 52, DLSSDOptions_colorBuffersHDR = 56,
+            DLSSDOptions_normalRoughnessMode = 60, DLSSDOptions_worldToCameraView = 64, DLSSDOptions_cameraViewToWorld = 128,
+            DLSSDOptions_alphaUpscalingEnabled = 192, DLSSDOptions_VERSION = 3;
+    static final byte[] DLSSDOptions_GUID = g(0x04, 0x75, 0xd8, 0x0a, 0x4e, 0x77, 0xf3, 0x4b, 0x96, 0x33, 0xa4, 0x4d, 0x1f, 0x7f, 0x9c, 0xb8);
+    static final byte[] DLSSDOptimalSettings_GUID = g(0x37, 0xc6, 0xd0, 0xfb, 0x8f, 0xa2, 0xf2, 0x41, 0xbc, 0x91, 0xb4, 0x21, 0xfa, 0xee, 0x8e, 0x1e);
+    static final int NORMAL_ROUGHNESS_PACKED = 1; // roughness in the normals' w
+
+    // ---- RTX Dynamic Vibrance (sl_deepdvc.h): a filter on the finished, tone-mapped picture
+    static final int FEATURE_DEEPDVC = 5;
+
+    // ---- DLSS Frame Generation (sl_dlss_g.h): so far only asked whether it can run here and what it needs
+    static final int FEATURE_DLSS_G = 1000, FEATURE_REFLEX = 3;
+    // FeatureRequirements, version 2 (sl_core_types.h; Version is three uint32)
+    static final int FeatureRequirements_SIZE = 184, FeatureRequirements_flags = 32, FeatureRequirements_driverDetected = 80,
+            FeatureRequirements_driverRequired = 92, FeatureRequirements_vkComputeQueues = 104, FeatureRequirements_vkGraphicsQueues = 108,
+            FeatureRequirements_vkNumDeviceExt = 112, FeatureRequirements_vkDeviceExt = 120, FeatureRequirements_vkNumInstanceExt = 128,
+            FeatureRequirements_vkInstanceExt = 136, FeatureRequirements_vkOpticalFlowQueues = 176, FeatureRequirements_VERSION = 2;
+    static final byte[] FeatureRequirements_GUID = g(0x97, 0x40, 0x71, 0x66, 0x6d, 0xac, 0xc6, 0x4b, 0x89, 0x15, 0x1e, 0x0f, 0x55, 0xa6, 0xb6, 0x1f);
+    static final int DeepDVCOptions_SIZE = 48, DeepDVCOptions_mode = 32, DeepDVCOptions_intensity = 36, DeepDVCOptions_saturationBoost = 40, DeepDVCOptions_VERSION = 1;
+    static final byte[] DeepDVCOptions_GUID = g(0xad, 0x8a, 0x28, 0x23, 0x7e, 0x7e, 0x2a, 0xbe, 0x91, 0x67, 0x27, 0xda, 0x30, 0xa3, 0x04, 0x6b);
 
     private static byte[] g(int... b) { byte[] r = new byte[b.length]; for (int i = 0; i < b.length; i++) r[i] = (byte) b[i]; return r; }
 
@@ -83,15 +111,17 @@ public final class NvFeatures {
 
     // ---- calls through libffi: argument types as letters (P pointer, J 64-bit, I 32-bit, F float, B 8-bit), result 32-bit int
 
-    private static final class Fn {
+    static final class Fn {
         final long address; final String sig; final FFICIF cif; final PointerBuffer types;
-        Fn(long address, String sig) {
+        Fn(long address, String sig) { this(address, sig, false); }
+        /** wide: the result is 64 bits (a pointer or handle, read with callP). */
+        Fn(long address, String sig, boolean wide) {
             if (address == 0) throw new IllegalStateException("missing function");
             this.address = address; this.sig = sig;
             cif = FFICIF.calloc();
             types = MemoryUtil.memAllocPointer(Math.max(1, sig.length()));
             for (int i = 0; i < sig.length(); i++) types.put(i, type(sig.charAt(i)).address());
-            int r = ffi_prep_cif(cif, FFI_DEFAULT_ABI, ffi_type_sint32, sig.isEmpty() ? null : types);
+            int r = ffi_prep_cif(cif, FFI_DEFAULT_ABI, wide ? ffi_type_pointer : ffi_type_sint32, sig.isEmpty() ? null : types);
             if (r != FFI_OK) throw new IllegalStateException("ffi_prep_cif " + r);
         }
         private static FFIType type(char c) {
@@ -104,7 +134,8 @@ public final class NvFeatures {
                 default: throw new IllegalArgumentException(String.valueOf(c));
             }
         }
-        int call(long... a) {
+        int call(long... a) { return (int) callP(a); }
+        long callP(long... a) {
             try (MemoryStack stack = MemoryStack.stackPush()) {
                 ByteBuffer vals = stack.calloc(8 * Math.max(1, a.length));
                 PointerBuffer ptrs = stack.mallocPointer(Math.max(1, a.length));
@@ -120,7 +151,7 @@ public final class NvFeatures {
                 }
                 ByteBuffer ret = stack.calloc(16);
                 ffi_call(cif, address, ret, a.length == 0 ? null : ptrs);
-                return ret.getInt(0);
+                return ret.getLong(0);
             }
         }
     }
@@ -131,7 +162,168 @@ public final class NvFeatures {
 
     private static boolean slStarted, slTried;
     private static SharedLibrary interposer;
-    private static Fn slInit, slIsFeatureSupported, slGetFeatureFunction, slGetNewFrameToken, slSetConstants, slSetTagForFrame, slEvaluateFeature;
+    private static Fn slInit, slIsFeatureSupported, slGetFeatureFunction, slGetNewFrameToken, slSetConstants, slSetTagForFrame, slEvaluateFeature, slGetFeatureRequirements;
+    private static boolean fgLoaded;
+    /** What DLSS Frame Generation said about this GPU (fgCheck), "" if its plugin isn't there. */
+    public static String fgStatus = "";
+
+    /**
+     * Frame Generation, first step: is it supported on this device, and what does it need (flags, Vulkan queues and
+     * extensions)? Nothing is switched on. Needs the adapter from dlssAfterDevice or dvcAfterDevice.
+     */
+    void fgCheck() {
+        if (!fgLoaded || adapter == 0) return;
+        try {
+            int r = slIsFeatureSupported.call(FEATURE_DLSS_G, adapter);
+            StringBuilder s = new StringBuilder("Frame Generation: ").append(r == RESULT_OK ? "supported" : "not supported (Streamline result " + r + ")");
+            long req = struct(FeatureRequirements_SIZE, FeatureRequirements_GUID, FeatureRequirements_VERSION);
+            int q = slGetFeatureRequirements.call(FEATURE_DLSS_G, req);
+            if (q == RESULT_OK) {
+                int fl = MemoryUtil.memGetInt(req + FeatureRequirements_flags);
+                s.append("; flags").append((fl & 4) != 0 ? " vulkan" : " no-vulkan").append((fl & 8) != 0 ? " vsync-off" : "").append((fl & 16) != 0 ? " gpu-scheduling" : "");
+                s.append("; driver ").append(ver(req + FeatureRequirements_driverDetected)).append(" (needs ").append(ver(req + FeatureRequirements_driverRequired)).append(")");
+                s.append("; queues compute ").append(MemoryUtil.memGetInt(req + FeatureRequirements_vkComputeQueues))
+                        .append(" graphics ").append(MemoryUtil.memGetInt(req + FeatureRequirements_vkGraphicsQueues))
+                        .append(" optical flow ").append(MemoryUtil.memGetInt(req + FeatureRequirements_vkOpticalFlowQueues));
+                s.append("; device ext ").append(names(req + FeatureRequirements_vkNumDeviceExt, req + FeatureRequirements_vkDeviceExt));
+                s.append("; instance ext ").append(names(req + FeatureRequirements_vkNumInstanceExt, req + FeatureRequirements_vkInstanceExt));
+            } else s.append("; requirements error ").append(q);
+            MemoryUtil.nmemFree(req);
+            fgStatus = s.toString();
+        } catch (Throwable t) {
+            fgStatus = "Frame Generation: " + t;
+        }
+        System.out.println("[BetaPT] " + fgStatus);
+    }
+
+    // ---- DLSS Frame Generation for one VkLive: VkPresent's swap chain gets generated frames between the real ones.
+    // Needs Streamline's Reflex (its sleep and PCL markers, with this frame's token) instead of NvLowLatencyVk.
+
+    static final int FEATURE_PCL = 4, LIFE_VALID_UNTIL_PRESENT = 1;
+    static final int DLSSGOptions_SIZE = 120, DLSSGOptions_mode = 32, DLSSGOptions_numFramesToGenerate = 36, DLSSGOptions_numBackBuffers = 52,
+            DLSSGOptions_mvecDepthWidth = 56, DLSSGOptions_mvecDepthHeight = 60, DLSSGOptions_colorWidth = 64, DLSSGOptions_colorHeight = 68,
+            DLSSGOptions_colorBufferFormat = 72, DLSSGOptions_mvecBufferFormat = 76, DLSSGOptions_depthBufferFormat = 80, DLSSGOptions_VERSION = 5;
+    static final byte[] DLSSGOptions_GUID = g(0xcb, 0xf1, 0xc5, 0xfa, 0xfd, 0x2d, 0x36, 0x4f, 0xa1, 0xe6, 0x3a, 0x9e, 0x86, 0x52, 0x56, 0xc5);
+    static final int DLSSGState_SIZE = 88, DLSSGState_status = 40, DLSSGState_numFramesActuallyPresented = 48, DLSSGState_numFramesToGenerateMax = 52, DLSSGState_VERSION = 4;
+    static final byte[] DLSSGState_GUID = g(0xe1, 0xc8, 0x8a, 0xcc, 0x79, 0xa1, 0xf5, 0x44, 0x97, 0xfa, 0xe7, 0x41, 0x12, 0xf9, 0xbc, 0x61);
+    static final int ReflexOptions_SIZE = 48, ReflexOptions_mode = 32, ReflexOptions_VERSION = 1;
+    static final byte[] ReflexOptions_GUID = g(0x1a, 0xf8, 0x3a, 0xf0, 0x0b, 0x6d, 0x02, 0x49, 0xa6, 0x51, 0xc4, 0x96, 0x5e, 0x21, 0x54, 0x34);
+    private static final int VK_FORMAT_R16G16_SFLOAT = 83, VK_FORMAT_R32_SFLOAT = 100;
+
+    private Fn slDLSSGSetOptions, slDLSSGGetState, slReflexSetOptions, slReflexSleep, slPCLSetMarker;
+    private long fgOptions, fgState;
+    /** fgOn: started for this tracer; fgHeld: this frame's token was made at its start; fgActive: DLSS-G switched on. */
+    private boolean fgOn, fgHeld, fgActive;
+    private int fgW, fgH, fgN, fgFormat, fgFrames = 1, lastRw, lastRh;
+    public String fgRunStatus = "";
+
+    private static Fn feature(int id, String name, String sig) {
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            PointerBuffer p = stack.callocPointer(1);
+            int r = slGetFeatureFunction.call(id, MemoryUtil.memAddress(stack.UTF8(name)), p.address());
+            if (r != RESULT_OK || p.get(0) == 0) throw new IllegalStateException("no " + name + " (" + r + ")");
+            return new Fn(p.get(0), sig);
+        }
+    }
+
+    /** After DLSS is ready: Frame Generation with Streamline's Reflex; generated frames per real one: 1 (2x) to 3 (4x). */
+    boolean fgStart(int generated) {
+        if (!fgLoaded || !dlssReady) { fgRunStatus = "Frame Generation needs DLSS and sl.dlss_g.dll + nvngx_dlssg.dll in " + dir().getName(); return false; }
+        try {
+            int r = slIsFeatureSupported.call(FEATURE_DLSS_G, adapter);
+            if (r != RESULT_OK) { fgRunStatus = "Frame Generation isn't supported here (Streamline result " + r + ")"; return false; }
+            slDLSSGSetOptions = feature(FEATURE_DLSS_G, "slDLSSGSetOptions", "PP");
+            slDLSSGGetState = feature(FEATURE_DLSS_G, "slDLSSGGetState", "PPP");
+            slReflexSetOptions = feature(FEATURE_REFLEX, "slReflexSetOptions", "P");
+            slReflexSleep = feature(FEATURE_REFLEX, "slReflexSleep", "P");
+            slPCLSetMarker = feature(FEATURE_PCL, "slPCLSetMarker", "IP");
+            long ro = struct(ReflexOptions_SIZE, ReflexOptions_GUID, ReflexOptions_VERSION);
+            MemoryUtil.memPutInt(ro + ReflexOptions_mode, 1); // low latency
+            r = slReflexSetOptions.call(ro);
+            MemoryUtil.nmemFree(ro);
+            if (r != RESULT_OK) { fgRunStatus = "Frame Generation: Reflex options error " + r; return false; }
+            fgOptions = struct(DLSSGOptions_SIZE, DLSSGOptions_GUID, DLSSGOptions_VERSION);
+            fgState = struct(DLSSGState_SIZE, DLSSGState_GUID, DLSSGState_VERSION);
+            fgFrames = Math.max(1, Math.min(3, generated));
+            fgOn = true;
+            fgRunStatus = "Frame Generation ready";
+            return true;
+        } catch (Throwable t) {
+            fgRunStatus = "Frame Generation: " + t;
+            return false;
+        }
+    }
+
+    boolean fgOn() { return fgOn; }
+
+    /** Start of a frame: its token, Reflex's sleep, then "simulation start". */
+    void fgFrameStart() {
+        if (!fgOn) return;
+        MemoryUtil.memPutInt(frameIndex, ++frameCounter);
+        int r = slGetNewFrameToken.call(tokenSlot, frameIndex);
+        long token = MemoryUtil.memGetAddress(tokenSlot);
+        fgHeld = r == RESULT_OK && token != 0;
+        if (!fgHeld) return;
+        slReflexSleep.call(token);
+        pcl(0);
+    }
+
+    /** A latency marker for this frame (0 simulation start .. 5 present end, as Reflex's). */
+    void pcl(int marker) {
+        if (fgOn && fgHeld) slPCLSetMarker.call(marker, MemoryUtil.memGetAddress(tokenSlot));
+    }
+
+    /** Just before the swap chain presents: DLSS-G on for this size (set again only when something changed), "present start". */
+    void fgBeforePresent(int w, int h, int images, int format) {
+        if (!fgOn || !fgHeld || lastRw == 0) return; // no traced frame this time: nothing to generate from
+        if (!fgActive || w != fgW || h != fgH || images != fgN || format != fgFormat) {
+            MemoryUtil.memPutInt(fgOptions + DLSSGOptions_mode, 1); // on
+            MemoryUtil.memPutInt(fgOptions + DLSSGOptions_numFramesToGenerate, fgFrames);
+            MemoryUtil.memPutInt(fgOptions + DLSSGOptions_numBackBuffers, images);
+            MemoryUtil.memPutInt(fgOptions + DLSSGOptions_mvecDepthWidth, lastRw);
+            MemoryUtil.memPutInt(fgOptions + DLSSGOptions_mvecDepthHeight, lastRh);
+            MemoryUtil.memPutInt(fgOptions + DLSSGOptions_colorWidth, w);
+            MemoryUtil.memPutInt(fgOptions + DLSSGOptions_colorHeight, h);
+            MemoryUtil.memPutInt(fgOptions + DLSSGOptions_colorBufferFormat, format);
+            MemoryUtil.memPutInt(fgOptions + DLSSGOptions_mvecBufferFormat, VK_FORMAT_R16G16_SFLOAT);
+            MemoryUtil.memPutInt(fgOptions + DLSSGOptions_depthBufferFormat, VK_FORMAT_R32_SFLOAT);
+            int r = slDLSSGSetOptions.call(viewport, fgOptions);
+            if (r != RESULT_OK) { fgRunStatus = "Frame Generation: options error " + r; fgOn = false; return; }
+            fgActive = true; fgW = w; fgH = h; fgN = images; fgFormat = format;
+            fgRunStatus = "Frame Generation on, " + (fgFrames + 1) + "x";
+        }
+        pcl(4);
+    }
+
+    void fgAfterPresent() { pcl(5); fgHeld = false; }
+
+    /** DLSS-G off, before the swap chain changes or goes (NVIDIA: it must be off while the swap chain is resized). */
+    void fgOff() {
+        if (!fgActive) return;
+        MemoryUtil.memPutInt(fgOptions + DLSSGOptions_mode, 0);
+        slDLSSGSetOptions.call(viewport, fgOptions);
+        fgActive = false;
+    }
+
+    /** DLSS-G's own report: status bits, frames presented since the last call, the most it can generate. */
+    String fgReport() {
+        if (!fgOn || fgState == 0) return fgRunStatus;
+        int r = slDLSSGGetState.call(viewport, fgState, 0);
+        if (r != RESULT_OK) return fgRunStatus + "; state error " + r;
+        return fgRunStatus + "; status " + MemoryUtil.memGetInt(fgState + DLSSGState_status) + ", frames presented "
+                + MemoryUtil.memGetInt(fgState + DLSSGState_numFramesActuallyPresented) + ", up to "
+                + MemoryUtil.memGetInt(fgState + DLSSGState_numFramesToGenerateMax) + " generated";
+    }
+
+    private static String ver(long p) { return MemoryUtil.memGetInt(p) + "." + MemoryUtil.memGetInt(p + 4) + "." + MemoryUtil.memGetInt(p + 8); }
+
+    private static String names(long countAt, long arrayAt) {
+        int n = MemoryUtil.memGetInt(countAt);
+        long a = MemoryUtil.memGetAddress(arrayAt);
+        StringBuilder s = new StringBuilder("[");
+        for (int i = 0; i < n && a != 0; i++) s.append(i > 0 ? " " : "").append(MemoryUtil.memUTF8(MemoryUtil.memGetAddress(a + 8L * i)));
+        return s.append("]").toString();
+    }
     private static final Map<String, Long> keep = new HashMap<>(); // strings and arrays Streamline keeps pointers to
     public static String status = "";
 
@@ -174,6 +366,7 @@ public final class NvFeatures {
             slSetConstants = new Fn(interposer.getFunctionAddress("slSetConstants"), "PPP");
             slSetTagForFrame = new Fn(interposer.getFunctionAddress("slSetTagForFrame"), "PPPIP");
             slEvaluateFeature = new Fn(interposer.getFunctionAddress("slEvaluateFeature"), "IPPIP");
+            slGetFeatureRequirements = new Fn(interposer.getFunctionAddress("slGetFeatureRequirements"), "IP");
 
             long prefs = struct(Preferences_SIZE, Preferences_GUID, Preferences_VERSION);
             long pluginDir = MemoryUtil.memAddress(MemoryUtil.memUTF16(d.getAbsolutePath())); // wchar_t on Windows
@@ -182,8 +375,22 @@ public final class NvFeatures {
             File logs = new File(d, "logs");
             logs.mkdirs();
             long logDir = MemoryUtil.memAddress(MemoryUtil.memUTF16(logs.getAbsolutePath()));
-            long features = MemoryUtil.nmemCalloc(1, 4);
-            MemoryUtil.memPutInt(features, FEATURE_DLSS);
+            // Ray Reconstruction too when its plugin is there (sl.dlss_d.dll and nvngx_dlssd.dll from the same SDK)
+            boolean rr = new File(d, "sl.dlss_d.dll").isFile() && new File(d, "nvngx_dlssd.dll").isFile();
+            // and RTX Dynamic Vibrance when its plugin is there (sl.deepdvc.dll and nvngx_deepdvc.dll)
+            boolean dvc = new File(d, "sl.deepdvc.dll").isFile(); // its model can also come from the driver (over the air), not only nvngx_deepdvc.dll
+            // and DLSS Frame Generation (with Reflex, which it needs) when its plugin is there
+            fgLoaded = new File(d, "sl.dlss_g.dll").isFile() && new File(d, "nvngx_dlssg.dll").isFile();
+            long features = MemoryUtil.nmemCalloc(6, 4);
+            int nFeatures = 0;
+            MemoryUtil.memPutInt(features + 4L * nFeatures++, FEATURE_DLSS);
+            if (rr) MemoryUtil.memPutInt(features + 4L * nFeatures++, FEATURE_DLSS_RR);
+            if (dvc) MemoryUtil.memPutInt(features + 4L * nFeatures++, FEATURE_DEEPDVC);
+            if (fgLoaded) { // with Streamline's Reflex and its latency markers (PCL), which it needs
+                MemoryUtil.memPutInt(features + 4L * nFeatures++, FEATURE_DLSS_G);
+                MemoryUtil.memPutInt(features + 4L * nFeatures++, FEATURE_REFLEX);
+                MemoryUtil.memPutInt(features + 4L * nFeatures++, FEATURE_PCL);
+            }
             long engineVersion = MemoryUtil.memAddress(MemoryUtil.memUTF8("1.0"));
             long projectId = MemoryUtil.memAddress(MemoryUtil.memUTF8("6a1b8f3e-0c47-4b5e-9d1a-7f2e5c3b9a10"));
             keep.put("prefs", prefs); keep.put("pluginDir", pluginDir); keep.put("paths", paths); keep.put("logDir", logDir);
@@ -193,9 +400,12 @@ public final class NvFeatures {
             MemoryUtil.memPutAddress(prefs + Preferences_pathsToPlugins, paths);
             MemoryUtil.memPutInt(prefs + Preferences_numPathsToPlugins, 1);
             MemoryUtil.memPutAddress(prefs + Preferences_pathToLogsAndData, logDir);
-            MemoryUtil.memPutLong(prefs + Preferences_flags, PREF_DISABLE_CL_STATE_TRACKING); // no over-the-air downloads
+            // -Dbetapt.nvidia.ota=true: let NVIDIA's driver fetch and use its own newer copies of the features (eAllowOTA,
+            // eLoadDownloadedPlugins); off by default so every run uses the DLLs in betapt-nvidia
+            long ota = Boolean.getBoolean("betapt.nvidia.ota") ? PREF_ALLOW_OTA | PREF_LOAD_DOWNLOADED : 0;
+            MemoryUtil.memPutLong(prefs + Preferences_flags, PREF_DISABLE_CL_STATE_TRACKING | PREF_FRAME_BASED_TAGGING | ota);
             MemoryUtil.memPutAddress(prefs + Preferences_featuresToLoad, features);
-            MemoryUtil.memPutInt(prefs + Preferences_numFeaturesToLoad, 1);
+            MemoryUtil.memPutInt(prefs + Preferences_numFeaturesToLoad, nFeatures);
             MemoryUtil.memPutInt(prefs + Preferences_applicationId, 0);
             MemoryUtil.memPutInt(prefs + Preferences_engine, ENGINE_CUSTOM);
             MemoryUtil.memPutAddress(prefs + Preferences_engineVersion, engineVersion);
@@ -221,6 +431,11 @@ public final class NvFeatures {
 
     private Fn slDLSSSetOptions, slDLSSGetOptimalSettings;
     private long viewport, adapter, options, optimal, constants, resources, tags, inputs, tokenSlot, frameIndex;
+    /**
+     * Frame numbers for Streamline's tokens, for the whole game: each new tracer (a setting changed) has its own
+     * NvFeatures, and starting again at 1 reused numbers Streamline still had constants for (error 27, duplicated).
+     */
+    private static int frameCounter;
     private boolean dlssReady;
     public String dlssStatus = "";
 
@@ -335,8 +550,25 @@ public final class NvFeatures {
             MemoryUtil.memPutInt(res + Resource_flags, 0);
             MemoryUtil.memPutInt(res + Resource_usage, (int) im[6]);
         }
+        // Frame Generation reads depth and motion when the frame is presented, after DLSS
+        for (int i = 1; i <= 2; i++) MemoryUtil.memPutInt(tags + (long) i * ResourceTag_SIZE + ResourceTag_lifecycle, fgOn ? LIFE_VALID_UNTIL_PRESENT : LIFE_VALID_UNTIL_EVALUATE);
+        lastRw = (int) images[0][4]; lastRh = (int) images[0][5];
+        long token = frame((int) images[0][4], (int) images[0][5], c, reset);
+        if (token == 0) return false;
+        int r = slSetTagForFrame.call(token, viewport, tags, 4, cb.address());
+        if (r != RESULT_OK) { dlssStatus = "DLSS: tag error " + r; return false; }
+        r = slEvaluateFeature.call(FEATURE_DLSS, token, inputs, 1, cb.address());
+        if (r != RESULT_OK) { dlssStatus = "DLSS: evaluate error " + r; return false; }
+        dlssStatus = "DLSS running";
+        return true;
+    }
+
+    /**
+     * The camera constants for this frame (shared by DLSS and Ray Reconstruction) and a new frame token with them set
+     * on both viewports, or 0 (dlssStatus says why).
+     */
+    private long frame(int rw, int rh, float[] c, boolean reset) {
         // constants: a projection with no far plane (depth = 1 - near / distance, as the FSR inputs make it)
-        int rw = (int) images[0][4], rh = (int) images[0][5];
         float aspect = (float) rw / rh, tan = c[2], near = c[3];
         float sy = 1f / tan, sx = sy / aspect;
         float[] proj = {sx, 0, 0, 0, 0, sy, 0, 0, 0, 0, 1, 1, 0, 0, -near, 0}; // row major, row vectors (as Streamline's float4x4)
@@ -376,18 +608,235 @@ public final class NvFeatures {
         MemoryUtil.memPutByte(constants + Constants_motionVectorsJittered, (byte) B_FALSE);
         MemoryUtil.memPutFloat(constants + Constants_minRelativeLinearDepthObjectSeparation, 40f);
 
-        MemoryUtil.memPutInt(frameIndex, MemoryUtil.memGetInt(frameIndex) + 1);
-        int r = slGetNewFrameToken.call(tokenSlot, frameIndex);
+        int r = RESULT_OK;
+        if (!fgHeld) { // with Frame Generation, the token was made at the start of the frame (fgFrameStart)
+            MemoryUtil.memPutInt(frameIndex, ++frameCounter);
+            r = slGetNewFrameToken.call(tokenSlot, frameIndex);
+        }
         long token = MemoryUtil.memGetAddress(tokenSlot);
-        if (r != RESULT_OK || token == 0) { dlssStatus = "DLSS: frame token error " + r; return false; }
+        if (r != RESULT_OK || token == 0) { dlssStatus = "DLSS: frame token error " + r; return 0; }
         r = slSetConstants.call(constants, token, viewport);
-        if (r != RESULT_OK) { dlssStatus = "DLSS: constants error " + r; return false; }
-        r = slSetTagForFrame.call(token, viewport, tags, 4, cb.address());
-        if (r != RESULT_OK) { dlssStatus = "DLSS: tag error " + r; return false; }
-        r = slEvaluateFeature.call(FEATURE_DLSS, token, inputs, 1, cb.address());
-        if (r != RESULT_OK) { dlssStatus = "DLSS: evaluate error " + r; return false; }
-        dlssStatus = "DLSS running";
+        if (r != RESULT_OK) { dlssStatus = "DLSS: constants error " + r; return 0; }
+        if (rrViewport != 0) {
+            r = slSetConstants.call(constants, token, rrViewport);
+            if (r != RESULT_OK) { rrStatus = "Ray Reconstruction: constants error " + r; return 0; }
+        }
+        tokenFresh = true; // Dynamic Vibrance, later in the same frame, uses this token too
+        return token;
+    }
+
+    // ---- DLSS Ray Reconstruction for one VkLive: denoises and upscales in one go, from the noisy HDR picture and guides
+
+    private Fn slDLSSDSetOptions, slDLSSDGetOptimalSettings;
+    private long rrViewport, rrOptions, rrOptimal, rrResources, rrTags, rrInputs;
+    private boolean rrReady;
+    public String rrStatus = "";
+    private int rrLastMode = -1, rrLastOw, rrLastOh;
+
+    /** After DLSS is ready: is Ray Reconstruction there (its plugin loaded) and supported on this GPU? */
+    boolean rrAfterDevice() {
+        if (!dlssReady) { rrStatus = ""; return false; }
+        try {
+            int r = slIsFeatureSupported.call(FEATURE_DLSS_RR, adapter);
+            if (r != RESULT_OK) { rrStatus = "Ray Reconstruction isn't supported here (Streamline result " + r + "; are sl.dlss_d.dll and nvngx_dlssd.dll in " + dir().getName() + "?)"; return false; }
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                PointerBuffer p = stack.callocPointer(1);
+                r = slGetFeatureFunction.call(FEATURE_DLSS_RR, MemoryUtil.memAddress(stack.UTF8("slDLSSDSetOptions")), p.address());
+                if (r != RESULT_OK || p.get(0) == 0) { rrStatus = "Ray Reconstruction: no slDLSSDSetOptions (" + r + ")"; return false; }
+                slDLSSDSetOptions = new Fn(p.get(0), "PP");
+                p.put(0, 0);
+                r = slGetFeatureFunction.call(FEATURE_DLSS_RR, MemoryUtil.memAddress(stack.UTF8("slDLSSDGetOptimalSettings")), p.address());
+                if (r != RESULT_OK || p.get(0) == 0) { rrStatus = "Ray Reconstruction: no slDLSSDGetOptimalSettings (" + r + ")"; return false; }
+                slDLSSDGetOptimalSettings = new Fn(p.get(0), "PP");
+            }
+            rrViewport = struct(ViewportHandle_SIZE, ViewportHandle_GUID, ViewportHandle_VERSION);
+            MemoryUtil.memPutInt(rrViewport + ViewportHandle_value, 1); // its own viewport: DLSS keeps 0
+            rrOptions = struct(DLSSDOptions_SIZE, DLSSDOptions_GUID, DLSSDOptions_VERSION);
+            rrOptimal = struct(DLSSOptimalSettings_SIZE, DLSSDOptimalSettings_GUID, DLSSOptimalSettings_VERSION); // same layout as DLSS's
+            rrResources = MemoryUtil.nmemCalloc(RR_IMAGES, Resource_SIZE);
+            rrTags = MemoryUtil.nmemCalloc(RR_IMAGES, ResourceTag_SIZE);
+            int[] types = {BUF_IN_COLOR, BUF_DEPTH, BUF_MVEC, BUF_ALBEDO, BUF_SPECULAR_ALBEDO, BUF_NORMAL_ROUGHNESS, BUF_OUT_COLOR};
+            for (int i = 0; i < RR_IMAGES; i++) {
+                long res = rrResources + (long) i * Resource_SIZE, tag = rrTags + (long) i * ResourceTag_SIZE;
+                for (int k = 0; k < 16; k++) {
+                    MemoryUtil.memPutByte(res + BASE_structType + k, Resource_GUID[k]);
+                    MemoryUtil.memPutByte(tag + BASE_structType + k, ResourceTag_GUID[k]);
+                }
+                MemoryUtil.memPutLong(res + BASE_structVersion, Resource_VERSION);
+                MemoryUtil.memPutLong(tag + BASE_structVersion, ResourceTag_VERSION);
+                MemoryUtil.memPutAddress(tag + ResourceTag_resource, res);
+                MemoryUtil.memPutInt(tag + ResourceTag_type, types[i]);
+                MemoryUtil.memPutInt(tag + ResourceTag_lifecycle, LIFE_VALID_UNTIL_EVALUATE);
+            }
+            rrInputs = MemoryUtil.nmemCalloc(1, 8);
+            MemoryUtil.memPutAddress(rrInputs, rrViewport);
+            rrReady = true;
+            rrStatus = "Ray Reconstruction ready";
+            return true;
+        } catch (Throwable t) {
+            rrStatus = "Ray Reconstruction: " + t;
+            return false;
+        }
+    }
+
+    boolean rrReady() { return rrReady; }
+
+    /** Images handed to Ray Reconstruction: noisy colour, depth, motion, diffuse albedo, specular albedo, normal + roughness, output. */
+    static final int RR_IMAGES = 7;
+
+    private void putRrOptions(int mode, int ow, int oh, float[] c) {
+        MemoryUtil.memPutInt(rrOptions + DLSSDOptions_mode, mode);
+        MemoryUtil.memPutInt(rrOptions + DLSSDOptions_outputWidth, ow);
+        MemoryUtil.memPutInt(rrOptions + DLSSDOptions_outputHeight, oh);
+        MemoryUtil.memPutFloat(rrOptions + DLSSDOptions_sharpness, 0f);
+        MemoryUtil.memPutFloat(rrOptions + DLSSDOptions_preExposure, 1f);
+        MemoryUtil.memPutFloat(rrOptions + DLSSDOptions_exposureScale, 1f);
+        MemoryUtil.memPutByte(rrOptions + DLSSDOptions_colorBuffersHDR, (byte) B_TRUE); // Ray Reconstruction takes HDR only
+        MemoryUtil.memPutInt(rrOptions + DLSSDOptions_normalRoughnessMode, NORMAL_ROUGHNESS_PACKED);
+        MemoryUtil.memPutByte(rrOptions + DLSSDOptions_alphaUpscalingEnabled, (byte) B_FALSE);
+        // world to camera view, row vectors (v * M): the camera's right, up and forward as columns, then the position
+        float[] w2v = id4(), v2w = id4();
+        if (c != null) {
+            float px = c[4], py = c[5], pz = c[6];
+            float[] f = {c[7], c[8], c[9]}, rt = {c[10], c[11], c[12]}, up = {c[13], c[14], c[15]};
+            for (int k = 0; k < 3; k++) {
+                w2v[k * 4] = rt[k]; w2v[k * 4 + 1] = up[k]; w2v[k * 4 + 2] = f[k];
+                v2w[k] = rt[k]; v2w[4 + k] = up[k]; v2w[8 + k] = f[k];
+            }
+            w2v[12] = -(px * rt[0] + py * rt[1] + pz * rt[2]);
+            w2v[13] = -(px * up[0] + py * up[1] + pz * up[2]);
+            w2v[14] = -(px * f[0] + py * f[1] + pz * f[2]);
+            v2w[12] = px; v2w[13] = py; v2w[14] = pz;
+        }
+        putMatrix(rrOptions + DLSSDOptions_worldToCameraView, w2v);
+        putMatrix(rrOptions + DLSSDOptions_cameraViewToWorld, v2w);
+    }
+
+    private static float[] id4() { return new float[]{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}; }
+
+    /** {optimal w, h, min w, h, max w, h} for Ray Reconstruction at a mode and window size, or null. */
+    int[] rrSizes(int mode, int ow, int oh) {
+        if (!rrReady) return null;
+        putRrOptions(mode, ow, oh, null);
+        int r = slDLSSDGetOptimalSettings.call(rrOptions, rrOptimal);
+        if (r != RESULT_OK) { rrStatus = "Ray Reconstruction: optimal settings error " + r; return null; }
+        return new int[]{MemoryUtil.memGetInt(rrOptimal + DLSSOptimalSettings_optimalRenderWidth), MemoryUtil.memGetInt(rrOptimal + DLSSOptimalSettings_optimalRenderHeight),
+                MemoryUtil.memGetInt(rrOptimal + DLSSOptimalSettings_renderWidthMin), MemoryUtil.memGetInt(rrOptimal + DLSSOptimalSettings_renderHeightMin),
+                MemoryUtil.memGetInt(rrOptimal + DLSSOptimalSettings_renderWidthMax), MemoryUtil.memGetInt(rrOptimal + DLSSOptimalSettings_renderHeightMax)};
+    }
+
+    /** Records Ray Reconstruction into cb. images: RR_IMAGES of {VkImage, memory, view, VkFormat, width, height, usage}; c as for dlssRecord. */
+    boolean rrRecord(VkCommandBuffer cb, int mode, long[][] images, float[] c, boolean reset) {
+        if (!rrReady) return false;
+        int ow = (int) images[RR_IMAGES - 1][4], oh = (int) images[RR_IMAGES - 1][5];
+        putRrOptions(mode, ow, oh, c); // the camera matrices change every frame
+        int r = slDLSSDSetOptions.call(rrViewport, rrOptions);
+        if (r != RESULT_OK) { rrStatus = "Ray Reconstruction: options error " + r; return false; }
+        if (mode != rrLastMode || ow != rrLastOw || oh != rrLastOh) { reset = true; rrLastMode = mode; rrLastOw = ow; rrLastOh = oh; }
+        for (int i = 0; i < RR_IMAGES; i++) putResource(rrResources + (long) i * Resource_SIZE, images[i]);
+        for (int i = 1; i <= 2; i++) MemoryUtil.memPutInt(rrTags + (long) i * ResourceTag_SIZE + ResourceTag_lifecycle, fgOn ? LIFE_VALID_UNTIL_PRESENT : LIFE_VALID_UNTIL_EVALUATE);
+        lastRw = (int) images[0][4]; lastRh = (int) images[0][5];
+        long token = frame((int) images[0][4], (int) images[0][5], c, reset);
+        if (token == 0) { if (rrStatus.isEmpty() || rrStatus.endsWith("ready")) rrStatus = "Ray Reconstruction: " + dlssStatus; return false; }
+        r = slSetTagForFrame.call(token, rrViewport, rrTags, RR_IMAGES, cb.address());
+        if (r != RESULT_OK) { rrStatus = "Ray Reconstruction: tag error " + r; return false; }
+        if (fgOn) { // Frame Generation works on the DLSS viewport: the same depth and motion, tagged there too
+            r = slSetTagForFrame.call(token, viewport, rrTags + ResourceTag_SIZE, 2, cb.address());
+            if (r != RESULT_OK) fgRunStatus = "Frame Generation: tag error " + r;
+        }
+        r = slEvaluateFeature.call(FEATURE_DLSS_RR, token, rrInputs, 1, cb.address());
+        if (r != RESULT_OK) { rrStatus = "Ray Reconstruction: evaluate error " + r; return false; }
+        rrStatus = "Ray Reconstruction running";
         return true;
+    }
+
+    // ---- RTX Dynamic Vibrance for one VkLive
+
+    private Fn slDeepDVCSetOptions;
+    private long dvcViewport, dvcOptions, dvcResource, dvcTag, dvcInputs;
+    private boolean dvcReady, tokenFresh;
+    public String dvcStatus = "";
+
+    /** After the Vulkan device is made through Streamline: is Dynamic Vibrance there (plugin loaded) and supported? */
+    boolean dvcAfterDevice(VkPhysicalDevice physical) {
+        if (!slStarted) { dvcStatus = "Dynamic Vibrance: " + status; return false; }
+        try {
+            if (adapter == 0) {
+                adapter = struct(AdapterInfo_SIZE, AdapterInfo_GUID, AdapterInfo_VERSION);
+                MemoryUtil.memPutAddress(adapter + AdapterInfo_vkPhysicalDevice, physical.address());
+            }
+            int r = slIsFeatureSupported.call(FEATURE_DEEPDVC, adapter);
+            if (r != RESULT_OK) { dvcStatus = "Dynamic Vibrance isn't supported here (Streamline result " + r + "; are sl.deepdvc.dll and nvngx_deepdvc.dll in " + dir().getName() + "?)"; return false; }
+            try (MemoryStack stack = MemoryStack.stackPush()) {
+                PointerBuffer p = stack.callocPointer(1);
+                r = slGetFeatureFunction.call(FEATURE_DEEPDVC, MemoryUtil.memAddress(stack.UTF8("slDeepDVCSetOptions")), p.address());
+                if (r != RESULT_OK || p.get(0) == 0) { dvcStatus = "Dynamic Vibrance: no slDeepDVCSetOptions (" + r + ")"; return false; }
+                slDeepDVCSetOptions = new Fn(p.get(0), "PP");
+            }
+            dvcViewport = struct(ViewportHandle_SIZE, ViewportHandle_GUID, ViewportHandle_VERSION);
+            MemoryUtil.memPutInt(dvcViewport + ViewportHandle_value, 2); // its own viewport: DLSS has 0, Ray Reconstruction 1
+            dvcOptions = struct(DeepDVCOptions_SIZE, DeepDVCOptions_GUID, DeepDVCOptions_VERSION);
+            dvcResource = struct(Resource_SIZE, Resource_GUID, Resource_VERSION);
+            dvcTag = struct(ResourceTag_SIZE, ResourceTag_GUID, ResourceTag_VERSION);
+            MemoryUtil.memPutAddress(dvcTag + ResourceTag_resource, dvcResource);
+            MemoryUtil.memPutInt(dvcTag + ResourceTag_type, BUF_OUT_COLOR);
+            MemoryUtil.memPutInt(dvcTag + ResourceTag_lifecycle, LIFE_VALID_UNTIL_EVALUATE);
+            dvcInputs = MemoryUtil.nmemCalloc(1, 8);
+            MemoryUtil.memPutAddress(dvcInputs, dvcViewport);
+            if (tokenSlot == 0) { tokenSlot = MemoryUtil.nmemCalloc(1, 8); frameIndex = MemoryUtil.nmemCalloc(1, 4); }
+            dvcReady = true;
+            dvcStatus = "Dynamic Vibrance ready";
+            return true;
+        } catch (Throwable t) {
+            dvcStatus = "Dynamic Vibrance: " + t;
+            return false;
+        }
+    }
+
+    boolean dvcReady() { return dvcReady; }
+
+    /**
+     * Records Dynamic Vibrance into cb: it filters image ({VkImage, memory, view, VkFormat, width, height, usage}, the
+     * finished picture) in place. intensity and saturation boost 0..1.
+     */
+    boolean dvcRecord(VkCommandBuffer cb, long[] image, float intensity, float saturation) {
+        if (!dvcReady) return false;
+        MemoryUtil.memPutInt(dvcOptions + DeepDVCOptions_mode, 1); // on
+        MemoryUtil.memPutFloat(dvcOptions + DeepDVCOptions_intensity, intensity);
+        MemoryUtil.memPutFloat(dvcOptions + DeepDVCOptions_saturationBoost, saturation);
+        int r = slDeepDVCSetOptions.call(dvcViewport, dvcOptions);
+        if (r != RESULT_OK) { dvcStatus = "Dynamic Vibrance: options error " + r; return false; }
+        putResource(dvcResource, image);
+        long token;
+        if (tokenFresh) token = MemoryUtil.memGetAddress(tokenSlot); // DLSS or Ray Reconstruction made this frame's
+        else {
+            MemoryUtil.memPutInt(frameIndex, ++frameCounter);
+            r = slGetNewFrameToken.call(tokenSlot, frameIndex);
+            token = MemoryUtil.memGetAddress(tokenSlot);
+            if (r != RESULT_OK || token == 0) { dvcStatus = "Dynamic Vibrance: frame token error " + r; return false; }
+        }
+        tokenFresh = false;
+        r = slSetTagForFrame.call(token, dvcViewport, dvcTag, 1, cb.address());
+        if (r != RESULT_OK) { dvcStatus = "Dynamic Vibrance: tag error " + r; return false; }
+        r = slEvaluateFeature.call(FEATURE_DEEPDVC, token, dvcInputs, 1, cb.address());
+        if (r != RESULT_OK) { dvcStatus = "Dynamic Vibrance: evaluate error " + r; return false; }
+        dvcStatus = "Dynamic Vibrance running";
+        return true;
+    }
+
+    private static void putResource(long res, long[] im) {
+        MemoryUtil.memPutByte(res + Resource_type, (byte) 0); // a 2D texture
+        MemoryUtil.memPutAddress(res + Resource_native, im[0]);
+        MemoryUtil.memPutAddress(res + Resource_memory, im[1]);
+        MemoryUtil.memPutAddress(res + Resource_view, im[2]);
+        MemoryUtil.memPutInt(res + Resource_state, VK_IMAGE_LAYOUT_GENERAL);
+        MemoryUtil.memPutInt(res + Resource_width, (int) im[4]);
+        MemoryUtil.memPutInt(res + Resource_height, (int) im[5]);
+        MemoryUtil.memPutInt(res + Resource_nativeFormat, (int) im[3]);
+        MemoryUtil.memPutInt(res + Resource_mipLevels, 1);
+        MemoryUtil.memPutInt(res + Resource_arrayLayers, 1);
+        MemoryUtil.memPutInt(res + Resource_flags, 0);
+        MemoryUtil.memPutInt(res + Resource_usage, (int) im[6]);
     }
 
     private static void putMatrix(long p, float[] m) { for (int i = 0; i < 16; i++) MemoryUtil.memPutFloat(p + 4L * i, m[i]); }
@@ -468,9 +917,17 @@ public final class NvFeatures {
             try { new Fn(llLib.getFunctionAddress("NvLL_VK_DestroyLowLatencyDevice"), "P").call(llDevice); } catch (Throwable ignored) {}
             llDevice = 0;
         }
-        dlssReady = false;
-        long[] mem = {viewport, adapter, options, optimal, constants, resources, tags, inputs, tokenSlot, frameIndex};
+        try { fgOff(); } catch (Throwable ignored) {}
+        fgOn = false; fgHeld = false;
+        if (fgOptions != 0) MemoryUtil.nmemFree(fgOptions);
+        if (fgState != 0) MemoryUtil.nmemFree(fgState);
+        fgOptions = fgState = 0;
+        dlssReady = false; rrReady = false;
+        long[] mem = {viewport, adapter, options, optimal, constants, resources, tags, inputs, tokenSlot, frameIndex,
+                rrViewport, rrOptions, rrOptimal, rrResources, rrTags, rrInputs, dvcViewport, dvcOptions, dvcResource, dvcTag, dvcInputs};
         for (long p : mem) if (p != 0) MemoryUtil.nmemFree(p);
         viewport = adapter = options = optimal = constants = resources = tags = inputs = tokenSlot = frameIndex = 0;
+        rrViewport = rrOptions = rrOptimal = rrResources = rrTags = rrInputs = 0;
+        dvcViewport = dvcOptions = dvcResource = dvcTag = dvcInputs = 0; dvcReady = false;
     }
 }

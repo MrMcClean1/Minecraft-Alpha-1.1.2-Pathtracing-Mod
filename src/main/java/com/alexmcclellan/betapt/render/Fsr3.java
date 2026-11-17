@@ -53,6 +53,7 @@ public final class Fsr3 {
         final int[][] uav;   // {unit, resource, GL format}
         final int[][] cb;    // {binding, which}
         int program;
+        int[] unit;          // the image unit each uav entry got (Fsr3Bindings), -1 = the SPD counter's storage buffer
         Pass(String file, int[][] srv, int[][] uav, int[][] cb) { this.file = file; this.srv = srv; this.uav = uav; this.cb = cb; }
     }
 
@@ -129,7 +130,12 @@ public final class Fsr3 {
     private boolean init() {
         if (ok || failed) return ok;
         for (Pass p : all()) {
-            p.program = ShaderUtil.loadCompute(p.file);
+            int[] old = new int[p.uav.length];
+            int atomic = -1;
+            for (int i = 0; i < old.length; i++) { old[i] = p.uav[i][0]; if (p.uav[i][1] == SPD_GLOBAL_ATOMIC) atomic = old[i]; }
+            final int atomicOld = atomic;
+            p.unit = new int[old.length];
+            p.program = ShaderUtil.loadCompute(p.file, src -> Fsr3Bindings.rewrite(src, old, atomicOld, p.unit));
             if (p.program == 0) { failed = true; BetaPT.LOGGER.error("FSR 3.1 disabled: {} did not compile", p.file); return false; }
         }
         sampler = GL33.glGenSamplers();
@@ -157,8 +163,9 @@ public final class Fsr3 {
     }
 
     private void release() {
+        if (spdAtomic != 0) { GL15.glDeleteBuffers(spdAtomic); spdAtomic = 0; }
         int[] all = {acc1, acc2, luma1, luma2, intermediate, shadingChangeTex, newLocks, up1, up2, spdMips, farthestMip1, lumaHist1, lumaHist2,
-                spdAtomic, dilatedReactive, lanczosLut, defaultReactivity, defaultExposure, frameInfo, dilatedDepth, dilatedMotion, reconPrevDepth, output};
+                dilatedReactive, lanczosLut, defaultReactivity, defaultExposure, frameInfo, dilatedDepth, dilatedMotion, reconPrevDepth, output};
         for (int t : all) if (t != 0) GL11.glDeleteTextures(t);
         acc1 = 0;
     }
@@ -179,7 +186,10 @@ public final class Fsr3 {
         spdMips = tex(RG16F, hw, hh, spdLevels);
         farthestMip1 = tex(R16F, hw, hh, 1);
         lumaHist1 = tex(RGBA16F, rw, rh, 1); lumaHist2 = tex(RGBA16F, rw, rh, 1);
-        spdAtomic = tex(R32UI, 1, 1, 1);
+        spdAtomic = GL15.glGenBuffers(); // the downsampler's tile counter: a storage buffer (see Fsr3Bindings)
+        GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER, spdAtomic);
+        GL15.glBufferData(GL43.GL_SHADER_STORAGE_BUFFER, 16, GL15.GL_DYNAMIC_COPY);
+        GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER, 0);
         dilatedReactive = tex(RGBA8, rw, rh, 1);
         frameInfo = tex(RGBA32F, 1, 1, 1);
         dilatedDepth = tex(R32F, rw, rh, 1);
@@ -215,6 +225,13 @@ public final class Fsr3 {
     private static void clearFloat(int t, int level, float r, float g, float b, float a) {
         CLEAR.clear(); CLEAR.put(r).put(g).put(b).put(a).flip();
         GL44.glClearTexImage(t, level, GL11.GL_RGBA, GL11.GL_FLOAT, CLEAR);
+    }
+
+    private static final java.nio.IntBuffer ZERO = BufferUtils.createIntBuffer(1);
+    private void clearCounter() {
+        GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER, spdAtomic);
+        GL15.glBufferSubData(GL43.GL_SHADER_STORAGE_BUFFER, 0, ZERO);
+        GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER, 0);
     }
 
     private static void clearUint(int t, int value) {
@@ -320,14 +337,14 @@ public final class Fsr3 {
             clearFloat(frameInfo, 0, -1, 1, 0, 0);
         }
         clearUint(reconPrevDepth, Float.floatToRawIntBits(1f)); // farthest depth, as AMD clears it (float bits in a uint)
-        clearUint(spdAtomic, 0);
+        clearCounter();
 
         // ---- the passes ----
         this.colorIn = color; this.depthIn = depth; this.motionIn = motion; this.oddFrame = odd;
         int srcX = (rw + 7) / 8, srcY = (rh + 7) / 8, dstX = (uw + 7) / 8, dstY = (uh + 7) / 8;
         run(prepareInputs, srcX, srcY);
         run(lumaPyramid, groupsX, groupsY);
-        clearUint(spdAtomic, 0); // each SPD pass counts finished tiles from zero
+        clearCounter(); // each SPD pass counts finished tiles from zero
         run(shadingChangePyramid, groupsX, groupsY);
         run(shadingChange, ((int) (rw * 0.5f) + 7) / 8, ((int) (rh * 0.5f) + 7) / 8);
         run(prepareReactivity, srcX, srcY);
@@ -340,8 +357,9 @@ public final class Fsr3 {
             GL33.glBindSampler(u, 0);
             GL13.glActiveTexture(GL13.GL_TEXTURE0 + u);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
-            GL42.glBindImageTexture(u, 0, 0, false, 0, GL15.GL_READ_ONLY, GL11.GL_RGBA8);
         }
+        for (int u = 0; u < Fsr3Bindings.MAX_IMAGES; u++) GL42.glBindImageTexture(u, 0, 0, false, 0, GL15.GL_READ_ONLY, GL11.GL_RGBA8);
+        GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 0, 0);
         GL13.glActiveTexture(GL13.GL_TEXTURE0);
         for (int i = 0; i < 13; i++) GL30.glBindBufferBase(GL31.GL_UNIFORM_BUFFER, i, 0);
 
@@ -394,14 +412,17 @@ public final class Fsr3 {
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, resource(s[1], false));
             GL33.glBindSampler(s[0], s[1] == RECONSTRUCTED_PREV_NEAREST_DEPTH ? samplerInt : sampler);
         }
-        for (int[] u : p.uav) {
+        for (int i = 0; i < p.uav.length; i++) {
+            int[] u = p.uav[i];
+            if (p.unit[i] < 0) { GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 0, spdAtomic); continue; }
             int level = u[1] >= SPD_MIP0 ? u[1] - SPD_MIP0 : 0;
-            GL42.glBindImageTexture(u[0], resource(u[1], true), level, false, 0, GL15.GL_READ_WRITE, u[2]);
+            GL42.glBindImageTexture(p.unit[i], resource(u[1], true), level, false, 0, GL15.GL_READ_WRITE, u[2]);
         }
         for (int[] c : p.cb) GL30.glBindBufferBase(GL31.GL_UNIFORM_BUFFER, c[0], ubo[c[1]]);
         GL43.glDispatchCompute(Math.max(1, gx), Math.max(1, gy), 1);
         GL42.glMemoryBarrier(GL42.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL42.GL_TEXTURE_FETCH_BARRIER_BIT
-                | GL42.GL_TEXTURE_UPDATE_BARRIER_BIT | GL42.GL_FRAMEBUFFER_BARRIER_BIT);
+                | GL42.GL_TEXTURE_UPDATE_BARRIER_BIT | GL42.GL_FRAMEBUFFER_BARRIER_BIT
+                | GL43.GL_SHADER_STORAGE_BARRIER_BIT | GL42.GL_BUFFER_UPDATE_BARRIER_BIT);
     }
 
     private static void upload(int buffer, ByteBuffer data) {

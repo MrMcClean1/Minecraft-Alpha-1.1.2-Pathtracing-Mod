@@ -37,12 +37,15 @@ public final class ShaderUtil {
     }
 
     /** Returns a program id, or 0 if compiling or linking failed (errors go to latest.log). */
-    public static int loadCompute(String name) {
+    public static int loadCompute(String name) { return loadCompute(name, s -> s); }
+
+    /** The same, with the source changed first (Fsr3: image numbers that fit NVIDIA's 8 image units). */
+    public static int loadCompute(String name, java.util.function.UnaryOperator<String> edit) {
         String source;
         try (InputStream in = ShaderUtil.class.getResourceAsStream("/assets/betapt/shaders/" + name)) {
             if (in == null) throw new IOException("missing shader " + name);
-            source = includes(new String(in.readAllBytes(), StandardCharsets.UTF_8));
-        } catch (IOException e) {
+            source = edit.apply(includes(new String(in.readAllBytes(), StandardCharsets.UTF_8)));
+        } catch (IOException | RuntimeException e) {
             BetaPT.LOGGER.error("Could not read shader {}", name, e);
             return 0;
         }

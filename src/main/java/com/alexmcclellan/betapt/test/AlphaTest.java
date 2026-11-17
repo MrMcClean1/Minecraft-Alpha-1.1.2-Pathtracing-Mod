@@ -122,23 +122,53 @@ public final class AlphaTest {
         frames++;
         if (wait > 0) { wait--; return; }
         switch (stage) {
-            case 1 -> { checks(mc); stage = 2; view = 0; pt.enabled = true; wait = settle(); }
-            case 2 -> { traced = grab(mc); pt.enabled = false; stage = 3; wait = 4; }
+            case 1 -> { checks(mc); stage = 2; view = 0; pt.enabled = true; wait = settle(); settleFrom = frames; }
+            case 2 -> {
+                // the Vulkan tracer gets changed chunks a few a frame: wait (up to 10 s) until it has them all
+                if (pt.vkActive && com.alexmcclellan.betapt.render.VkBridge.chunksSent > 0 && frames - settleFrom < 1200) { wait = 10; return; }
+                traced = grab(mc); pt.enabled = false; stage = 3; wait = 4;
+            }
             case 3 -> {
                 compare(mc, traced, grab(mc));
                 pt.enabled = true;
                 view++;
                 status = "Alpha test: view " + view + " of " + VIEWS.length;
-                if (view < VIEWS.length) { stage = 2; wait = settle(); }
+                if (view < VIEWS.length) { stage = 2; wait = settle(); settleFrom = frames; }
                 else { stage = 4; startScreenshot(mc); wait = 40; }
             }
-            case 4 -> { finishScreenshot(); stage = 5; }
+            case 4 -> { finishScreenshot(); rtx = 0; rtxStart(); stage = 6; }
+            case 6 -> { // NVIDIA RTX on the Vulkan tracer: DLSS, then with Ray Reconstruction, then with Frame Generation
+                String nv = com.alexmcclellan.betapt.render.VkBridge.nvStatus, win = com.alexmcclellan.betapt.render.VkBridge.presentStatus;
+                // DLSS-G turns itself off while the window isn't focused (a test in the background): it's checked as switched on
+                boolean ok = rtx == 0 ? nv.contains("DLSS running") : rtx == 1 ? nv.contains("Ray Reconstruction running")
+                        : win.startsWith("Vulkan window: ") && !win.contains("stopped") && !win.contains("off") && nv.contains("Frame Generation on");
+                boolean missing = nv.contains("isn't supported") || nv.contains("aren't in") || nv.contains("Frame Generation needs");
+                if (missing) note(RTX_NAMES[rtx] + ": not on this PC (" + nv + ")"); else check(ok, RTX_NAMES[rtx] + ": " + nv + (rtx == 2 ? "; " + win : ""));
+                if (++rtx < RTX_NAMES.length) rtxStart();
+                else {
+                    pt.rayReconstruction = false; pt.frameGeneration = false; pt.upscaler = PathTracer.UPSCALER_FSR; pt.renderScale = 1f;
+                    com.alexmcclellan.betapt.render.VkBridge.reopen();
+                    stage = 5;
+                }
+            }
             case 5 -> finish(mc);
         }
     }
 
+    static final String[] RTX_NAMES = {"DLSS", "DLSS + Ray Reconstruction", "DLSS + Frame Generation"};
+    private static int rtx, settleFrom;
+    private static void rtxStart() {
+        PathTracer pt = PathTracer.INSTANCE;
+        pt.enabled = true; pt.hardwareRt = true;
+        pt.upscaler = PathTracer.UPSCALER_DLSS; pt.renderScale = 0.67f;
+        pt.rayReconstruction = rtx == 1; pt.frameGeneration = rtx == 2;
+        com.alexmcclellan.betapt.render.VkBridge.reopen();
+        status = "Alpha test: NVIDIA RTX " + (rtx + 1) + " of " + RTX_NAMES.length;
+        wait = rtx == 0 ? 480 : 240; // the Vulkan tracer restarts (the first time on a new device, for Streamline), gets the chunks, DLSS settles
+    }
+
     /** Frames to let the traced picture settle after the camera moves (fewer on a slow software renderer). */
-    private static int settle() { return PathTracer.INSTANCE.frameMs > 200 ? 8 : 60; }
+    private static int settle() { return PathTracer.INSTANCE.frameMs > 200 ? 8 : PathTracer.INSTANCE.vkActive ? 180 : 60; }
 
     private static void checks(Minecraft mc) {
         PathTracer pt = PathTracer.INSTANCE;

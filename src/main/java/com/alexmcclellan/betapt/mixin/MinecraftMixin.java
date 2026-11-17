@@ -46,6 +46,11 @@ public class MinecraftMixin {
     }
 
     /** The frame's lighting updates: a few milliseconds' worth, not up to 500 big ones (ClientLighting). */
+    /** Frame Generation: the finished frame goes out through Vulkan too, just before the window swaps (VkBridge.presentFrame). */
+    @Inject(method = "run", at = @At(value = "INVOKE", target = "Lorg/lwjgl/opengl/Display;update()V"))
+    private void betapt$present(CallbackInfo ci) {
+        com.alexmcclellan.betapt.render.VkBridge.presentFrame((Minecraft) (Object) this);
+    }
     @Redirect(method = "run", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/World;doLightUpdates()Z"))
     private boolean betapt$lighting(net.minecraft.world.World world) {
         return com.alexmcclellan.betapt.render.ClientLighting.run(world);

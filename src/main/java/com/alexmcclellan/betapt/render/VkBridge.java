@@ -37,6 +37,9 @@ public final class VkBridge {
         if (loader != null) return loader;
         Path dir = BetaPTConfig.gameDir().resolve("betapt").resolve("vk");
         Files.createDirectories(dir);
+        // Our own LWJGL 3.3.6 lists a device's extensions on its 64 KB thread stack when it makes a Vulkan instance
+        // (NVIDIA has about 250 of 260 bytes each: "Out of stack space"). 1 MB, set before LWJGL 3 first loads.
+        if (System.getProperty("org.lwjgl.system.stackSize") == null) System.setProperty("org.lwjgl.system.stackSize", "1024");
         URL[] urls = new URL[FILES.length];
         for (int i = 0; i < FILES.length; i++) {
             Path target = dir.resolve(FILES[i] + ".jar");
@@ -146,7 +149,7 @@ public final class VkBridge {
         liveError = on ? "Vulkan ray tracing not available (simulated by the autotest)" : null;
     }
     /** The textures changed (texture pack): the Vulkan tracer starts over with the new ones next frame. */
-    public static void reopen() { liveW = -1; }
+    public static void reopen() { liveW = -1; PathTracer.INSTANCE.rrFailed = false; }
     /** Why the Vulkan tracer stopped (shown on F3), or null. */
     public static String liveError;
     /** GPU time of the last Vulkan frame (top tree + trace), ms. */
@@ -190,7 +193,10 @@ public final class VkBridge {
                     in.put("blockLum", blockLum());
                     PathTracer nvp = PathTracer.INSTANCE; // NVIDIA RTX extras, each only if switched on
                     in.put("dlss", nvp.upscaler == PathTracer.UPSCALER_DLSS);
+                    in.put("rr", nvp.upscaler == PathTracer.UPSCALER_DLSS && nvp.rayReconstruction);
+                    in.put("dvc", nvp.deepDvc);
                     in.put("reflex", nvp.lowLatency == 2);
+                    in.put("fg", nvp.upscaler == PathTracer.UPSCALER_DLSS && nvp.frameGeneration); // with Streamline's Reflex instead
                     in.put("ser", nvp.ser);
                     in.put("omm", nvp.omm);
                     live = c.getMethod("open", Map.class).invoke(null, in);
@@ -207,9 +213,18 @@ public final class VkBridge {
                     mDlss = c.getMethod("dlss", int.class, int.class, int.class, int.class, int.class, int.class, int.class, int.class, float[].class, boolean.class);
                     mDlssSizes = c.getMethod("dlssSizes", int.class, int.class, int.class);
                     mDlssReady = c.getMethod("dlssReady");
+                    mDlssRR = c.getMethod("dlssRR", int.class, int.class, int.class, int.class, int.class, int.class, int.class, int.class, int.class, int.class, int.class, float[].class, boolean.class);
+                    mRrSizes = c.getMethod("rrSizes", int.class, int.class, int.class);
+                    mRrReady = c.getMethod("rrReady");
+                    mDeepDvc = c.getMethod("deepDvc", int.class, int.class, int.class, boolean.class, float.class, float.class);
+                    mDvcReady = c.getMethod("dvcReady");
                     mReflex = c.getMethod("reflexFrame", int.class);
                     mReflexOn = c.getMethod("reflexOn");
                     mNvStatus = c.getMethod("nvStatus");
+                    mPresent = c.getMethod("present", int.class, int.class, int.class, boolean.class);
+                    mStopPresent = c.getMethod("stopPresent");
+                    mPresentStatus = c.getMethod("presentStatus");
+                    presenting = false; // a new tracer: its window is made on the first frame
                     nvStatus = (String) mNvStatus.invoke(live);
                     System.out.println("[BetaPT] NVIDIA features: " + nvStatus);
                     sentFastLeaves = false;
@@ -334,6 +349,88 @@ public final class VkBridge {
         if (live == null || liveFailed || mDlss == null) return 0;
         try { return (Integer) withLwjgl3(() -> mDlss.invoke(live, color, depth, motion, rw, rh, ow, oh, mode, c, reset)); }
         catch (Throwable t) { nvStatus = "DLSS: " + t; return 0; }
+    }
+
+    private static Method mDlssRR, mRrSizes, mRrReady, mDeepDvc, mDvcReady;
+
+    public static boolean dvcReady() {
+        try { return live != null && mDvcReady != null && (Boolean) mDvcReady.invoke(live); } catch (Throwable t) { return false; }
+    }
+
+    /** RTX Dynamic Vibrance on the finished picture (VkLive.deepDvc): the OpenGL texture with the result, or 0. */
+    public static int deepDvc(int tex, int w, int h, boolean hdr16, float intensity, float saturation) {
+        if (live == null || liveFailed || mDeepDvc == null) return 0;
+        try { return (Integer) withLwjgl3(() -> mDeepDvc.invoke(live, tex, w, h, hdr16, intensity, saturation)); }
+        catch (Throwable t) { nvStatus = "Dynamic Vibrance: " + t; return 0; }
+    }
+
+    public static boolean rrReady() {
+        try { return live != null && mRrReady != null && (Boolean) mRrReady.invoke(live); } catch (Throwable t) { return false; }
+    }
+
+    public static int[] rrSizes(int mode, int ow, int oh) {
+        if (live == null || mRrSizes == null) return null;
+        try { return (int[]) withLwjgl3(() -> mRrSizes.invoke(live, mode, ow, oh)); } catch (Throwable t) { return null; }
+    }
+
+    /**
+     * DLSS Ray Reconstruction on the Vulkan side (VkLive.dlssRR): the OpenGL texture with the denoised, window-sized
+     * HDR picture, or 0 (then the tracer's own denoiser and DLSS or FSR).
+     */
+    public static int dlssRR(int color, int depth, int motion, int albedo, int specular, int normal, int rw, int rh, int ow, int oh, int mode, float[] c, boolean reset) {
+        if (live == null || liveFailed || mDlssRR == null) return 0;
+        try {
+            int t = (Integer) withLwjgl3(() -> mDlssRR.invoke(live, color, depth, motion, albedo, specular, normal, rw, rh, ow, oh, mode, c, reset));
+            if (t == 0 && mNvStatus != null) nvStatus = (String) mNvStatus.invoke(live); // this frame's reason, for the log
+            return t;
+        }
+        catch (Throwable t) { nvStatus = "Ray Reconstruction: " + t; return 0; }
+    }
+
+    // ---- showing frames through Vulkan (VkLive.present, for Frame Generation)
+    private static Method mPresent, mStopPresent, mPresentStatus;
+    private static boolean presenting;
+    public static String presentStatus = "";
+
+    private static int presentTex, presentW, presentH;
+
+    /**
+     * Called just before the game swaps its window: with Frame Generation on, its finished frame goes out through Vulkan.
+     * Beta draws straight into the window, so the back buffer is copied into a texture first.
+     */
+    public static void presentFrame(Minecraft mc) {
+        boolean want = PathTracer.INSTANCE.frameGeneration && live != null && !liveFailed && mPresent != null;
+        if (!want) { if (presenting) stopPresent(); return; }
+        int w = mc.width, h = mc.height;
+        if (w <= 0 || h <= 0) return;
+        int prev = org.lwjgl.opengl.GL11.glGetInteger(org.lwjgl.opengl.GL11.GL_TEXTURE_BINDING_2D);
+        if (presentTex == 0 || w != presentW || h != presentH) {
+            if (presentTex != 0) org.lwjgl.opengl.GL11.glDeleteTextures(presentTex);
+            presentTex = org.lwjgl.opengl.GL11.glGenTextures();
+            org.lwjgl.opengl.GL11.glBindTexture(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, presentTex);
+            org.lwjgl.opengl.GL11.glTexImage2D(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0, org.lwjgl.opengl.GL11.GL_RGBA8, w, h, 0,
+                    org.lwjgl.opengl.GL11.GL_RGBA, org.lwjgl.opengl.GL11.GL_UNSIGNED_BYTE, (java.nio.ByteBuffer) null);
+            // one level, no mipmaps: otherwise the texture is incomplete and the copy into Vulkan's image fails
+            org.lwjgl.opengl.GL11.glTexParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, org.lwjgl.opengl.GL11.GL_TEXTURE_MIN_FILTER, org.lwjgl.opengl.GL11.GL_LINEAR);
+            org.lwjgl.opengl.GL11.glTexParameteri(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0x813D, 0); // GL_TEXTURE_MAX_LEVEL
+            presentW = w; presentH = h;
+        }
+        org.lwjgl.opengl.GL11.glBindTexture(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, presentTex);
+        org.lwjgl.opengl.GL11.glReadBuffer(org.lwjgl.opengl.GL11.GL_BACK);
+        org.lwjgl.opengl.GL11.glCopyTexSubImage2D(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, 0, 0, 0, 0, 0, w, h);
+        org.lwjgl.opengl.GL11.glBindTexture(org.lwjgl.opengl.GL11.GL_TEXTURE_2D, prev);
+        try {
+            boolean ok = (Boolean) withLwjgl3(() -> mPresent.invoke(live, presentTex, w, h, false));
+            String st = (String) mPresentStatus.invoke(live);
+            if (!st.equals(presentStatus)) com.alexmcclellan.betapt.BetaPT.LOGGER.info("{}", st);
+            presentStatus = st;
+            presenting = ok;
+        } catch (Throwable t) { presentStatus = "Vulkan window: " + t; com.alexmcclellan.betapt.BetaPT.LOGGER.warn("Vulkan window stopped", t); stopPresent(); }
+    }
+
+    private static void stopPresent() {
+        presenting = false;
+        try { if (live != null && mStopPresent != null) withLwjgl3(() -> mStopPresent.invoke(live)); } catch (Throwable ignored) {}
     }
 
     public static boolean reflexOn() {

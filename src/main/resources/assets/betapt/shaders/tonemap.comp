@@ -5,7 +5,9 @@ layout(local_size_x = 8, local_size_y = 8) in;
 layout(binding = 1) uniform sampler2D uHdr;
 layout(rgba8, binding = 0) uniform writeonly image2D outImage;
 layout(std430, binding = 6) readonly buffer Exposure { float exposure; float avgLum; };
-layout(rgba16f, binding = 1) uniform readonly image2D uSkyFog; // Beta-coloured sky/fog, a = coverage
+// Beta-coloured sky/fog, a = coverage. Sampled, not loaded: with Ray Reconstruction the picture is tone mapped at the
+// window's size while the sky/fog picture is at the render size
+layout(binding = 2) uniform sampler2D uSkyFog;
 uniform ivec2 uResolution;
 uniform float uBrightness; // the in-game Brightness slider, on top of auto exposure
 
@@ -25,10 +27,10 @@ vec3 tonemap(vec3 c) {
 void main() {
     ivec2 px = ivec2(gl_GlobalInvocationID.xy);
     if (px.x >= uResolution.x || px.y >= uResolution.y) return;
-    vec3 c = texelFetch(uHdr, px, 0).rgb * exposure * uBrightness;
+    vec3 c = max(texelFetch(uHdr, px, 0).rgb, vec3(0.0)) * exposure * uBrightness;
     c = pow(tonemap(c), vec3(1.0 / 2.2));
     // Sky and fog at Beta's own colours, blended on screen like Beta's GL fog.
-    vec4 sf = imageLoad(uSkyFog, px);
+    vec4 sf = textureLod(uSkyFog, (vec2(px) + 0.5) / vec2(uResolution), 0.0);
     if (sf.a > 0.0) {
         vec3 s = sf.rgb;
         float m = max(max(s.r, s.g), s.b);
