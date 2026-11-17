@@ -15,7 +15,15 @@ import net.minecraft.nbt.NbtCompound;
 public final class BotTest {
     private BotTest() {}
 
-    public static final boolean ON = Boolean.getBoolean("classicbots.test");
+    /** On with -Dclassicbots.test=true, or when the file .minecraft/classicbots-test/run exists (used up when read). */
+    public static final boolean ON = Boolean.getBoolean("classicbots.test") || trigger();
+
+    private static boolean trigger() {
+        try {
+            java.io.File f = net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("classicbots-test").resolve("run").toFile();
+            return f.isFile() && f.delete();
+        } catch (Throwable t) { return false; }
+    }
     private static int step, wait, passed, failed;
     private static BotEntity bot;
     private static long t0;
