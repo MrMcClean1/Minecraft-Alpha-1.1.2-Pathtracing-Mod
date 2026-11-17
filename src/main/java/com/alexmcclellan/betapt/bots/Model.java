@@ -139,6 +139,14 @@ public final class Model {
         }
     }
 
+    /** Asks Ollama to drop the model from graphics memory now (for the path tracer), off the game thread. */
+    public static void unload() {
+        if (BotConfig.modelUrl.isEmpty() || "openai".equalsIgnoreCase(BotConfig.modelApi)) return;
+        String url = BotConfig.modelUrl, body = "{\"model\":" + q(BotConfig.model) + ",\"keep_alive\":0}";
+        Thread t = new Thread(() -> { try { http(url + "/api/generate", body, 10000); } catch (Exception ignored) {} }, "betapt model unload");
+        t.setDaemon(true); t.start();
+    }
+
     static String q(String s) {
         StringBuilder b = new StringBuilder("\"");
         for (char c : s.toCharArray()) {

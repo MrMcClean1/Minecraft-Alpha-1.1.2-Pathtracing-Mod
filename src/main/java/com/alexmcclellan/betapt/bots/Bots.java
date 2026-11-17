@@ -163,7 +163,11 @@ public final class Bots {
                 return;
             }
             case "model": {
-                if (a.length > 1) { BotConfig.model = a[1]; if (a.length > 2) BotConfig.modelUrl = a[2]; BotConfig.modelOn = !a[1].equalsIgnoreCase("off"); BotConfig.save(); }
+                // "model off" frees the model's graphics memory for the path tracer; "model on" brings it back (the name stays)
+                if (a.length > 1 && (a[1].equalsIgnoreCase("off") || a[1].equalsIgnoreCase("on"))) {
+                    BotConfig.modelOn = a[1].equalsIgnoreCase("on"); BotConfig.save();
+                    if (!BotConfig.modelOn) Model.unload();
+                } else if (a.length > 1) { BotConfig.model = a[1]; if (a.length > 2) BotConfig.modelUrl = a[2]; BotConfig.modelOn = true; BotConfig.save(); }
                 tell(p, "Model: " + (BotConfig.modelOn ? BotConfig.model + " at " + BotConfig.modelUrl + " (" + Model.status + ")" : "off") + ". Without it the bots still work by rules.");
                 return;
             }
@@ -172,7 +176,7 @@ public final class Bots {
             case "anyone": BotConfig.anyoneCommands = flag(a, BotConfig.anyoneCommands); BotConfig.save(); tell(p, "Anyone may give bots orders: " + BotConfig.anyoneCommands); return;
             case "map": BotConfig.showOnMap = flag(a, BotConfig.showOnMap); BotConfig.save(); tell(p, "Bots on the minimap: " + BotConfig.showOnMap); return;
             default:
-                tell(p, "/bot on|off, spawn [name], list, remove <name>, tp <name>, model [name] [url], grief|chests|anyone|map on|off");
+                tell(p, "/bot on|off, spawn [name], list, remove <name>, tp <name>, model [name] [url] | model off|on, grief|chests|anyone|map on|off");
                 tell(p, "Talk to a bot by name: \"Ezra follow me\", \"Ezra bring me 16 iron\", \"Ezra set up a base here\",");
                 tell(p, "\"Ezra keep me stocked with 32 coal\", \"Ezra put things away\", \"bots guard\". Right-click a bot to give it what you hold.");
         }
