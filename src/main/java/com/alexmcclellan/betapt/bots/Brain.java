@@ -46,7 +46,7 @@ public class Brain {
     int farmX, farmY, farmZ, farmCursor, farmTimer = 400, harvested, planted, farmWalk, farmLast = -1;
     private final Set<Integer> farmSkip = new HashSet<>();
     // mining: which way the staircase goes
-    private int mineDir = -1, mineTurns;
+    private int mineDir = -1, mineTurns, mineWalk;
     MobEntity enemy;
     int enemyTicks;
     final List<Chore> chores = new ArrayList<>();
@@ -345,7 +345,18 @@ public class Brain {
         }
         if (target == null && want.underground && pickTier() > 0) {
             // ores: none in sight from up here, so dig down to where they are (a staircase, then a tunnel)
+            if (mineWalk > 0) { if (--mineWalk == 0 || b.walkTo(tx + 0.5, ty, tz + 0.5, 3)) mineWalk = 0; return; }
             if (staircase()) return;
+            // no way down from here (its own field, water, a drop all round): walk off a way, then try again
+            // (one step now and then toward a far look spot took it up a hill instead)
+            int a0 = rnd.nextInt(4);
+            for (int k = 0; k < 4; k++) {
+                int d = (a0 + k) & 3, x = MathHelper.floor(b.x) + (d == 0 ? 12 : d == 2 ? -12 : 0), z = MathHelper.floor(b.z) + (d == 1 ? 12 : d == 3 ? -12 : 0);
+                int y = Names.world(b).getHeight(x, z), top = Names.world(b).getBlock(x, y - 1, z);
+                if (y <= 1 || top >= 8 && top <= 11 || top == 59 || top == 60) continue;
+                tx = x; ty = y; tz = z; mineWalk = 160; mineDir = d == 0 ? 3 : d == 1 ? 0 : d == 2 ? 1 : 2;
+                return;
+            }
         }
         if (target == null && want.underground && pickTier() == 0) {
             craftTools(false);
@@ -643,7 +654,13 @@ public class Brain {
             PlayerEntity o = Bots.player(Names.world(b), b.owner);
             if ((job == Job.NONE && mode == Mode.FOLLOW || job == Job.DELIVER) && o != null && o.onGround && teleportTo(o)) return;
             if (target != null) { skip.add(key(target[0], target[1], target[2])); target = null; return; }
-            if (job == Job.RECOVER || job == Job.COME) { endJob(job == Job.RECOVER ? "I can't reach my things from here." : null); return; }
+            if (job == Job.RECOVER || job == Job.COME) {
+                boolean rec = job == Job.RECOVER;
+                endJob(rec ? "I can't reach my things from here." : null);
+                // the errand it was on still stands: carry on with it (a knock-out mid-way dropped the order)
+                if (rec && resumeJob != Job.NONE && want != null) { Job r = resumeJob; resumeJob = Job.NONE; startJob(r); craftTools(false); say("Back to the " + want.label + "."); }
+                return;
+            }
         }
         double dx = gx - b.x, dz = gz - b.z;
         int sx = Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? 1 : -1) : 0, sz = sx == 0 ? (dz > 0 ? 1 : -1) : 0;
