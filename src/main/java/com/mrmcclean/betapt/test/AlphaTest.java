@@ -81,7 +81,7 @@ public final class AlphaTest {
     public static void tick(Minecraft mc) {
         if (!ON || quit) return;
         if (!started) {
-            if (mc.screen instanceof net.minecraft.client.gui.screen.menu.TitleScreen) { started = true; mc.interactionManager = new net.minecraft.client.SurvivalInteractionManager(mc); mc.startGame("alphapt-test"); mc.openScreen(null); }
+            if (mc.screen instanceof net.minecraft.client.gui.screen.menu.TitleScreen) { started = true; com.mrmcclean.betapt.bots.TestQuiet.mute(mc.options); mc.interactionManager = new net.minecraft.client.SurvivalInteractionManager(mc); mc.startGame("alphapt-test"); mc.openScreen(null); }
             return;
         }
         if (mc.world == null || mc.player == null) return;
@@ -334,6 +334,7 @@ public final class AlphaTest {
 
     private static void finish(Minecraft mc) {
         quit = true;
+        com.mrmcclean.betapt.bots.TestQuiet.restore();
         lines.add("");
         lines.add("Passed " + passed + ", failed " + failed);
         try (PrintWriter w = new PrintWriter(new File(dir(mc), "report.txt"), "UTF-8")) {

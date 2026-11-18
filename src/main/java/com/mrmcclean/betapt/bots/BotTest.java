@@ -46,6 +46,7 @@ public final class BotTest {
         if (step == 0) {
             if (!(mc.screen instanceof net.minecraft.client.gui.screen.menu.TitleScreen)) return;
             if (wait < 40) return;
+            TestQuiet.mute(mc.options);
             mc.options.difficulty = 0;
             mc.interactionManager = new net.minecraft.client.SurvivalInteractionManager(mc);
             mc.startGame("BotTest" + (System.currentTimeMillis() / 1000 % 100000));
@@ -230,6 +231,7 @@ public final class BotTest {
             case 29:
                 Bots.log("BOTTEST Done: " + passed + " passed, " + failed + " failed in " + (System.currentTimeMillis() - t0) / 1000 + " s (model " + Model.status + ")");
                 next();
+                TestQuiet.restore();
                 if (!Boolean.getBoolean("classicbots.test.stay")) mc.stop();
         }
     }
