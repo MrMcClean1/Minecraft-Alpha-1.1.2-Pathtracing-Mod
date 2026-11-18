@@ -4,7 +4,6 @@ import net.minecraft.block.Block;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.ItemEntity;
 import net.minecraft.entity.mob.MobEntity;
-import net.minecraft.entity.ai.pathing.Path;
 import net.minecraft.entity.mob.player.PlayerEntity;
 import net.minecraft.item.FoodItem;
 import net.minecraft.item.Item;
@@ -12,11 +11,12 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
 import net.minecraft.nbt.NbtList;
 import net.minecraft.util.math.MathHelper;
-import net.minecraft.util.math.Vec3d;
 import net.minecraft.world.World;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 /**
  * A bot's body: a player-shaped mob with its own 36-slot inventory, an owner, a home, and a {@link Brain} that
@@ -29,8 +29,7 @@ public class BotEntity extends MobEntity {
     public int homeX, homeY, homeZ;
     public boolean hasHome;
     public final Brain brain = new Brain(this);
-    private Path path;
-    private int pathX = Integer.MIN_VALUE, pathY, pathZ, pathAge, stuckTicks;
+    private int stuckTicks;
     private double lastX, lastZ, bestDist = Double.MAX_VALUE;
     private int lastGoalX = Integer.MIN_VALUE, lastGoalZ;
     public int swingTicks, wallTicks, errors;
@@ -71,7 +70,7 @@ public class BotEntity extends MobEntity {
         try { brain.tick(); } catch (Throwable t) { if (errors++ < 3) { StringBuilder sb = new StringBuilder(); for (StackTraceElement e : t.getStackTrace()) { if (sb.length() > 400) break; sb.append(" at ").append(e); } Bots.log("brain error for " + botName() + ": " + t + sb); } }
         if (this.isSubmergedIn(net.minecraft.block.material.Material.WATER) || this.isInLava()) this.jumping = true;
         if (DEBUG && ticks % 40 == 0) Bots.log(String.format("debug %s at %.1f %.1f %.1f fwd %.2f yaw %.0f ground %s mode %s job %s path %s jobTicks %d enemy %s owner %s",
-                botName(), x, y, z, forwardSpeed, yaw, onGround, brain.mode, brain.job, path != null, brain.jobTicks, brain.enemy == null ? "-" : brain.enemy.getClass().getSimpleName() + " d" + Math.round(distanceTo(brain.enemy)),
+                botName(), x, y, z, forwardSpeed, yaw, onGround, brain.mode, brain.job, route != null, brain.jobTicks, brain.enemy == null ? "-" : brain.enemy.getClass().getSimpleName() + " d" + Math.round(distanceTo(brain.enemy)),
                 Bots.player(world, owner) == null ? "-" : String.format("%.1f %.1f %.1f", Bots.player(world, owner).x, Bots.player(world, owner).y, Bots.player(world, owner).z)));
     }
     static final boolean DEBUG = Boolean.getBoolean("classicbots.debug") || debugFile(); // or the file .minecraft/classicbots-test/debug
@@ -94,27 +93,47 @@ public class BotEntity extends MobEntity {
 
     // ------------------------------------------------------------------ movement
 
-    /** Walk toward a spot; true once within reach. Uses Beta's own path finder, straight-line steps where it has none. */
+    // the bots' own path finder (Nav): planned in slices over a few ticks, kept while it still works
+    private Nav search;
+    private Nav.Path route;
+    private Set<Long> routeKeys;
+    private int routeTx = Integer.MIN_VALUE, routeTy, routeTz, routeAge;
+
+    /** Walk toward a spot; true once within reach. Plans with Nav (dig through, pillar, doors, ladders, water). */
     public boolean walkTo(double tx, double ty, double tz, double reach) {
         double dx = tx - x, dz = tz - z, dy = ty - y;
-        if (dx * dx + dz * dz < reach * reach && Math.abs(dy) < 2.5) { path = null; return true; }
+        if (dx * dx + dz * dz < reach * reach && Math.abs(dy) < 2.5) { route = null; search = null; return true; }
         int bx = MathHelper.floor(tx), by = MathHelper.floor(ty), bz = MathHelper.floor(tz);
-        if (path == null || pathAge++ > 40 || bx != pathX || by != pathY || bz != pathZ) {
-            try { path = world.findPath(this, bx, by, bz, 40.0F); } catch (RuntimeException e) { path = null; } // a target past the loaded area
-            pathX = bx; pathY = by; pathZ = bz; pathAge = 0;
+        int fx = MathHelper.floor(x), fy = MathHelper.floor(shape.minY + 0.01), fz = MathHelper.floor(z);
+        boolean moved = Math.abs(bx - routeTx) + Math.abs(by - routeTy) + Math.abs(bz - routeTz) > 2;
+        routeAge++;
+        // plan again when the goal moved, the route ran out or something on it changed (not on a timer)
+        if (search == null && (route == null || moved || route.done() || routeAge % 20 == 0 && !planner().stillGood(route))) {
+            List<double[]> mobs = new ArrayList<>();
+            for (Object o : world.getEntitiesOfType(MobEntity.class, shape.grown(32, 16, 32)))
+                if (o instanceof net.minecraft.entity.mob.monster.Monster && !((MobEntity) o).removed) { Entity e = (Entity) o; mobs.add(new double[]{e.x, e.y, e.z}); }
+            int blocks = count(3) + count(4);
+            search = new Nav(world, fx, fy, fz, bx, by, bz, Math.max(0.8, reach - 0.3), brain::digTicks, blocks, 6000, moved ? null : routeKeys, mobs);
+            routeTx = bx; routeTy = by; routeTz = bz;
         }
-        Vec3d node = null;
-        if (path != null) {
-            node = path.getPos(this);
-            while (node != null && node.squaredDistanceTo(x, node.y, z) < 0.6 * 0.6 * 4) {
-                path.advance();
-                if (path.isDone()) { node = null; path = null; } else node = path.getPos(this);
-            }
+        if (search != null && search.step(500)) {
+            Nav.Path p = search.result();
+            if (p != null) {
+                routeKeys = new HashSet<>();
+                for (int[] q : p.points) routeKeys.add(Nav.key(q[0], q[1], q[2]));
+                route = search.shorten(p);
+            } else route = null;
+            routeAge = 0;
+            search = null;
+            if (DEBUG) Bots.log("debug path " + botName() + " to " + bx + " " + by + " " + bz + ": " + (p == null ? "none" : p.points.size() + " steps" + (p.complete ? "" : " (partial)") + ", " + (route == null ? 0 : route.points.size()) + " after shortening, " + p.searched + " searched"));
         }
-        double gx = node != null ? node.x : tx, gz = node != null ? node.z : tz, gy = node != null ? node.y : ty;
+        int[] q = route == null ? null : route.next();
+        while (q != null && Math.abs(q[0] + 0.5 - x) < 0.35 && Math.abs(q[2] + 0.5 - z) < 0.35 && Math.abs(q[1] - fy) <= 1) { route.index++; q = route.next(); }
+        if (q != null && work(q, fx, fy, fz)) return false; // digging or building on the way
+        double gx = q != null ? q[0] + 0.5 : tx, gz = q != null ? q[2] + 0.5 : tz, gy = q != null ? q[1] : ty;
         double h2 = dx * dx + dz * dz;
-        if (h2 < 0.8 * 0.8) {
-            // right above or below the spot: no amount of walking gets there, so dig down or climb up
+        if (q == null && h2 < 0.8 * 0.8) {
+            // right above or below the spot with no route: dig down or climb up
             forwardSpeed = 0;
             if (Math.abs(dy) >= 2.5) brain.stuck(tx, ty, tz);
             return false;
@@ -124,7 +143,30 @@ public class BotEntity extends MobEntity {
         double d = Math.sqrt(h2) + Math.abs(dy);
         if (d < bestDist - 0.5) { bestDist = d; stuckTicks = 0; brain.progress(); } else stuckTicks++;
         if (bx != lastGoalX || bz != lastGoalZ) { lastGoalX = bx; lastGoalZ = bz; bestDist = d; stuckTicks = 0; }
-        if (stuckTicks > 60) { stuckTicks = 0; bestDist = d; path = null; brain.stuck(tx, ty, tz); }
+        if (stuckTicks > 60) { stuckTicks = 0; bestDist = d; route = null; search = null; brain.stuck(tx, ty, tz); }
+        return false;
+    }
+
+    private Nav planner() { return new Nav(world, 0, 0, 0, 0, 0, 0, 1, null, 0, 0, null, null); }
+
+    /** The route's next step needs work first: blocks to break in the way, or a block to pillar on. True while busy. */
+    private boolean work(int[] q, int fx, int fy, int fz) {
+        Nav.Move m = Nav.Move.values()[q[3]];
+        if (m == Nav.Move.PILLAR && q[0] == fx && q[2] == fz && q[1] > fy) { forwardSpeed = 0; brain.pillar(fx, fy, fz); return true; }
+        if (m != Nav.Move.DIG && m != Nav.Move.DIG_DOWN && m != Nav.Move.UP) return false;
+        if (Math.abs(q[0] - fx) + Math.abs(q[2] - fz) > 1) return false; // not next to it yet
+        int[][] cells = m == Nav.Move.UP ? new int[][]{{fx, fy + 2, fz}, {q[0], q[1], q[2]}, {q[0], q[1] + 1, q[2]}}
+                : new int[][]{{q[0], q[1] + 2, q[2]}, {q[0], q[1] + 1, q[2]}, {q[0], q[1], q[2]}};
+        for (int[] c : cells) {
+            int id = world.getBlock(c[0], c[1], c[2]);
+            if (id == 0 || Nav.water(id) || Nav.door(id) || Bots.block(id) == null || !Bots.block(id).material.blocksMovement()) continue;
+            if (m == Nav.Move.UP && c[1] == q[1] + 2) continue;
+            forwardSpeed = 0;
+            face(c[0] + 0.5, c[1] + 0.5, c[2] + 0.5);
+            brain.dig(c[0], c[1], c[2]);
+            stuckTicks = 0;
+            return true;
+        }
         return false;
     }
 
@@ -140,7 +182,13 @@ public class BotEntity extends MobEntity {
 
     boolean walking() { return forwardSpeed > 0; }
 
-    public void stopMoving() { path = null; forwardSpeed = 0; }
+    // for the brain's survival reflexes (AltoClef-style)
+    int airLeft() { return breath; }
+    boolean burning() { return onFireTimer > 0 || isInLava(); }
+    boolean underwater() { return isSubmergedIn(net.minecraft.block.material.Material.WATER); }
+    void holdJump() { jumping = true; }
+
+    public void stopMoving() { route = null; search = null; forwardSpeed = 0; }
 
     public void face(double tx, double ty, double tz) {
         double dx = tx - x, dz = tz - z, dy = ty - (y + getEyeHeight());
