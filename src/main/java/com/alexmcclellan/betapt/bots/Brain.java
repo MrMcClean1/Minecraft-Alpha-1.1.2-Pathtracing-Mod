@@ -64,6 +64,7 @@ public class Brain {
         if (eatCooldown > 0) eatCooldown--;
         b.pickUp();
         doors();
+        if (survive()) return; // first, before fighting or work (AltoClef's survival chain outranks every task)
         PlayerEntity owner = Bots.player(Names.world(b), b.owner);
         if (fight(owner)) return;
         if (b.health < 14 && eatCooldown == 0) eat();
@@ -98,6 +99,49 @@ public class Brain {
         if (!b.hasHome) { b.stopMoving(); return; }
         if (b.distanceTo(b.homeX + 0.5, b.homeY, b.homeZ + 0.5) > 6) b.walkTo(b.homeX + 0.5, b.homeY, b.homeZ + 0.5, 4);
         else if (++idle % 200 == 0) b.walkTo(b.homeX + rnd.nextInt(9) - 4, b.homeY, b.homeZ + rnd.nextInt(9) - 4, 1.5);
+    }
+
+    // ------------------------------------------------------------------ staying alive
+
+    private int[] safeSpot;
+
+    /**
+     * Reflexes that outrank everything (the idea of AltoClef's world survival chain, MIT): out of lava or fire to the
+     * nearest safe floor (water first), up for air before drowning, (the entity itself climbs out of a block it got stuck inside).
+     */
+    private boolean survive() {
+        int x = MathHelper.floor(b.x), y = MathHelper.floor(b.shape.minY + 0.01), z = MathHelper.floor(b.z);
+        boolean burning = b.burning(), drowning = b.underwater() && b.airLeft() < 120;
+        if (!burning && !drowning) { safeSpot = null; return false; }
+        if (safeSpot == null || b.ticks % 20 == 0) safeSpot = refuge(x, y, z, burning);
+        if (drowning && safeSpot == null) { // nowhere better in reach: straight up, digging out if a block is over its head
+            int hy = MathHelper.floor(b.y + Names.eye(b)) + 1;
+            if (Bots.block(Names.world(b).getBlock(x, hy, z)) != null && Bots.block(Names.world(b).getBlock(x, hy, z)).material.blocksMovement()) dig(x, hy, z);
+            b.holdJump();
+            return true;
+        }
+        if (safeSpot == null) return false;
+        if (b.walkTo(safeSpot[0] + 0.5, safeSpot[1], safeSpot[2] + 0.5, 0.6)) safeSpot = null;
+        b.holdJump();
+        return true;
+    }
+
+    /** The nearest spot within 8 blocks: water when burning, else air at head height with a floor, away from lava and fire. */
+    private int[] refuge(int x, int y, int z, boolean burning) {
+        int[] best = null; double bd = Double.MAX_VALUE;
+        for (int dx = -8; dx <= 8; dx++) for (int dz = -8; dz <= 8; dz++) for (int dy = -3; dy <= 4; dy++) {
+            int px = x + dx, py = y + dy, pz = z + dz;
+            int feet = Names.world(b).getBlock(px, py, pz), head = Names.world(b).getBlock(px, py + 1, pz);
+            double d = dx * dx + dz * dz + dy * dy * 2;
+            if (burning && Nav.water(feet)) d -= 40; // water puts the fire out
+            else {
+                if (Nav.water(head) || !air(px, py, pz) || !air(px, py + 1, pz) || !solid(px, py - 1, pz)) continue;
+                if (burning && (Nav.lava(feet) || feet == 51 || liquidNext(px, py, pz) && !Nav.water(Names.world(b).getBlock(px + 1, py, pz)))) continue;
+            }
+            if (Nav.lava(Names.world(b).getBlock(px, py - 1, pz)) || Nav.lava(Names.world(b).getBlock(px + 1, py, pz)) || Nav.lava(Names.world(b).getBlock(px - 1, py, pz)) || Nav.lava(Names.world(b).getBlock(px, py, pz + 1)) || Nav.lava(Names.world(b).getBlock(px, py, pz - 1))) continue;
+            if (d < bd) { bd = d; best = new int[]{px, py, pz}; }
+        }
+        return best;
     }
 
     // ------------------------------------------------------------------ fighting
@@ -591,6 +635,18 @@ public class Brain {
         }
     }
 
+    /** How long breaking this block would take with the best tool carried (ticks), negative if it may not be broken. */
+    double digTicks(int x, int y, int z, int id) {
+        if (!mayBreak(x, y, z, id)) return -1;
+        Block blk = Bots.block(id);
+        if (blk == null || Names.hardness(blk) < 0) return -1;
+        float hard = Names.hardness(blk);
+        if (hard == 0) return 1;
+        float best = 1; boolean ok = Names.handMineable(blk);
+        for (ItemStack s : b.inv) if (s != null) { best = Math.max(best, s.getMiningSpeed(blk)); if (s.canMineBlock(blk)) ok = true; }
+        return ok ? hard * 30 / best : hard * 100;
+    }
+
     /** One tick of breaking a block; true when it's broken (its drops go on the ground to be picked up). */
     boolean dig(int x, int y, int z) {
         int id = Names.world(b).getBlock(x, y, z);
@@ -684,7 +740,7 @@ public class Brain {
         }
     }
 
-    private void pillar(int x, int y, int z) {
+    void pillar(int x, int y, int z) {
         int block = b.count(3) > 0 ? 3 : b.count(4) > 0 ? 4 : 0;
         if (block == 0 || Names.world(b).getBlock(x, y + 2, z) != 0) return;
         b.setPosition(b.x, b.y + 1.1, b.z);
