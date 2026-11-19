@@ -317,7 +317,10 @@ public class Brain {
             if (b.count(54) == 0 && b.count(5) >= 8) craft(54, 1, new int[]{5, 8});
             if (b.count(54) > 0) {
                 int[] spot = freeSpotNear(b.homeX, b.homeY, b.homeZ);
-                if (spot != null) { b.take(54, 1); Names.world(b).setBlock(spot[0], spot[1], spot[2], 54); say("Base set. I put a chest here for our things."); return; }
+                if (spot != null) {
+                    Names.world(b).setBlock(spot[0], spot[1], spot[2], 54);
+                    if (Names.world(b).getBlock(spot[0], spot[1], spot[2]) == 54) { b.take(54, 1); say("Base set. I put a chest here for our things."); return; } // only said once it is really there
+                }
             }
             say(b.count(54) > 0 ? "Base set, but there's no flat spot for the chest right here." : "Base set. I'll need a chest here: give me one, or 8 planks and I'll make it.");
             return;
@@ -794,13 +797,17 @@ public class Brain {
 
     private int[] freeSpotNear(int x, int y, int z) {
         // next to it first, then a step up or down, then two blocks out (it may be standing in a pit it dug)
-        for (int r = 1; r <= 3; r++)
-            for (int dy : new int[]{0, 1, -1, 2, -2})
+        for (int r = 1; r <= 5; r++) // out to 5 and 3 up or down: after mining it may stand in its own staircase
+            for (int dy : new int[]{0, 1, -1, 2, -2, 3, -3})
                 for (int dx = -r; dx <= r; dx++) for (int dz = -r; dz <= r; dz++) {
                     if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;
                     int px = x + dx, py = y + dy, pz = z + dz;
-                    if (Names.world(b).getBlock(px, py, pz) == 0 && solid(px, py - 1, pz) && !liquidNext(px, py, pz)) return new int[]{px, py, pz};
+                    if (Names.world(b).getBlock(px, py, pz) != 0 || !solid(px, py - 1, pz) || liquidNext(px, py, pz)) continue;
+                    // not where its own body is (it stands across block edges): a block there puts it inside the block
+                    if (px + 1 > b.shape.minX && px < b.shape.maxX && pz + 1 > b.shape.minZ && pz < b.shape.maxZ && py + 1 > b.shape.minY && py < b.shape.maxY) continue;
+                    return new int[]{px, py, pz};
                 }
+        if (BotEntity.DEBUG) Bots.log("debug no chest spot near " + x + " " + y + " " + z);
         return null;
     }
 

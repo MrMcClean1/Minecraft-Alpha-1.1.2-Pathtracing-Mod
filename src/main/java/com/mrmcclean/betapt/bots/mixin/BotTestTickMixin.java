@@ -23,4 +23,8 @@ public class BotTestTickMixin {
         if (down && !classicbots$chatDown) mc.openScreen(new ChatScreen());
         classicbots$chatDown = down;
     }
+
+    /** A test runs behind other windows: Alpha would pause single player (the game menu) once it loses focus, and the bots stand still. */
+    @Inject(method = "pauseGame", at = @At("HEAD"), cancellable = true)
+    private void classicbots$noPause(CallbackInfo ci) { if (BotTest.ON) ci.cancel(); }
 }

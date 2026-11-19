@@ -232,7 +232,12 @@ public final class BotTest {
                 Bots.log("BOTTEST Done: " + passed + " passed, " + failed + " failed in " + (System.currentTimeMillis() - t0) / 1000 + " s (model " + Model.status + ")");
                 next();
                 TestQuiet.restore();
-                if (!Boolean.getBoolean("classicbots.test.stay")) mc.stop();
+                if (!Boolean.getBoolean("classicbots.test.stay")) { // as the Alpha test ends: the loop stops, and the process goes 15 s later if anything still holds it
+                    mc.running = false;
+                    Thread t = new Thread(() -> { try { Thread.sleep(15000); } catch (InterruptedException ignored) {} System.exit(failed == 0 ? 0 : 1); }, "Bot test exit");
+                    t.setDaemon(true);
+                    t.start();
+                }
         }
     }
 
