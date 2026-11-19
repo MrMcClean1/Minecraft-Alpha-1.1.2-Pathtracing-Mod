@@ -171,6 +171,8 @@ public final class BotTest {
             }
             case 22: {
                 bot.brain.mode = Brain.Mode.STAY;
+                // on the surface: an earlier step may have left you next to the bot down a cave or its mine
+                { int sx = (int) Math.floor(p.x), sz = (int) Math.floor(p.z); p.setPosition(sx + 0.5, mc.world.getHeight(sx, sz) + p.eyeHeight + 0.1, sz + 0.5); }
                 // each part on its own: the bot starts next to you
                 bot.setPositionAndAngles(p.x + 1, p.y - p.eyeHeight + 0.1, p.z, 0, 0);
                 bot.add(new ItemStack(4, 64, 0)); bot.add(new ItemStack(5, 32, 0));
@@ -191,8 +193,10 @@ public final class BotTest {
                 bot.add(new ItemStack(290, 1, 0)); bot.add(new ItemStack(295, 12, 0));
                 // the field: beside the hut, where the bot stands
                 // open grass nearby (not a tree top, not the hut)
-                for (int r = 8; r < 120; r += 3) {
-                    int fx = (int) Math.floor(bot.x) + r, fz = (int) Math.floor(bot.z) - r / 2, top = mc.world.getHeight(fx, fz);
+                // out in 8 directions in turn, nearest first (one line out could miss every field in a sandy or wet world)
+                for (int r8 = 0; r8 < 8 * 38; r8++) {
+                    int r = 8 + (r8 / 8) * 3, dir = r8 % 8;
+                    int fx = (int) Math.floor(bot.x) + r * new int[]{1, 1, 0, -1, -1, -1, 0, 1}[dir], fz = (int) Math.floor(bot.z) + r * new int[]{0, 1, 1, 1, 0, -1, -1, -1}[dir], top = mc.world.getHeight(fx, fz);
                     if (mc.world.getBlock(fx, top - 1, fz) != 2 || Math.abs(top - Math.floor(bot.y)) > 2) continue;
                     int grass = 0; // a field's worth of open grass around it, not a beach or a forest
                     for (int gx = -4; gx <= 4; gx++) for (int gz = -4; gz <= 4; gz++) { int t2 = mc.world.getHeight(fx + gx, fz + gz); if (Math.abs(t2 - top) <= 1 && mc.world.getBlock(fx + gx, t2 - 1, fz + gz) == 2) grass++; }
