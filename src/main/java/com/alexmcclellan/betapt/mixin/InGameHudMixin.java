@@ -85,23 +85,43 @@ public abstract class InGameHudMixin extends GuiElement {
     }
 
     /**
-     * Hold Tab in single player: the bots, like the player list in multiplayer (name, health, what each is doing, how
-     * far away). In multiplayer the server's player list shows them already.
+     * Hold Tab in single player: the bots, laid out like the multiplayer player list (centred at the top, one row
+     * each: name, what it is doing, health and distance). Closed unless Tab is held; the Bots page can turn it off.
      */
     @Inject(method = "render", at = @At("TAIL"))
     private void betapt$botList(float tickDelta, boolean screenOpen, int mouseX, int mouseY, CallbackInfo ci) {
         Minecraft mc = this.minecraft;
-        if (mc.world == null || mc.player == null || mc.world.isMultiplayer || mc.screen != null || !(com.alexmcclellan.betapt.bots.BotConfig.tabList && org.lwjgl.input.Keyboard.isKeyDown(org.lwjgl.input.Keyboard.KEY_TAB) || SHOW_LIST)) return;
-        java.util.List<com.alexmcclellan.betapt.bots.BotEntity> bots = com.alexmcclellan.betapt.bots.Bots.bots(mc.world);
-        TextRenderer text = this.minecraft.textRenderer;
-        int y = 16, h = 12 + Math.max(1, bots.size()) * 10; // under the version line in the corner
-        this.fill(2, 14, 360, 14 + h, 0x90000000);
-        this.drawString(text, "Bots (" + bots.size() + ")", 6, y, 0xFFFF55);
-        if (bots.isEmpty()) this.drawString(text, "none in this world (/bot spawn)", 6, y += 10, 0xA0A0A0);
-        for (com.alexmcclellan.betapt.bots.BotEntity b : bots) {
+        boolean held = com.alexmcclellan.betapt.bots.ActiveBots.flag("tabList") && org.lwjgl.input.Keyboard.isKeyDown(org.lwjgl.input.Keyboard.KEY_TAB);
+        if (mc.world == null || mc.player == null || mc.world.isMultiplayer || mc.screen != null || !(held || SHOW_LIST && com.alexmcclellan.betapt.bots.BotTest.ON)) return;
+        java.util.List<com.alexmcclellan.betapt.bots.ActiveBots.Line> bots = com.alexmcclellan.betapt.bots.ActiveBots.list(mc.world); // this mod's bots, or the modpack's copy
+        TextRenderer text = mc.textRenderer;
+        int sw = new net.minecraft.client.render.Window(mc.width, mc.height).getWidth();
+        String title = bots.isEmpty() ? "No bots in this world (/bot spawn)" : "Bots (" + bots.size() + ")";
+        int nameW = 0, rightW = 0, statusW = 0;
+        String[] rights = new String[bots.size()];
+        for (int i = 0; i < bots.size(); i++) {
+            com.alexmcclellan.betapt.bots.ActiveBots.Line b = bots.get(i);
             int hp = Math.max(0, b.health);
-            String line = b.botName() + "  " + hp / 2 + (hp % 2 == 1 ? ".5" : "") + "/10 hearts  " + (int) mc.player.distanceTo(b) + " m  " + b.brain.statusLine();
-            if (line.length() > 70) line = line.substring(0, 69) + "...";
-            this.drawString(text, line, 6, y += 10, hp <= 6 ? 0xFF7777 : 0xFFFFFF);
+            rights[i] = hp / 2 + (hp % 2 == 1 ? ".5" : "") + "/10  " + (int) distOf(mc.player, b.entity) + " m";
+            nameW = Math.max(nameW, text.getWidth(b.name));
+            rightW = Math.max(rightW, text.getWidth(rights[i]));
+            statusW = Math.max(statusW, text.getWidth(b.status));
         }
-    }}
+        statusW = Math.max(0, Math.min(statusW, sw - 40 - nameW - rightW - 24));
+        int total = Math.max(text.getWidth(title) + 8, nameW + statusW + rightW + 24);
+        int x0 = sw / 2 - total / 2, y0 = 10, rows = bots.size();
+        this.fill(x0 - 1, y0 - 1, x0 + total + 1, y0 + 11 + rows * 9 + 1, 0x80000000);
+        this.drawString(text, title, sw / 2 - text.getWidth(title) / 2, y0 + 1, 0xFFFFFF);
+        for (int i = 0; i < rows; i++) {
+            com.alexmcclellan.betapt.bots.ActiveBots.Line b = bots.get(i);
+            int y = y0 + 11 + i * 9, hp = Math.max(0, b.health);
+            this.fill(x0, y, x0 + total, y + 8, 0x20FFFFFF);
+            this.drawString(text, b.name, x0 + 2, y, 0xFFFFFF);
+            String st = b.status.replaceAll(",? ?health \\d+/20\\.?", "").replaceAll("\\.$", ""); // health is in its own column
+            if (text.getWidth(st) > statusW) { while (st.length() > 1 && text.getWidth(st + "...") > statusW) st = st.substring(0, st.length() - 1); st = statusW > 12 ? st + "..." : ""; }
+            this.drawString(text, st, x0 + nameW + 10, y, 0xAAAAAA);
+            this.drawString(text, rights[i], x0 + total - 2 - text.getWidth(rights[i]), y, hp <= 6 ? 0xFF5555 : hp <= 12 ? 0xFFFF55 : 0x55FF55);
+        }
+    }
+    private static double distOf(net.minecraft.entity.Entity a, net.minecraft.entity.Entity b) { return a.distanceTo(b); }
+}
