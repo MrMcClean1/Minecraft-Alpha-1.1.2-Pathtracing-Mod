@@ -13,6 +13,7 @@ layout(set = 0, binding = 7, std140) uniform Params {
     ivec4 iv[3];
     vec4 fx;   // effects: time (s), wind, rain wetness here, spare
     ivec4 ifx; // effects: FX_* bits, spare
+    vec4 dof;  // photo mode: lens radius, focus distance (blocks), spare
 } P;
 layout(set = 0, binding = 8, std430) readonly buffer Lights { vec4 lights[]; };
 // per triangle (ChunkMesher): id (12 bits) | kind << 12 | tile << 16, tint (0xRRGGBB | 1 << 24 if tinted), packed normal, spare,
@@ -65,6 +66,7 @@ layout(set = 0, binding = 15) uniform sampler2D uAtlasN;     // M9: LabPBR norma
 #define uEffects      P.ifx.x
 #define uHandEnt      P.ifx.y   // 1 + the traced hand's mob index when blocks mustn't hide it (Hand collision: OFF), else 0
 #define uGrassOverlay P.ifx.z   // Fancy graphics: 1 + the tile laid over grass sides (ChunkMesher marks them), 0 on Fast
+#define uDof          P.dof.xy  // photo mode depth of field (radius 0: off)
 #define uCamInWater   P.ifx.w   // 1 while the camera is under water
 const uint MASK_SOLID = 1u, MASK_CLEAR = 2u, MASK_MOBS = 4u;
 const uint KIND_CROSS = 1u, KIND_MOB = 2u, KIND_FACE2 = 3u; // FACE2: one square between two touching see-through blocks

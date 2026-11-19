@@ -240,7 +240,7 @@ public final class VkLive extends VkBase {
         }
 
         // ---- buffers ----
-        params = hostBuffer(256, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+        params = hostBuffer(272, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT); // vkpath.comp Params: 256 bytes, then dof
         lightBuf = hostBuffer(256 * 16, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
         int[] lum = in.get("blockLum") instanceof int[] l ? l : new int[1];
         lumBuf = hostBuffer(lum.length * 4L, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
@@ -923,12 +923,14 @@ public final class VkLive extends VkBase {
             }
             writeChunkTable();
             uploadTiles(cb, stack);
-            ByteBuffer p = MemoryUtil.memByteBuffer(map(params), 256);
+            ByteBuffer p = MemoryUtil.memByteBuffer(map(params), 272);
             for (int i = 0; i < 44; i++) p.putFloat(i * 4, f[i]);
             for (int i = 0; i < Math.min(iv.length, 12); i++) p.putInt(176 + i * 4, iv[i]);
             // effects: Params.fx (4 floats) and Params.ifx (4 ints) after the first 224 bytes
             for (int i = 44; i < Math.min(f.length, 48); i++) p.putFloat(224 + (i - 44) * 4, f[i]);
             for (int i = 12; i < Math.min(iv.length, 16); i++) p.putInt(240 + (i - 12) * 4, iv[i]);
+            // photo mode's depth of field: Params.dof (lens radius, focus distance) after those
+            for (int i = 48; i < 52; i++) p.putFloat(256 + (i - 48) * 4, i < f.length ? f[i] : 0f);
             unmap(params);
             int nl = Math.min(lights.length / 4, 256);
             if (nl > 0) { MemoryUtil.memFloatBuffer(map(lightBuf), nl * 4).put(lights, 0, nl * 4); unmap(lightBuf); }

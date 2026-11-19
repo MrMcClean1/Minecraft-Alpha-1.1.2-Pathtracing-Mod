@@ -30,8 +30,9 @@ public class EffectsScreen extends Screen {
         // the test switch: what runs at the next title screen (then it switches itself off)
         this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(7, this.width / 2 - 100, top + 96, 200, 20, testText()));
         // particles and rain (moved here from the main page, which has the Quality button now)
-        this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(10, this.width / 2 - 100, top + 120, 200, 20, text(10)));
-        this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(11, this.width / 2 - 100, top + 144, 200, 20, text(11)));
+        this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(10, this.width / 2 - 155, top + 120, 150, 20, text(10)));
+        this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(11, this.width / 2 + 5, top + 120, 150, 20, text(11)));
+        this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(13, this.width / 2 - 155, top + 144, 150, 20, "Photo, time-lapse..."));
         this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(12, this.width / 2 + 5, top + 168, 150, 20, "NVIDIA RTX..."));
         this.buttons.add(new com.alexmcclellan.betapt.gui.PtButton(200, this.width / 2 - 155, top + 168, 150, 20, "Done"));
     }
@@ -101,6 +102,7 @@ public class EffectsScreen extends Screen {
                 return;
             }
             case 12 -> { this.minecraft.openScreen(new RtxScreen(this)); return; }
+            case 13 -> { this.minecraft.openScreen(new PhotoOptionsScreen(this)); return; }
             case 200 -> { this.minecraft.openScreen(this.parent); return; }
             default -> { return; }
         }
@@ -115,7 +117,7 @@ public class EffectsScreen extends Screen {
         hovered = 0;
         for (Object o : this.buttons) {
             ButtonWidget w = (ButtonWidget) o;
-            int bw = w.id == 7 || w.id == 10 || w.id == 11 ? 200 : 150;
+            int bw = w.id == 7 ? 200 : 150;
             if (w.id >= 1 && w.id <= 12 && mouseX >= w.x && mouseY >= w.y && mouseX < w.x + bw && mouseY < w.y + 20) hovered = w.id;
         }
         String help = hovered > 0 ? HELP[hovered] : "Presets set these too. Done on the main page saves.";

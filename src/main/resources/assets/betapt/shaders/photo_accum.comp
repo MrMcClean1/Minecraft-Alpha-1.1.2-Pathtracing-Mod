@@ -1,0 +1,28 @@
+#version 430
+// Photo mode: every frame's picture of a still scene is added up and the average put back, so a few hundred
+// samples per pixel make a noise-free picture. The HDR light (before exposure) and the sky/fog layer are averaged
+// separately, as tonemap.comp reads them.
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(rgba16f, binding = 0) uniform image2D uHdr;          // this frame's picture in, the average out
+layout(rgba16f, binding = 1) uniform readonly image2D uSky;  // this frame's sky/fog layer
+layout(rgba32f, binding = 2) uniform image2D uSumHdr;
+layout(rgba32f, binding = 3) uniform image2D uSumSky;
+layout(rgba16f, binding = 4) uniform writeonly image2D uAvgSky;
+uniform ivec2 uResolution;
+uniform int uCount; // samples so far, this one included (1: start over)
+
+void main() {
+    ivec2 px = ivec2(gl_GlobalInvocationID.xy);
+    if (px.x >= uResolution.x || px.y >= uResolution.y) return;
+    vec4 c = imageLoad(uHdr, px), s = imageLoad(uSky, px);
+    // a rare very bright sample (a light reached by one lucky bounce) would stay a speck for hundreds of samples
+    float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
+    if (l > 64.0) c.rgb *= 64.0 / l;
+    vec4 sc = uCount <= 1 ? c : imageLoad(uSumHdr, px) + c;
+    vec4 ss = uCount <= 1 ? s : imageLoad(uSumSky, px) + s;
+    imageStore(uSumHdr, px, sc);
+    imageStore(uSumSky, px, ss);
+    float k = 1.0 / float(max(uCount, 1));
+    imageStore(uHdr, px, sc * k);
+    imageStore(uAvgSky, px, ss * k);
+}

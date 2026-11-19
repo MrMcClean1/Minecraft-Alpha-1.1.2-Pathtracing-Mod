@@ -108,6 +108,11 @@ public final class PtSettings {
             pt.fxWaves = Boolean.parseBoolean(p.getProperty("fx.waterWaves", Boolean.toString(pt.fxWaves)));
             pt.darkNights = Boolean.parseBoolean(p.getProperty("nights.dark", Boolean.toString(pt.darkNights)));
             pt.handCollide = Boolean.parseBoolean(p.getProperty("hand.collide", Boolean.toString(pt.handCollide)));
+            // photo mode (Effects > Photo, time-lapse...)
+            com.alexmcclellan.betapt.render.PhotoMode.enabled = Boolean.parseBoolean(p.getProperty("photo.enabled", Boolean.toString(com.alexmcclellan.betapt.render.PhotoMode.enabled)).trim());
+            com.alexmcclellan.betapt.render.PhotoMode.samples = Math.max(1, Math.min(65536, Integer.parseInt(p.getProperty("photo.samples", Integer.toString(com.alexmcclellan.betapt.render.PhotoMode.samples)).trim())));
+            com.alexmcclellan.betapt.render.PhotoMode.aperture = Math.max(0f, Math.min(com.alexmcclellan.betapt.render.PhotoMode.MAX_APERTURE, Float.parseFloat(p.getProperty("photo.aperture", Float.toString(com.alexmcclellan.betapt.render.PhotoMode.aperture)).trim())));
+            com.alexmcclellan.betapt.render.PhotoMode.sunTime = Math.max(-1, Math.min(23999, Integer.parseInt(p.getProperty("photo.sunTime", Integer.toString(com.alexmcclellan.betapt.render.PhotoMode.sunTime)).trim())));
         } catch (Exception e) {
             BetaPT.LOGGER.error("Bad value in {}", file(), e);
         }
@@ -151,6 +156,10 @@ public final class PtSettings {
         p.setProperty("fx.waterWaves", Boolean.toString(pt.fxWaves));
         p.setProperty("nights.dark", Boolean.toString(pt.darkNights));
         p.setProperty("hand.collide", Boolean.toString(pt.handCollide));
+        p.setProperty("photo.enabled", Boolean.toString(com.alexmcclellan.betapt.render.PhotoMode.enabled));
+        p.setProperty("photo.samples", Integer.toString(com.alexmcclellan.betapt.render.PhotoMode.samples));
+        p.setProperty("photo.aperture", Float.toString(com.alexmcclellan.betapt.render.PhotoMode.aperture));
+        p.setProperty("photo.sunTime", Integer.toString(com.alexmcclellan.betapt.render.PhotoMode.sunTime));
         return p;
     }
 

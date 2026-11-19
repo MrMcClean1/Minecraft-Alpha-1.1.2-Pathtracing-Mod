@@ -38,6 +38,7 @@ public class GameRendererMixin {
     @Unique private static boolean betapt$denoiseHeld;
     @Unique private static boolean betapt$lookHeld;
     @org.spongepowered.asm.mixin.Unique private static boolean betapt$presetHeld;
+    @org.spongepowered.asm.mixin.Unique private static boolean betapt$photoHeld;
 
     /**
      * Autotest cost probe only ("old frame order"): draw the way M4/M5 did, cancelling Beta's
@@ -184,6 +185,17 @@ public class GameRendererMixin {
                     + (next == PathTracer.Preset.OFF ? " (Alpha's renderer)" : ""));
         }
         betapt$presetHeld = f4;
+
+        // the photo key opens photo mode (when it is switched on in Effects > Photo, time-lapse...)
+        boolean photo = keysAllowed && Keyboard.isKeyDown(com.alexmcclellan.betapt.config.BetaPTKeys.PHOTO.keyCode);
+        if (photo && !betapt$photoHeld) {
+            if (!com.alexmcclellan.betapt.render.PhotoMode.enabled) {
+                if (this.minecraft.gui != null) this.minecraft.gui.addChatMessage("Photo mode is off: Path Tracer > Effects... > Photo, time-lapse...");
+            } else if (PathTracer.INSTANCE.active() && PathTracer.INSTANCE.pathView() && this.minecraft.world != null) {
+                this.minecraft.openScreen(new com.alexmcclellan.betapt.gui.PhotoScreen());
+            }
+        }
+        betapt$photoHeld = photo;
 
         AutoTest.afterWorld(this.minecraft);
         com.alexmcclellan.betapt.test.ModTest.afterWorld(this.minecraft);
