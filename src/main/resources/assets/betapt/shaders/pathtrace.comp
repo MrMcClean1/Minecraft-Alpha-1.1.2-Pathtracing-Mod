@@ -48,6 +48,7 @@ uniform vec3  uCamFrac;
 uniform vec3  uCamForward, uCamRight, uCamUp;
 uniform float uTanHalfFov;
 uniform vec2  uJitter;       // M8: sub-pixel camera nudge for FSR, pixels (0 without FSR)
+uniform vec2  uDof;          // photo mode: lens radius and focus distance in blocks (radius 0: no depth of field)
 uniform vec3  uSkyColor, uFogColor;
 uniform vec4  uSunrise;      // Beta's sunrise/sunset glow colour, alpha = strength
 uniform vec3  uSunDir;       // towards the sun

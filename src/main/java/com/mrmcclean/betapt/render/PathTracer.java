@@ -168,6 +168,12 @@ public final class PathTracer {
     /** It failed once since the Vulkan tracer last (re)started: the tracer's own denoiser until the next restart. */
     boolean rrFailed;
     private boolean rrThisFrame;
+    private int photoProgram, photoSumHdr, photoSumSky, photoSky, photoW, photoH; // photo mode (PhotoMode, photo_accum.comp)
+    private int skyForTonemap; // the sky/fog layer tonemap.comp blends in: this frame's (0), or photo mode's average
+    /** This frame adds a sample to photo mode's picture. */
+    private boolean photoFrame;
+    private boolean photoLast, photoVk;
+    private int photoSettle;
     private int rrGuidesProgram, rrNormal, rrSpecular, rrW, rrH, rrOut, rrOutW, rrOutH;
     /** RTX Dynamic Vibrance: NVIDIA's AI filter for vibrance and saturation on the finished picture (Vulkan tracer only). */
     public boolean deepDvc = false;
@@ -386,6 +392,7 @@ public final class PathTracer {
         atrousProgram = ShaderUtil.loadCompute("atrous.comp");
         fsrInputsProgram = ShaderUtil.loadCompute("fsr_inputs.comp"); // 0 = FSR unavailable, basic upscaler used
         rrGuidesProgram = ShaderUtil.loadCompute("rr_guides.comp");   // 0 = no Ray Reconstruction
+        photoProgram = ShaderUtil.loadCompute("photo_accum.comp");    // 0 = no photo mode
         if (program == 0 || traceProgram == 0 || pathProgram == 0 || exposureProgram == 0 || tonemapProgram == 0
                 || temporalProgram == 0 || atrousProgram == 0 || presentProgram == 0 || upscaleProgram == 0 || rcasProgram == 0) {
             broken = true;
@@ -495,7 +502,7 @@ public final class PathTracer {
             GL42.glMemoryBarrier(GL42.GL_TEXTURE_FETCH_BARRIER_BIT | GL42.GL_FRAMEBUFFER_BARRIER_BIT);
             presentTex = upImage;
         }
-        if (sharpen > 0.001f) {
+        if (sharpen > 0.001f && !photoFrame) { // photo mode: the picture as traced
             GL20.glUseProgram(rcasProgram);
             uni2i(rcasProgram, "uSize", outW, outH);
             uni1f(rcasProgram, "uSharpness", (float) Math.pow(2.0, -2.0 * (1.0 - Math.min(1f, sharpen))));
@@ -630,7 +637,7 @@ public final class PathTracer {
 
     /** The sky/fog picture for tonemap.comp, which samples it (it may be at another size than the picture it tone maps). */
     private void bindSkyFog() {
-        bindTexture(2, GL11.GL_TEXTURE_2D, skyFog);
+        bindTexture(2, GL11.GL_TEXTURE_2D, skyForTonemap != 0 ? skyForTonemap : skyFog);
         // one level, no mipmaps: without these the texture isn't complete and samples as black
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
         GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
@@ -683,6 +690,44 @@ public final class PathTracer {
     }
 
     /**
+     * Photo mode: this frame's picture (HDR light and the sky/fog layer) is added to the running sums and replaced by
+     * the average, so exposure and the tone map below see the averaged picture.
+     */
+    private void photoAccumulate(int sample, int groupsX, int groupsY) {
+        if (photoW != width || photoH != height) {
+            if (photoSumHdr != 0) { GL11.glDeleteTextures(photoSumHdr); GL11.glDeleteTextures(photoSumSky); GL11.glDeleteTextures(photoSky); }
+            photoSumHdr = newImage32(width, height); photoSumSky = newImage32(width, height); photoSky = newImage(width, height);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, photoSky);
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
+            GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
+            photoW = width; photoH = height;
+            sample = 1;
+            PhotoMode.count = 1;
+        }
+        GL20.glUseProgram(photoProgram);
+        uni2i(photoProgram, "uResolution", width, height);
+        uni1i(photoProgram, "uCount", sample);
+        bindImage(0, hdr, GL15.GL_READ_WRITE);
+        bindImage(1, skyFog, GL15.GL_READ_ONLY);
+        GL42.glBindImageTexture(2, photoSumHdr, 0, false, 0, GL15.GL_READ_WRITE, GL30.GL_RGBA32F);
+        GL42.glBindImageTexture(3, photoSumSky, 0, false, 0, GL15.GL_READ_WRITE, GL30.GL_RGBA32F);
+        bindImage(4, photoSky, GL15.GL_WRITE_ONLY);
+        GL43.glDispatchCompute(groupsX, groupsY, 1);
+        GL42.glMemoryBarrier(GL42.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL42.GL_TEXTURE_FETCH_BARRIER_BIT);
+        for (int u = 0; u < 5; u++) GL42.glBindImageTexture(u, 0, 0, false, 0, GL15.GL_READ_ONLY, GL11.GL_RGBA8);
+        skyForTonemap = photoSky;
+    }
+
+    private static int newImage32(int w, int h) {
+        int t = GL11.glGenTextures();
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, t);
+        GL42.glTexStorage2D(GL11.GL_TEXTURE_2D, 1, GL30.GL_RGBA32F, w, h);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
+        return t;
+    }
+
+    /**
      * M5: turn the noisy 1-sample light into a clean one, then combine it with the
      * texture colours into the HDR image. See temporal.comp and atrous.comp.
      */
@@ -691,7 +736,7 @@ public final class PathTracer {
         final int R = GL15.GL_READ_ONLY, W = GL15.GL_WRITE_ONLY;
         int input = light;
         // with Ray Reconstruction this frame, the noisy light is only composed (its own denoiser does the rest)
-        boolean denoiseHere = denoise && !rrThisFrame;
+        boolean denoiseHere = denoise && !rrThisFrame && !photoFrame;
         if (denoiseHere) {
             boolean valid = historyValid && !lightCut && prevCam != null && now - lastPathNanos < 250_000_000L
                     && Math.abs(cam.x - prevCam.x) + Math.abs(cam.y - prevCam.y) + Math.abs(cam.z - prevCam.z) < 8.0;
@@ -751,6 +796,7 @@ public final class PathTracer {
 
     /** Called from GameRendererMixin in place of Beta's world rendering. */
     public void renderFrame(Minecraft mc, float tickDelta) {
+        PhotoMode.applyTime(mc); // photo mode's own time of day, held every frame
         if (program == 0 && !broken) {
             try { init(mc); }
             catch (Throwable t) { // a start-up failure turns the tracer off instead of stopping the game
@@ -765,9 +811,11 @@ public final class PathTracer {
             VkBridge.reopen();
         }
         int dw = mc.width, dh = mc.height;
-        float scale = upscaler == UPSCALER_OFF ? 1f : Math.max(0.25f, Math.min(1f, renderScale));
+        // photo mode: native size, no upscaler, no denoiser (the samples are averaged instead)
+        photoFrame = PhotoMode.active() && photoProgram != 0 && pathView() && !legacyFrame;
+        float scale = upscaler == UPSCALER_OFF || photoFrame ? 1f : Math.max(0.25f, Math.min(1f, renderScale));
         int iw = Math.max(16, Math.round(dw * scale)), ih = Math.max(16, Math.round(dh * scale));
-        if (upscaler == UPSCALER_DLSS && pathView()) { // DLSS takes render sizes in a range per mode
+        if (upscaler == UPSCALER_DLSS && pathView() && !photoFrame) { // DLSS takes render sizes in a range per mode
             int[] ds = dlssSizes(dw, dh);
             if (ds != null && ds[2] > 0 && ds[4] > 0) { iw = Math.max(ds[2], Math.min(ds[4], iw)); ih = Math.max(ds[3], Math.min(ds[5], ih)); }
         }
@@ -796,10 +844,12 @@ public final class PathTracer {
         else if (lowLatency >= 1) GL11.glFinish(); // low latency: no frame waits in line, so input shows up sooner
         timer.begin();
         // M8: FSR needs the camera nudged by a different fraction of a pixel every frame
-        boolean useFsr = (upscaler == UPSCALER_FSR || upscaler == UPSCALER_DLSS) && fsrInputsProgram != 0 && !fsr.failed() && pathView() && !legacyFrame;
+        boolean useFsr = (upscaler == UPSCALER_FSR || upscaler == UPSCALER_DLSS) && fsrInputsProgram != 0 && !fsr.failed() && pathView() && !legacyFrame && !photoFrame;
         prevJitX = jitX; prevJitY = jitY;
         if (useFsr) { float[] j = Fsr3.jitter(jitterFrame++, width, outW); jitX = j[0]; jitY = j[1]; }
+        else if (photoFrame) { jitX = PhotoMode.jitter(); jitY = PhotoMode.jitter(); } // smooth edges once averaged
         else { jitX = 0f; jitY = 0f; }
+        int photoSample = photoFrame ? PhotoMode.frame(cam) : 0;
         int groupsX = (width + 7) / 8, groupsY = (height + 7) / 8;
         if (pathView()) {
             stages.begin();
@@ -815,6 +865,7 @@ public final class PathTracer {
             uni1i(pathProgram, "uFrame", frameIndex++);
             uni1i(pathProgram, "uDebugMask", debugMask);
             uni2f(pathProgram, "uJitter", jitX, jitY);
+            uni2f(pathProgram, "uDof", photoFrame ? PhotoMode.aperture : 0f, PhotoMode.focus);
             // M6: last frame's mob boxes, positioned relative to this frame's camera block
             entityCount = !legacyFrame // mobs when they're traced, and blocks drawn by block entity renderers always
                     ? EntityCapture.upload((int) Math.floor(cam.x), (int) Math.floor(cam.y), (int) Math.floor(cam.z)) : 0;
@@ -854,12 +905,21 @@ public final class PathTracer {
             // it denoises and upscales the noisy picture itself, in fsrUpscale)
             rrThisFrame = upscaler == UPSCALER_DLSS && rayReconstruction && !rrFailed && rrGuidesProgram != 0 && useFsr && vkActive && VkBridge.rrReady();
             denoiseAndCompose(cam, now, groupsX, groupsY);
+            skyForTonemap = 0;
+            if (photoFrame) {
+                // the first frames after photo mode starts (the tracer may restart at native size and get its chunks
+                // again), after the Vulkan tracer comes or goes, and while it is still being sent chunks: not counted
+                if (!photoLast || vkActive != photoVk || vkActive && VkBridge.chunksSent > 0) photoSettle = 20;
+                if (photoSettle > 0) { photoSettle--; photoSample = 1; PhotoMode.count = 1; }
+                photoAccumulate(photoSample, groupsX, groupsY);
+            }
+            photoLast = photoFrame; photoVk = vkActive;
 
             // 2. adapt exposure to the scene
             GL20.glUseProgram(exposureProgram);
             bindTexture(1, GL11.GL_TEXTURE_2D, hdr);
             GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 6, exposureBuffer);
-            uni1f(exposureProgram, "uDeltaTime", snapExposure ? 100f : (float) Math.min(0.1, frameMs / 1000.0));
+            uni1f(exposureProgram, "uDeltaTime", snapExposure || photoFrame ? 100f : (float) Math.min(0.1, frameMs / 1000.0));
             // Nights: Dark scales the whole exposure down as the sun sets (not where there's no day: Nether, Twilight Forest)
             float night = 1f - Math.max(0f, Math.min(1f, sunDir[1] * 2f + 0.5f));
             float dim = darkNights && mc.world != null && !Dim.nether(mc.world) && fxDayCycle(mc) ? 1f - 0.4f * night : 1f;
@@ -881,6 +941,7 @@ public final class PathTracer {
             bindTexture(2, GL11.GL_TEXTURE_2D, 0);
             GL13.glActiveTexture(GL13.GL_TEXTURE0);
             stages.stamp(); // end of exposure + tone map
+            if (photoFrame) PhotoMode.maybeSave(image, width, height);
             fsrActive = useFsr && fsrUpscale(cam, now);
             if (lowLatency == 2 || frameGeneration) VkBridge.reflexFrame(3); // Reflex: the frame's commands are all handed over
             if (!fsrActive) upscaleAndSharpen();
@@ -909,7 +970,7 @@ public final class PathTracer {
 
         if (pathView() && !legacyFrame) {
             dvcActive = false;
-            if (deepDvc && vkActive) applyDvc();
+            if (deepDvc && vkActive && !photoFrame) applyDvc();
             present();
         } else {
             // Debug views: copy the image and clear depth, so Beta's entities draw on top of everything.
@@ -1252,7 +1313,7 @@ public final class PathTracer {
     }
 
     private boolean vulkanTrace(Minecraft mc) {
-        float[] f = new float[48];
+        float[] f = new float[52];
         int k = 0;
         for (String[] u : VK_FLOATS) {
             int n = Integer.parseInt(u[1]);
@@ -1288,6 +1349,7 @@ public final class PathTracer {
         iv[11] = bounces;
         // effects (vkpath.comp Params.fx, Params.ifx)
         f[44] = fxTime; f[45] = fxWind; f[46] = fxWetness;
+        f[48] = photoFrame ? PhotoMode.aperture : 0f; f[49] = PhotoMode.focus; // vkpath.comp Params.dof
         iv[12] = Dim.nether(mc.world) ? effects() & ~(FX_WET | FX_GODRAYS | FX_HAZE) : effects();
         iv[13] = handEntity(); // vkpath.comp Params.ifx.y
         iv[14] = grassOverlay; // Params.ifx.z

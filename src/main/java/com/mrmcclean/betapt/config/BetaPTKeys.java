@@ -17,7 +17,9 @@ public final class BetaPTKeys {
     public static final KeyBinding LOOK = new KeyBinding("Path tracer look", Keyboard.KEY_F10);
     /** Steps through the presets: Off (Beta's renderer), Beta, Faithful, Realistic. */
     public static final KeyBinding PRESET = new KeyBinding("Path tracer preset", Keyboard.KEY_F4);
-    public static final KeyBinding[] ALL = {TOGGLE, VIEW, DENOISER, LOOK, PRESET};
+    /** Photo mode (when switched on in Path Tracer > Effects > Photo, time-lapse...): pause and add up a noise-free still. */
+    public static final KeyBinding PHOTO = new KeyBinding("Path tracer photo mode", Keyboard.KEY_F6);
+    public static final KeyBinding[] ALL = {TOGGLE, VIEW, DENOISER, LOOK, PRESET, PHOTO};
     private static final int[] SPARE = {Keyboard.KEY_F6, Keyboard.KEY_F12, Keyboard.KEY_END, Keyboard.KEY_INSERT, Keyboard.KEY_PRIOR};
 
     private static boolean ours(KeyBinding k) {

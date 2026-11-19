@@ -310,8 +310,18 @@ void main() {
     vec2 ndc = (vec2(px) + 0.5 + uJitter) / vec2(uResolution) * 2.0 - 1.0;
     float aspect = float(uResolution.x) / float(uResolution.y);
     vec3 d = normalize(uCamForward + ndc.x * uTanHalfFov * aspect * uCamRight + ndc.y * uTanHalfFov * uCamUp);
+    // photo mode's depth of field (uDof: lens radius, focus distance in blocks; radius 0 = a pinhole, all sharp): the ray
+    // starts somewhere on the lens and passes through this pixel's spot on the plane in focus
+    vec3 camO = uCamFrac;
+    if (uDof.x > 0.0) {
+        vec3 fp = d * (uDof.y / max(dot(d, uCamForward), 0.05));
+        float lr = uDof.x * sqrt(rnd()), la = 6.2831853 * rnd();
+        vec3 lo = (cos(la) * uCamRight + sin(la) * uCamUp) * lr;
+        camO = uCamFrac + lo;
+        d = normalize(fp - lo);
+    }
 
-    Hit h = traceRay(uCamFrac, d, uMaxDist, true);
+    Hit h = traceRay(camO, d, uMaxDist, true);
 #ifdef PT_SER
     // SER: regroup the pixels by what the camera ray hit (sky, a mob, or the block type) before the bounces
     reorderThreadNV(!h.hit ? 0u : h.ent != 0u ? 1u : 2u + h.id % 126u, 7u);
@@ -325,7 +335,7 @@ void main() {
     // 7900 XT). Each ray is worked out inside the loop from a few values, and the answers are bits in fxHits.
     int fxN = 0, iWet = -1, iSpark = -1, iGod = -1, godN = 0;
     float sparkle = 0.0, godEnd = 0.0, jit = 0.0;
-    vec3 hp = uCamFrac + d * h.t, hn = dot(h.n, d) > 0.0 ? -h.n : h.n;
+    vec3 hp = camO + d * h.t, hn = dot(h.n, d) > 0.0 ? -h.n : h.n;
     if (h.hit && fxOn(FX_WET) && uWet > 0.01 && h.ent == 0u && wettable(h.id)) { iWet = fxN; fxN++; }
     if (h.hit && fxOn(FX_SPARKLE) && (h.id == 78u || h.id == 79u || h.id == 80u) && hn.y > 0.5 && uSunDir.y > 0.02) {
         // a few texels of snow and ice, each its own slightly tilted mirror
@@ -356,7 +366,7 @@ void main() {
     float wTorchT = 0.0;
     if (h.water) {
         wsn = dot(h.waterN, d) > 0.0 ? -h.waterN : h.waterN;
-        wsp = uCamFrac + d * h.waterT + wsn * 1e-3;
+        wsp = camO + d * h.waterT + wsn * 1e-3;
         hz = normalize(vec2(d.x, d.z) + vec2(1e-5));
         iWSky = fxN; fxN += 3;
         if (uSunDir.y > 0.0 && dot(wsn, uSunDir) > 0.0) { iWSun = fxN; fxN++; }
@@ -384,7 +394,7 @@ void main() {
         float rt = 128.0;
         if (i == iWet) { ro = hp + hn * 1e-3; rd = vec3(0.0, 1.0, 0.0); }
         else if (i == iSpark) { ro = hp + hn * 1e-3; }
-        else if (iGod >= 0 && i >= iGod && i < iGod + godN) { ro = uCamFrac + d * (godEnd * (float(i - iGod) + jit) / float(godN)); rt = 64.0; }
+        else if (iGod >= 0 && i >= iGod && i < iGod + godN) { ro = camO + d * (godEnd * (float(i - iGod) + jit) / float(godN)); rt = 64.0; }
         else if (i == iWSky) rd = vec3(0.0, 1.0, 0.0);
         else if (i == iWSky + 1) { rd = normalize(vec3(-hz.x, 1.0, -hz.y)); rt = 64.0; }
         else if (i == iWSky + 2) { rd = normalize(vec3(hz.x, 1.0, hz.y)); rt = 64.0; }
@@ -395,7 +405,7 @@ void main() {
     gSolidLeaves = false;
 
     // the surface the camera ray hit: where, which way it faces, what it's made of (and so whether it mirrors)
-    vec3 p = uCamFrac + d * h.t;
+    vec3 p = camO + d * h.t;
     vec3 gn = dot(h.n, d) > 0.0 ? -h.n : h.n; // plants: face the camera
     vec3 n = gn;                    // the normal light sees (bumped by a LabPBR normal map); gn goes to the denoiser
     vec4 m = material(h.id);
@@ -446,7 +456,7 @@ void main() {
     vec3 sR = vec3(0.0), wp = vec3(0.0), wn = vec3(0.0, 1.0, 0.0), wR = vec3(0.0, 1.0, 0.0), gp = vec3(0.0), gnm = vec3(0.0, 1.0, 0.0);
     if (h.hit && m.x < 0.9 && float(uReflections) >= m.w) { sR = glossy(reflect(d, n), n, m.x); rS = nRef++; }
     if (h.water && uReflections >= 1 && d.y < -0.01) {
-        wp = uCamFrac + d * h.waterT + wn * 1e-3;
+        wp = camO + d * h.waterT + wn * 1e-3;
         wR = reflect(d, wn);
         if (fxOn(FX_WAVES)) { // Effects: water waves tilt the surface; a ray bent below it keeps the flat one
             vec3 ww = waveNormal(wp.xz + vec2(uCamBlock.xz));
@@ -457,7 +467,7 @@ void main() {
     }
     if (h.glass && uReflections >= 1 && (!h.hit || h.glassT < h.t)) {
         gnm = dot(h.glassN, d) > 0.0 ? -h.glassN : h.glassN;
-        gp = uCamFrac + d * h.glassT + gnm * 1e-3;
+        gp = camO + d * h.glassT + gnm * 1e-3;
         rG = nRef++;
     }
     vec3 RS = vec3(0.0), RW = vec3(0.0), RG = vec3(0.0);
@@ -577,7 +587,7 @@ void main() {
     // directly, scaled to the sky's display brightness)
     if (iGod >= 0) {
         float vis = 0.0;
-        for (int i = 0; i < godN; i++) if ((fxHits & (1u << uint(iGod + i))) == 0u) vis += 1.0 - uCloudShadow * cloudCover(uCamFrac + d * (godEnd * (float(i) + jit) / float(godN)), uSunDir);
+        for (int i = 0; i < godN; i++) if ((fxHits & (1u << uint(iGod + i))) == 0u) vis += 1.0 - uCloudShadow * cloudCover(camO + d * (godEnd * (float(i) + jit) / float(godN)), uSunDir);
         vec3 rays = godRays(d, godEnd, vis / float(godN));
         // Haze in front of the surface. Dividing by a dark surface colour (0.05) blew the noisy shafts up 20x; the
         // denoiser clamped them and the long rays near the horizon came out as a dark band. 0.35 caps that at 3x.
