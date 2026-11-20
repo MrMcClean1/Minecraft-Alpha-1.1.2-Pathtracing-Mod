@@ -106,6 +106,7 @@ public final class Bots {
             if (!to.equals("all") && !b.botName().equals(to)) continue;
             if (to.equals("all") && !b.owner.equals(p.name) && !BotConfig.anyoneCommands) continue;
             boolean mayOrder = b.owner.equals(p.name) || BotConfig.anyoneCommands;
+            if (BotConfig.machineDoctor && MachineDoctor.asked(text)) { if (!to.equals("all")) b.brain.say(MachineDoctor.answer(p)); continue; }
             if (o.kind != Orders.Kind.NONE) {
                 if (mayOrder) b.brain.order(p, o, text);
                 else b.brain.say("Sorry, I only take orders from " + b.owner + ".");
@@ -141,6 +142,23 @@ public final class Bots {
                 if (w.isMultiplayer) { tell(p, "Bots run on the server; this server doesn't have them."); return; }
                 w.addEntity(b);
                 b.brain.say("Hi " + p.name + "! Tell me what to do, like \"" + name + " follow me\" or \"" + name + " bring me 16 wood\".");
+                return;
+            }
+            case "doctor": { // optional machine help: /bot doctor on|off
+                String t = a.length > 1 ? a[1].toLowerCase(Locale.ROOT) : "";
+                if (t.equals("on") || t.equals("off")) { BotConfig.machineDoctor = t.equals("on"); BotConfig.save(); }
+                tell(p, "Machine help is " + (BotConfig.machineDoctor ? "on: look at a furnace and ask a bot \"why isn't this working?\"" : "off (/bot doctor on)") + ".");
+                return;
+            }
+            case "town": { // optional bot towns: /bot town on|off|start|stop, or the status
+                String t = a.length > 1 ? a[1].toLowerCase(Locale.ROOT) : "";
+                if (t.equals("on") || t.equals("off")) { BotConfig.towns = t.equals("on"); BotConfig.save(); tell(p, "Bot towns " + t + "."); return; }
+                if (!BotConfig.towns) { tell(p, "Bot towns are off. /bot town on first."); return; }
+                List<BotEntity> mine = new ArrayList<>();
+                for (BotEntity b : bots(w)) if (p != null && (b.owner.equals(p.name) || BotConfig.anyoneCommands)) mine.add(b);
+                if (t.equals("start") && p != null) { if (mine.isEmpty()) tell(p, "No bots of yours here."); else tell(p, Town.found(p, mine)); return; }
+                if (t.equals("stop")) { for (BotEntity b : mine) Town.leave(b); tell(p, "The bots stop working on the town (its buildings stay)."); return; }
+                tell(p, Town.status(w, bots(w)));
                 return;
             }
             case "list": {

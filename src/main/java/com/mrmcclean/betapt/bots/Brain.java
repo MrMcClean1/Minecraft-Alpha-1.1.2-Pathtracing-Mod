@@ -38,6 +38,8 @@ public class Brain {
     int tx, ty, tz;        // job spot (explore, recover, come)
     /** After a gather started for something else (materials for a build, wood for a hoe): go back to this. */
     Job after = Job.NONE;
+    /** Its town and job there (Town, optional), or null. */
+    Town.Member town;
     // building: the plan, where it goes (front-left corner, facing) and how far along it is
     Blueprint plan;
     int planX, planY, planZ, planF, planIndex, planShort, outTicks;
@@ -69,6 +71,7 @@ public class Brain {
         if (fight(owner)) return;
         if (b.health < 14 && eatCooldown == 0) eat();
         if (job != Job.NONE) { jobTicks++; runJob(owner); return; }
+        if (Town.tick(this)) return; // town work (optional feature, off unless towns=true)
         if (--choreTimer <= 0) { choreTimer = 1200; if (startChore()) return; }
         if (hasFarm && --farmTimer <= 0) {
             farmTimer = 600;
@@ -681,6 +684,7 @@ public class Brain {
     /** Natural blocks only (unless allowGrief), and never one holding a block entity (chests, machines). Cobblestone is fine underground. */
     boolean mayBreak(int x, int y, int z, int id) {
         if (Names.world(b).getBlockEntity(x, y, z) != null) return false;
+        if (Town.protects(x, y, z, id)) return false; // a bot town's own blocks (optional feature)
         if (BotConfig.allowGrief) return true;
         if (id == 4 && (y < Names.world(b).getHeight(x, z) - 3 || want != null && want.mine.contains(4) && !nearBuilt(x, y, z))) return true;
         return id > 0 && !BUILT.contains(id) && (id <= 96 || Bots.block(id) == null || natural(id));
@@ -1346,6 +1350,7 @@ public class Brain {
         n.put("Chores", l);
         n.putBoolean("HasFarm", hasFarm);
         if (hasFarm) { n.putInt("FarmX", farmX); n.putInt("FarmY", farmY); n.putInt("FarmZ", farmZ); }
+        Town.write(this, n);
     }
 
     void read(NbtCompound n) {
@@ -1355,6 +1360,7 @@ public class Brain {
         for (int i = 0; l != null && i < l.size(); i++) { NbtCompound t = (NbtCompound) l.get(i); chores.add(new Chore(t.getString("What"), t.getInt("Count"))); }
         hasFarm = n.getBoolean("HasFarm");
         if (hasFarm) { farmX = n.getInt("FarmX"); farmY = n.getInt("FarmY"); farmZ = n.getInt("FarmZ"); }
+        Town.read(this, n);
     }
 
     private static long key(int x, int y, int z) { return ((long) x & 0x3FFFFFF) << 38 | ((long) y & 0xFFF) << 26 | ((long) z & 0x3FFFFFF); }

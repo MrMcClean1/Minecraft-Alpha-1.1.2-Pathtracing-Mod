@@ -21,9 +21,13 @@ public final class BotTest {
     private static boolean trigger() {
         try {
             java.io.File f = net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("classicbots-test").resolve("run").toFile();
-            return f.isFile() && f.delete();
+            if (!f.isFile()) return false;
+            try { String w = new String(java.nio.file.Files.readAllBytes(f.toPath())); ONLY_TOWN = w.contains("town"); ONLY_DOCTOR = w.contains("doctor"); } catch (Throwable ignored) {}
+            return f.delete();
         } catch (Throwable t) { return false; }
     }
+    /** "town" in the run file: spawn, then straight to the town steps. */
+    private static boolean ONLY_TOWN, ONLY_DOCTOR;
     private static int step, wait, passed, failed;
     private static BotEntity bot;
     private static long t0;
@@ -71,7 +75,7 @@ public final class BotTest {
             case 1: if (wait > 100) { mc.world.setTime(1000); say(p, "/bot on"); say(p, "/bot spawn Tess"); next(); } return;
             case 2:
                 for (BotEntity b : Bots.bots(mc.world)) if (b.botName().equals("Tess")) bot = b;
-                if (bot != null && bot.owner.equals(p.name) && bot.distanceTo(p) < 5) pass("spawn: Tess is next to " + p.name);
+                if (bot != null && bot.owner.equals(p.name) && bot.distanceTo(p) < 5) { pass("spawn: Tess is next to " + p.name); if (ONLY_TOWN) step = 32; if (ONLY_DOCTOR) step = 42; }
                 else if (wait > 40) fail("spawn: no bot (" + Bots.bots(mc.world).size() + " bots)");
                 return;
             case 3: {
@@ -231,8 +235,37 @@ public final class BotTest {
                 else if (wait > 20 * 150) fail("mining: only " + down + " blocks down; bot: " + bot.brain.statusLine());
                 return;
             }
-            case 28: say(p, "Tess follow me"); say(p, "/bot list"); next(); return;
-            case 29:
+            case 28: case 29: case 30: case 31: step = 32; wait = 0; return; // on to the town steps
+            case 32: case 33: case 34: case 35: case 36: case 37: case 38: case 39: case 40: case 41:
+                town(mc, p);
+                return;
+            case 42: {
+                // machine help: a furnace two blocks in front of you with ore and no fuel
+                doctorWas = BotConfig.machineDoctor; BotConfig.machineDoctor = true;
+                int fx = (int) Math.floor(p.x), fz = (int) Math.floor(p.z) + 2, fy = (int) Math.floor(p.y - p.eyeHeight) + 1;
+                mc.world.setBlock(fx, fy - 1, fz, 1); mc.world.setBlock(fx, fy, fz, 61);
+                p.yaw = 0; p.pitch = 0;
+                BlockEntity be = mc.world.getBlockEntity(fx, fy, fz);
+                if (be instanceof Inventory) ((Inventory) be).setItem(0, new ItemStack(15, 4, 0));
+                furnace = new int[]{fx, fy, fz};
+                bot.brain.lastReport = "";
+                say(p, "Tess why isn't this furnace working?");
+                next();
+                return;
+            }
+            case 43:
+                if (bot.brain.lastReport.contains("no fuel")) { pass("machine help: \"" + bot.brain.lastReport + "\""); BlockEntity be = mc.world.getBlockEntity(furnace[0], furnace[1], furnace[2]); if (be instanceof Inventory) { ((Inventory) be).setItem(0, null); ((Inventory) be).setItem(1, new ItemStack(263, 4, 0)); } bot.brain.lastReport = ""; say(p, "Tess what's wrong with this furnace"); }
+                else if (wait > 200) { fail("machine help: \"" + bot.brain.lastReport + "\""); bot.brain.lastReport = ""; say(p, "Tess what's wrong with this furnace"); }
+                return;
+            case 44:
+                if (bot.brain.lastReport.contains("nothing in it to smelt")) { pass("machine help, empty furnace: \"" + bot.brain.lastReport + "\""); }
+                else if (wait > 200) fail("machine help, empty furnace: \"" + bot.brain.lastReport + "\"");
+                else return;
+                mc.world.setBlock(furnace[0], furnace[1], furnace[2], 0);
+                BotConfig.machineDoctor = doctorWas;
+                return;
+            case 45: say(p, "Tess follow me"); say(p, "/bot list"); next(); return;
+            case 46:
                 Bots.log("BOTTEST Done: " + passed + " passed, " + failed + " failed in " + (System.currentTimeMillis() - t0) / 1000 + " s (model " + Model.status + ")");
                 next();
                 TestQuiet.restore();
@@ -245,6 +278,134 @@ public final class BotTest {
         }
     }
 
+    // ------------------------------------------------------------------ bot towns (optional feature)
+
+    private static boolean townsWas;
+    private static int maxWas, tcx, tcy, tcz;
+    private static final String[] EXTRA = {"Ada", "Brock", "Cleo", "Dax"};
+
+    /** The street's ground, below and at the town's level, for the path check's report: "z:below/at". */
+    private static String streetIds(net.minecraft.world.World w) {
+        StringBuilder sb = new StringBuilder();
+        for (int z = 1; z <= 6; z++) sb.append(z == 1 ? "" : " ").append(-z).append(':').append(w.getBlock(tcx, tcy - 1, tcz - z)).append('/').append(w.getBlock(tcx, tcy, tcz - z)).append("^").append(w.getHeight(tcx, tcz - z));
+        return sb.toString();
+    }
+
+    private static BotEntity byJob(net.minecraft.world.World w, Town.Job j) {
+        for (BotEntity b : Bots.bots(w)) if (b.brain.town != null && b.brain.town.job == j) return b;
+        return null;
+    }
+
+    private static void town(Minecraft mc, PlayerEntity p) {
+        net.minecraft.world.World w = mc.world;
+        switch (step) {
+            case 32: {
+                // five bots (one for each job) on a flat grass patch 40 blocks east, from the field to the second row of plots
+                if (wait == 1) {
+                    townsWas = BotConfig.towns; maxWas = BotConfig.maxBotsPerPlayer;
+                    BotConfig.maxBotsPerPlayer = Math.max(5, maxWas);
+                    say(p, "/bot town on");
+                    int px = (int) Math.floor(p.x) + 40, pz = (int) Math.floor(p.z), top = w.getHeight(px, pz);
+                    tcx = px; tcz = pz; tcy = Math.max(64, Math.min(top, 90));
+                    for (int x = -12; x <= 12; x++) for (int z = -26; z <= 16; z++) {
+                        for (int k = 1; k <= 4; k++) w.setBlock(tcx + x, tcy - k, tcz + z, k == 1 ? 2 : 3);
+                        for (int k = 0; k < 14; k++) w.setBlock(tcx + x, tcy + k, tcz + z, 0);
+                    }
+                    p.setPosition(tcx + 0.5, tcy + p.eyeHeight + 0.1, tcz + 3.5);
+                    for (String n : EXTRA) say(p, "/bot spawn " + n);
+                    return;
+                }
+                if (wait == 20) {
+                    for (BotEntity b : Bots.bots(w)) { b.brain.mode = Brain.Mode.STAY; b.brain.job = Brain.Job.NONE; b.brain.plan = null; b.brain.hasFarm = false; b.setPositionAndAngles(tcx + 0.5, tcy + 0.1, tcz + 2.5, 0, 0); }
+                    p.setPosition(tcx + 0.5, tcy + p.eyeHeight + 0.1, tcz + 0.5);
+                    say(p, "/bot town start");
+                    return;
+                }
+                if (wait < 40) return;
+                p.setPosition(tcx + 0.5, tcy + p.eyeHeight + 0.1, tcz + 4.5);
+                int in = 0;
+                for (BotEntity b : Bots.bots(w)) if (b.brain.town != null) in++;
+                BotEntity builder = byJob(w, Town.Job.BUILDER), miner = byJob(w, Town.Job.MINER), farmer = byJob(w, Town.Job.FARMER);
+                if (in >= 5 && builder != null && miner != null && farmer != null) {
+                    // a start, as if they had worked a while: the builder's blocks, the farmer's hoe and seeds, the miner's pick and a load
+                    builder.add(new ItemStack(54, 1, 0)); builder.add(new ItemStack(4, 64, 0)); builder.add(new ItemStack(5, 64, 0));
+                    farmer.add(new ItemStack(291, 1, 0)); farmer.add(new ItemStack(295, 16, 0));
+                    miner.add(new ItemStack(274, 1, 0)); miner.add(new ItemStack(4, 40, 0));
+                    pass("town: founded with " + in + " bots: " + Town.status(w, Bots.bots(w)));
+                } else fail("town: founded with " + in + " bots (" + Bots.bots(w).size() + " here, towns " + BotConfig.towns + ")");
+                return;
+            }
+            case 33: {
+                BotEntity b = byJob(w, Town.Job.BUILDER);
+                if (b != null && b.brain.findNear(new int[]{54}, tcx, tcy, tcz, 2, false) != null) pass("town: the builder put the market chest down in " + wait / 20 + " s");
+                else if (wait > 20 * 90) fail("town: no market chest; builder " + (b == null ? "none" : b.brain.statusLine() + " carrying " + b.brain.inventoryLine()));
+                return;
+            }
+            case 34: {
+                BotEntity b = byJob(w, Town.Job.TRADER);
+                if (Town.trades > 0) pass("town: the trader collected a member's surplus (" + Town.trades + " trades) in " + wait / 20 + " s");
+                else if (wait > 20 * 120) fail("town: no trades; trader " + (b == null ? "none" : b.brain.statusLine()));
+                return;
+            }
+            case 35: {
+                BotEntity b = byJob(w, Town.Job.FARMER);
+                int land = 0;
+                for (int x = -4; x <= 4; x++) for (int z = -4; z <= 4; z++) for (int y = -2; y <= 1; y++) if (w.getBlock(tcx + x, tcy + y, tcz + 9 + z) == 60) land++;
+                if (land >= 6) pass("town: the farmer tilled " + land + " squares of the field in " + wait / 20 + " s");
+                else if (wait > 20 * 180) fail("town: " + land + " farmland; farmer " + (b == null ? "none" : b.brain.statusLine() + " carrying " + b.brain.inventoryLine()));
+                return;
+            }
+            case 36: {
+                BotEntity b = byJob(w, Town.Job.BUILDER);
+                if (b != null && Town.built(w, b.brain.town, 0)) pass("town: the builder finished the hut in " + wait / 20 + " s");
+                else if (wait > 20 * 300) fail("town: hut not finished; builder " + (b == null ? "none" : b.brain.statusLine() + " carrying " + b.brain.inventoryLine()));
+                return;
+            }
+            case 37: {
+                BotEntity b = byJob(w, Town.Job.BUILDER);
+                int cob = 0;
+                for (int z = 1; z <= 6; z++) if (w.getBlock(tcx, tcy - 1, tcz - z) == 4) cob++;
+                if (b != null && Town.pathDone(w, b.brain.town, 0) && cob >= 5) pass("town: a cobblestone path to the hut (" + cob + " of 6 street blocks) in " + wait / 20 + " s");
+                else if (wait > 20 * 180) fail("town: path not done (" + cob + " of 6 street blocks: " + streetIds(w) + "); builder " + (b == null ? "none" : b.brain.statusLine() + " carrying " + b.brain.inventoryLine()));
+                return;
+            }
+            case 38: {
+                BotEntity b = byJob(w, Town.Job.BUILDER);
+                if (wait == 1) { w.setTime(w.ticks + 24000); return; }
+                if (b != null && Town.plots(w, b.brain.town) >= 2) pass("town: the next day it plans another building (" + Town.plots(w, b.brain.town) + " plots)");
+                else if (wait > 100) fail("town: still " + (b == null ? 0 : Town.plots(w, b.brain.town)) + " plots the next day");
+                return;
+            }
+            case 39: {
+                BotEntity g = byJob(w, Town.Job.GUARD), b = byJob(w, Town.Job.BUILDER);
+                if (wait == 1) {
+                    w.setTime(w.ticks / 24000 * 24000 + 14000);
+                    for (BotEntity x : Bots.bots(w)) { x.brain.job = Brain.Job.NONE; x.brain.plan = null; }
+                    return;
+                }
+                if (g != null && b != null && g.brain.town.walk > 0 && Town.indoorsNow(b)) pass("town: at night the guard walks the street and the builder is indoors (" + wait / 20 + " s)");
+                else if (wait > 20 * 60) fail("town: night: guard " + (g == null ? "none" : g.brain.statusLine() + " walk " + g.brain.town.walk) + ", builder indoors " + (b != null && Town.indoorsNow(b)) + (b == null ? "" : " (builder at " + (int) Math.floor(b.x) + " " + (int) Math.floor(b.y) + " " + (int) Math.floor(b.z) + ", hut built " + Town.built(w, b.brain.town, 0) + ", hut plot " + java.util.Arrays.toString(Town.plot(w, b.brain.town, 0)) + ")"));
+                return;
+            }
+            case 40: {
+                String s = Town.status(w, Bots.bots(w));
+                if (s.startsWith("Town at")) pass("town: status line: " + s); else fail("town: status: " + s);
+                return;
+            }
+            case 41: {
+                say(p, "/bot town stop");
+                for (String n : EXTRA) say(p, "/bot remove " + n);
+                w.setTime(1000);
+                BotConfig.towns = townsWas; BotConfig.maxBotsPerPlayer = maxWas; BotConfig.save();
+                bot.brain.mode = Brain.Mode.FOLLOW;
+                next();
+                return;
+            }
+        }
+    }
+
+    private static boolean doctorWas;
+    private static int[] furnace;
     private static ZombieEntity zombie;
     private static Blueprint testPlan;
     private static int tpx, tpy, tpz, tpf, mineY, oresBefore;
