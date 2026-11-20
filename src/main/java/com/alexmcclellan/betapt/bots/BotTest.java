@@ -328,7 +328,7 @@ public final class BotTest {
                 BotEntity builder = byJob(w, Town.Job.BUILDER), miner = byJob(w, Town.Job.MINER), farmer = byJob(w, Town.Job.FARMER);
                 if (in >= 5 && builder != null && miner != null && farmer != null) {
                     // a start, as if they had worked a while: the builder's blocks, the farmer's hoe and seeds, the miner's pick and a load
-                    builder.add(new ItemStack(54, 1, 0)); builder.add(new ItemStack(4, 64, 0)); builder.add(new ItemStack(5, 64, 0));
+                    builder.add(new ItemStack(54, 1, 0)); builder.add(new ItemStack(4, 64, 0)); builder.add(new ItemStack(4, 64, 0)); builder.add(new ItemStack(5, 64, 0));
                     farmer.add(new ItemStack(291, 1, 0)); farmer.add(new ItemStack(295, 16, 0));
                     miner.add(new ItemStack(274, 1, 0)); miner.add(new ItemStack(4, 40, 0));
                     pass("town: founded with " + in + " bots: " + Town.status(w, Bots.bots(w)));
