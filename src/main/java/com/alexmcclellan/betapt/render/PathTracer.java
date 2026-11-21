@@ -174,6 +174,22 @@ public final class PathTracer {
     private boolean photoFrame;
     private boolean photoLast, photoVk;
     private int photoSettle;
+    private boolean focusFrame;
+    private int focusFbo;
+
+    /** This frame's ray distance at the centre of the picture (what the crosshair points at), -1 for sky. */
+    private float centreDepth() {
+        int prevRead = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
+        if (focusFbo == 0) focusFbo = GL30.glGenFramebuffers();
+        GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, focusFbo);
+        GL30.glFramebufferTexture2D(GL30.GL_READ_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0, GL11.GL_TEXTURE_2D, depthTex, 0);
+        GL11.glReadBuffer(GL30.GL_COLOR_ATTACHMENT0);
+        java.nio.FloatBuffer px = org.lwjgl.BufferUtils.createFloatBuffer(1);
+        GL11.glReadPixels(width / 2, height / 2, 1, 1, GL11.GL_RED, GL11.GL_FLOAT, px);
+        GL30.glFramebufferTexture2D(GL30.GL_READ_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0, GL11.GL_TEXTURE_2D, 0, 0);
+        GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, prevRead);
+        return px.get(0);
+    }
     private int rrGuidesProgram, rrNormal, rrSpecular, rrW, rrH, rrOut, rrOutW, rrOutH;
     /** RTX Dynamic Vibrance: NVIDIA's AI filter for vibrance and saturation on the finished picture (Vulkan tracer only). */
     public boolean deepDvc = false;
@@ -865,7 +881,8 @@ public final class PathTracer {
             uni1i(pathProgram, "uFrame", frameIndex++);
             uni1i(pathProgram, "uDebugMask", debugMask);
             uni2f(pathProgram, "uJitter", jitX, jitY);
-            uni2f(pathProgram, "uDof", photoFrame ? PhotoMode.aperture : 0f, PhotoMode.focus);
+            focusFrame = photoFrame && PhotoMode.wantFocus && photoLast && photoSettle == 0; // once settled, a pinhole frame: its centre ray measures the focus
+            uni2f(pathProgram, "uDof", photoFrame && !focusFrame ? PhotoMode.aperture : 0f, PhotoMode.focus);
             // M6: last frame's mob boxes, positioned relative to this frame's camera block
             entityCount = !legacyFrame // mobs when they're traced, and blocks drawn by block entity renderers always
                     ? EntityCapture.upload((int) Math.floor(cam.x), (int) Math.floor(cam.y), (int) Math.floor(cam.z)) : 0;
@@ -901,6 +918,7 @@ public final class PathTracer {
             GL42.glMemoryBarrier(GL42.GL_TEXTURE_FETCH_BARRIER_BIT | GL42.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL43.GL_SHADER_STORAGE_BARRIER_BIT);
 
             stages.stamp(); // end of trace
+            if (focusFrame) PhotoMode.focusFromDepth(centreDepth(), maxDist);
             // 1b. denoise the light and combine it with the textures into the HDR image (with Ray Reconstruction only combine:
             // it denoises and upscales the noisy picture itself, in fsrUpscale)
             rrThisFrame = upscaler == UPSCALER_DLSS && rayReconstruction && !rrFailed && rrGuidesProgram != 0 && useFsr && vkActive && VkBridge.rrReady();
@@ -1349,7 +1367,7 @@ public final class PathTracer {
         iv[11] = bounces;
         // effects (vkpath.comp Params.fx, Params.ifx)
         f[44] = fxTime; f[45] = fxWind; f[46] = fxWetness;
-        f[48] = photoFrame ? PhotoMode.aperture : 0f; f[49] = PhotoMode.focus; // vkpath.comp Params.dof
+        f[48] = photoFrame && !focusFrame ? PhotoMode.aperture : 0f; f[49] = PhotoMode.focus; // vkpath.comp Params.dof
         iv[12] = Dim.nether(mc.world) ? effects() & ~(FX_WET | FX_GODRAYS | FX_HAZE) : effects();
         iv[13] = handEntity(); // vkpath.comp Params.ifx.y
         iv[14] = grassOverlay; // Params.ifx.z

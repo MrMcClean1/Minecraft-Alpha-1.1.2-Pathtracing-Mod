@@ -35,6 +35,8 @@ public final class PhotoMode {
     public static int count;
     /** Distance to what the crosshair points at (blocks), where the picture is sharp. */
     public static float focus = 16f;
+    /** The next photo frame measures the focus: the tracer's own ray distance at the centre of the picture. */
+    public static boolean wantFocus;
     /** The time of day this shot (or a time-lapse frame) is drawn at, -1 = the world's own; set by TimeLapse too. */
     public static long timeOverride = -1;
     private static long keptTime = Long.MIN_VALUE;
@@ -62,6 +64,7 @@ public final class PhotoMode {
         keptTime = mc.world != null ? mc.world.ticks : Long.MIN_VALUE;
         timeOverride = sunTime;
         focusFromCrosshair(mc);
+        wantFocus = true; // and then exactly, from the traced picture
         status = "";
     }
 
@@ -97,6 +100,12 @@ public final class PhotoMode {
         net.minecraft.world.World w = mc.world;
         focus = firstHit(mc.player.x, mc.player.y, mc.player.z, dx, dy, dz, Math.max(16f, PathTracer.INSTANCE.maxDist),
                 (x, y, z) -> y >= 0 && y < 128 && w.getBlock(x, y, z) != 0);
+    }
+
+    /** The traced distance at the picture's centre (-1: sky, then the far end of the range). */
+    static void focusFromDepth(float t, float range) {
+        wantFocus = false;
+        focus = t > 0.05f && t < range * 0.99f ? t : Math.max(16f, range);
     }
 
     interface Solid { boolean at(int x, int y, int z); }
