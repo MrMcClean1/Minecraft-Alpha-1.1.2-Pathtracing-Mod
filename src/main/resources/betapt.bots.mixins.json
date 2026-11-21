@@ -3,6 +3,6 @@
   "minVersion": "0.8",
   "package": "com.alexmcclellan.betapt.bots.mixin",
   "compatibilityLevel": "JAVA_17",
-  "client": ["BotChatClientMixin", "BotRenderersMixin", "EntityRegistryInvoker", "BlockAccessor", "EntityWorldAccessor", "BotTestTickMixin"],
+  "client": ["BotChatClientMixin", "BotRenderersMixin", "EntityRegistryInvoker", "BlockAccessor", "EntityWorldAccessor", "BotTestTickMixin", "BotTestPlayerMixin"],
   "injectors": { "defaultRequire": 1 }
 }
