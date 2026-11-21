@@ -173,7 +173,7 @@ public final class PathTracer {
     /** This frame adds a sample to photo mode's picture. */
     private boolean photoFrame;
     private boolean photoLast, photoVk;
-    private int photoSettle;
+    private int photoSettle, photoFrames;
     private boolean focusFrame;
     private int focusFbo;
 
@@ -927,7 +927,10 @@ public final class PathTracer {
             if (photoFrame) {
                 // the first frames after photo mode starts (the tracer may restart at native size and get its chunks
                 // again), after the Vulkan tracer comes or goes, and while it is still being sent chunks: not counted
-                if (!photoLast || vkActive != photoVk || vkActive && VkBridge.chunksSent > 0) photoSettle = 20;
+                // and, for the first 600 frames, while the voxel world is still taking chunks (the tracer may have just
+                // restarted; later a stream of small changes, flowing water or leaves, mustn't hold the picture for good)
+                photoFrames = photoLast ? photoFrames + 1 : 0;
+                if (!photoLast || vkActive != photoVk || vkActive && VkBridge.chunksSent > 0 || photoFrames < 600 && voxels.uploadsLastFrame > 0) photoSettle = 20;
                 if (photoSettle > 0) { photoSettle--; photoSample = 1; PhotoMode.count = 1; }
                 photoAccumulate(photoSample, groupsX, groupsY);
             }
