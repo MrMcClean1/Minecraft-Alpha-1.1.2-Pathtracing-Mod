@@ -56,13 +56,14 @@ public final class AlphaTest {
     public static boolean running() { return ON && !quit; }
     public static String status() { return status; }
 
-    private static void check(boolean ok, String what) {
+    static void check(boolean ok, String what) {
         if (ok) passed++; else failed++;
         lines.add((ok ? "  PASS " : "  FAIL ") + what);
         BetaPT.LOGGER.info("Alpha test: {} {}", ok ? "PASS" : "FAIL", what);
     }
 
     private static void note(String s) { lines.add("       " + s); }
+    static void section(String s) { lines.add(s); }
 
     static final double[][] VIEWS = {
             {20.5, 4.5, -6.0, 0, 25}, {20.5, 14.0, 3.5, 0, 89}, {20.5, 4.5, 13.0, 180, 25},
@@ -148,9 +149,13 @@ public final class AlphaTest {
                 else {
                     pt.rayReconstruction = false; pt.frameGeneration = false; pt.upscaler = PathTracer.UPSCALER_FSR; pt.renderScale = 1f;
                     com.mrmcclean.betapt.render.VkBridge.reopen();
-                    stage = 5;
+                    PhotoCheck.start(mc); // photo mode: stills added up from many samples
+                    status = "Alpha test: photo mode";
+                    stage = 7;
                 }
             }
+            case 7 -> { if (PhotoCheck.frame(mc)) { TimeLapseCheck.start(mc); status = "Alpha test: time-lapse"; stage = 8; } }
+            case 8 -> { if (TimeLapseCheck.frame(mc)) stage = 5; }
             case 5 -> finish(mc);
         }
     }
@@ -311,7 +316,7 @@ public final class AlphaTest {
         return new double[]{r / s, g / s};
     }
 
-    private static File dir(Minecraft mc) {
+    static File dir(Minecraft mc) {
         File d = new File(mc.gameDir, "alphapt-test");
         d.mkdirs();
         return d;

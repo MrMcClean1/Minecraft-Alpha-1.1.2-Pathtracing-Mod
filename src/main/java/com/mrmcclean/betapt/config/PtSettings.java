@@ -113,6 +113,11 @@ public final class PtSettings {
             com.mrmcclean.betapt.render.PhotoMode.samples = Math.max(1, Math.min(65536, Integer.parseInt(p.getProperty("photo.samples", Integer.toString(com.mrmcclean.betapt.render.PhotoMode.samples)).trim())));
             com.mrmcclean.betapt.render.PhotoMode.aperture = Math.max(0f, Math.min(com.mrmcclean.betapt.render.PhotoMode.MAX_APERTURE, Float.parseFloat(p.getProperty("photo.aperture", Float.toString(com.mrmcclean.betapt.render.PhotoMode.aperture)).trim())));
             com.mrmcclean.betapt.render.PhotoMode.sunTime = Math.max(-1, Math.min(23999, Integer.parseInt(p.getProperty("photo.sunTime", Integer.toString(com.mrmcclean.betapt.render.PhotoMode.sunTime)).trim())));
+            // time-lapse (same page)
+            com.mrmcclean.betapt.render.TimeLapse.enabled = Boolean.parseBoolean(p.getProperty("timelapse.enabled", Boolean.toString(com.mrmcclean.betapt.render.TimeLapse.enabled)).trim());
+            com.mrmcclean.betapt.render.TimeLapse.frames = Math.max(2, Math.min(100000, Integer.parseInt(p.getProperty("timelapse.frames", Integer.toString(com.mrmcclean.betapt.render.TimeLapse.frames)).trim())));
+            com.mrmcclean.betapt.render.TimeLapse.fps = Math.max(1, Math.min(240, Integer.parseInt(p.getProperty("timelapse.fps", Integer.toString(com.mrmcclean.betapt.render.TimeLapse.fps)).trim())));
+            com.mrmcclean.betapt.render.TimeLapse.video = Boolean.parseBoolean(p.getProperty("timelapse.video", Boolean.toString(com.mrmcclean.betapt.render.TimeLapse.video)).trim());
         } catch (Exception e) {
             BetaPT.LOGGER.error("Bad value in {}", file(), e);
         }
@@ -160,6 +165,10 @@ public final class PtSettings {
         p.setProperty("photo.samples", Integer.toString(com.mrmcclean.betapt.render.PhotoMode.samples));
         p.setProperty("photo.aperture", Float.toString(com.mrmcclean.betapt.render.PhotoMode.aperture));
         p.setProperty("photo.sunTime", Integer.toString(com.mrmcclean.betapt.render.PhotoMode.sunTime));
+        p.setProperty("timelapse.enabled", Boolean.toString(com.mrmcclean.betapt.render.TimeLapse.enabled));
+        p.setProperty("timelapse.frames", Integer.toString(com.mrmcclean.betapt.render.TimeLapse.frames));
+        p.setProperty("timelapse.fps", Integer.toString(com.mrmcclean.betapt.render.TimeLapse.fps));
+        p.setProperty("timelapse.video", Boolean.toString(com.mrmcclean.betapt.render.TimeLapse.video));
         return p;
     }
 

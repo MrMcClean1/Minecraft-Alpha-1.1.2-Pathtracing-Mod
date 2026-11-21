@@ -56,7 +56,7 @@ public class PhotoScreen extends Screen {
 
     @Override
     protected void buttonClicked(ButtonWidget b) {
-        if (b.id == 4) PhotoMode.focusFromCrosshair(this.minecraft);
+        if (b.id == 4) { PhotoMode.focusFromCrosshair(this.minecraft); PhotoMode.wantFocus = true; }
         if (b.id == 5) close();
     }
 

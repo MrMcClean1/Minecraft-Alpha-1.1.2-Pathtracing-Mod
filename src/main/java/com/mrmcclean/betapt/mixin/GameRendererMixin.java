@@ -39,6 +39,7 @@ public class GameRendererMixin {
     @Unique private static boolean betapt$lookHeld;
     @org.spongepowered.asm.mixin.Unique private static boolean betapt$presetHeld;
     @org.spongepowered.asm.mixin.Unique private static boolean betapt$photoHeld;
+    @org.spongepowered.asm.mixin.Unique private static boolean betapt$keyframeHeld;
 
     /**
      * Autotest cost probe only ("old frame order"): draw the way M4/M5 did, cancelling Beta's
@@ -196,6 +197,12 @@ public class GameRendererMixin {
             }
         }
         betapt$photoHeld = photo;
+        // the keyframe key: a time-lapse keyframe where you are (when the time-lapse is switched on)
+        boolean kf = keysAllowed && Keyboard.isKeyDown(com.mrmcclean.betapt.config.BetaPTKeys.KEYFRAME.keyCode);
+        if (kf && !betapt$keyframeHeld && this.minecraft.gui != null)
+            this.minecraft.gui.addChatMessage(com.mrmcclean.betapt.render.TimeLapse.enabled ? com.mrmcclean.betapt.render.TimeLapse.addKey(this.minecraft)
+                    : "Time-lapse is off: Path Tracer > Effects... > Photo, time-lapse...");
+        betapt$keyframeHeld = kf;
 
         AutoTest.afterWorld(this.minecraft);
         com.mrmcclean.betapt.test.ModTest.afterWorld(this.minecraft);
@@ -203,6 +210,7 @@ public class GameRendererMixin {
 
     @Inject(method = "render", at = @At("HEAD"))
     private void betapt$frameStart(float tickDelta, CallbackInfo ci) {
+        com.mrmcclean.betapt.render.TimeLapse.beforeFrame(this.minecraft); // a recording time-lapse sets the camera
         PathTracer.INSTANCE.beginFrame(); // wait for the previous frame before the mouse is read
     }
 
