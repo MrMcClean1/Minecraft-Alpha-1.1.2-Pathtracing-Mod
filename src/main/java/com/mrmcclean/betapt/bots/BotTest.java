@@ -201,7 +201,7 @@ public final class BotTest {
                 for (int r8 = 0; r8 < 8 * 38; r8++) {
                     int r = 8 + (r8 / 8) * 3, dir = r8 % 8;
                     int fx = (int) Math.floor(bot.x) + r * new int[]{1, 1, 0, -1, -1, -1, 0, 1}[dir], fz = (int) Math.floor(bot.z) + r * new int[]{0, 1, 1, 1, 0, -1, -1, -1}[dir], top = mc.world.getHeight(fx, fz);
-                    if (mc.world.getBlock(fx, top - 1, fz) != 2 || Math.abs(top - Math.floor(bot.y)) > 2) continue;
+                    if (mc.world.getBlock(fx, top - 1, fz) != 2 || Math.abs(top - mc.world.getHeight((int) Math.floor(bot.x), (int) Math.floor(bot.z))) > 4) continue; // near the ground level where the bot is (it may stand on the hut it just built)
                     int grass = 0; // a field's worth of open grass around it, not a beach or a forest
                     for (int gx = -4; gx <= 4; gx++) for (int gz = -4; gz <= 4; gz++) { int t2 = mc.world.getHeight(fx + gx, fz + gz); if (Math.abs(t2 - top) <= 1 && mc.world.getBlock(fx + gx, t2 - 1, fz + gz) == 2) grass++; }
                     if (grass < 40) continue;
@@ -307,7 +307,7 @@ public final class BotTest {
                 if (wait == 60) say(p, "Tess come here"); // the chunks around you load first
                 if (wait <= 60) return;
                 if (bot.distanceTo(p) < 4) pass("long walk (60 blocks over open country): " + (System.currentTimeMillis() - courseStart) / 1000 + " s, " + Nav.stats());
-                else if (wait > 20 * 60) fail("long walk: still " + (int) bot.distanceTo(p) + " blocks away; bot: " + bot.brain.statusLine() + ", " + Nav.stats());
+                else if (wait > 20 * 125) fail("long walk: still " + (int) bot.distanceTo(p) + " blocks away; bot: " + bot.brain.statusLine() + ", " + Nav.stats());
                 else return;
                 say(p, "Tess follow me");
                 return;

@@ -336,7 +336,7 @@ public class Brain {
     private void runJob(PlayerEntity owner) {
         switch (job) {
             case COME:
-                if (b.walkTo(tx + 0.5, ty, tz + 0.5, 2.5) || jobTicks > 900) endJob(null);
+                if (b.walkTo(tx + 0.5, ty, tz + 0.5, 2.5) || jobTicks > 2400) endJob(null); // 2 minutes: 45 s ran out on 60 blocks over hills
                 break;
             case GO_HOME:
                 if (b.walkTo(b.homeX + 0.5, b.homeY, b.homeZ + 0.5, 2.5) || jobTicks > 3000) endJob(null);
@@ -750,13 +750,15 @@ public class Brain {
         }
     }
 
-    void pillar(int x, int y, int z) {
+    /** Jump and put a block where the feet were; false if it can't (no blocks, no room over its head, or nothing to put one in). */
+    boolean pillar(int x, int y, int z) {
         int block = b.count(3) > 0 ? 3 : b.count(4) > 0 ? 4 : 0;
         int at = Names.world(b).getBlock(x, y, z);
-        if (block == 0 || Names.world(b).getBlock(x, y + 2, z) != 0) return;
-        if (at != 0 && (Nav.water(at) || Bots.block(at) == null || Bots.block(at).material.blocksMovement())) return; // nothing to put a block in: no hop (it bounced up and down)
+        if (block == 0 || Names.world(b).getBlock(x, y + 2, z) != 0) return false;
+        if (at != 0 && (Nav.water(at) || Bots.block(at) == null || Bots.block(at).material.blocksMovement())) return false; // nothing to put a block in: no hop (it bounced up and down)
         b.setPosition(b.x, b.y + 1.1, b.z);
         Names.world(b).setBlock(x, y, z, block); b.take(block, 1);
+        return true;
     }
 
     private boolean liquidNext(int x, int y, int z) {

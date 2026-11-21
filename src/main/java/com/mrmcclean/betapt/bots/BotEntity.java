@@ -77,11 +77,15 @@ public class BotEntity extends MobEntity {
     }
     static final boolean DEBUG = Boolean.getBoolean("classicbots.debug") || debugFile(); // or the file .minecraft/classicbots-test/debug
 
+    private int lastLift = -1000;
     /** Out of a block it is stuck in: up to the nearest spot within 4 blocks with room for a body, else the top. */
     private void climbOut() {
         int fx = MathHelper.floor(x), fy = MathHelper.floor(shape.minY + 0.01), fz = MathHelper.floor(z);
+        // sand or gravel over its head (it would only fall in again), or lifted twice in 10 s: up to the top, as before
+        boolean falling = false; for (int up = 1; up <= 6; up++) { int id = world.getBlock(fx, fy + up, fz); if (id == 12 || id == 13) falling = true; }
+        boolean again = ticks - lastLift < 200; lastLift = ticks;
         Nav n = planner();
-        for (int up = 0; up <= 4; up++) if (n.passable(fx, fy + up, fz) && n.passable(fx, fy + up + 1, fz)) { setPositionAndAngles(fx + 0.5, fy + up + 0.01, fz + 0.5, yaw, pitch); Nav.lifts++; return; }
+        if (!falling && !again) for (int up = 0; up <= 4; up++) if (n.passable(fx, fy + up, fz) && n.passable(fx, fy + up + 1, fz)) { setPositionAndAngles(fx + 0.5, fy + up + 0.01, fz + 0.5, yaw, pitch); Nav.lifts++; return; }
         setPositionAndAngles(x, world.getHeight(fx, fz) + 0.1, z, yaw, pitch);
         Nav.lifts++;
     }
@@ -201,7 +205,7 @@ public class BotEntity extends MobEntity {
             spliceAt = -1;
         }
         int[] q = route == null ? null : route.next();
-        while (q != null && Math.abs(q[1] - fy) <= 1 && (Math.abs(q[0] + 0.5 - x) < 0.35 && Math.abs(q[2] + 0.5 - z) < 0.35 || passed(q))) { route.index++; q = route.next(); }
+        while (q != null && Math.abs(q[1] - fy) <= 1 && (Math.abs(q[0] + 0.5 - x) < 0.35 && Math.abs(q[2] + 0.5 - z) < 0.35 || passed(q))) { route.index++; q = route.next(); stuckTicks = 0; bestDist = Double.MAX_VALUE; } // a point reached is progress (on a winding route, e.g. up a hillside, the goal may get no closer for a while)
         if (q != null && work(q, fx, fy, fz)) return false; // digging or building on the way
         double gx = q != null ? q[0] + 0.5 : tx, gz = q != null ? q[2] + 0.5 : tz, gy = q != null ? q[1] : ty;
         double h2 = dx * dx + dz * dz;
@@ -218,6 +222,7 @@ public class BotEntity extends MobEntity {
         if (bx != lastGoalX || bz != lastGoalZ) { lastGoalX = bx; lastGoalZ = bz; bestDist = d; stuckTicks = 0; }
         if (stuckTicks > 60) { // stuck: clear the way toward the route's next point (it may go round), else the goal
             stuckTicks = 0; bestDist = d; route = null; search = null; spliceAt = -1; Nav.forget(world, bx, by, bz); // not that way again
+            if (DEBUG && q != null) Bots.log(String.format("debug stuck detail %s: at %.2f %.2f %.2f ground %s yaw %.0f, next point %d %d %d (%s), its column %d %d %d %d, mine %d %d %d %d", botName(), x, shape.minY, z, onGround, yaw, q[0], q[1], q[2], Nav.Move.values()[q[3]], world.getBlock(q[0], q[1] - 1, q[2]), world.getBlock(q[0], q[1], q[2]), world.getBlock(q[0], q[1] + 1, q[2]), world.getBlock(q[0], q[1] + 2, q[2]), world.getBlock(fx, fy - 1, fz), world.getBlock(fx, fy, fz), world.getBlock(fx, fy + 1, fz), world.getBlock(fx, fy + 2, fz)));
             if (q != null) brain.stuck(q[0] + 0.5, q[1], q[2] + 0.5); else brain.stuck(tx, ty, tz);
         }
         return false;
@@ -239,7 +244,13 @@ public class BotEntity extends MobEntity {
     /** The route's next step needs work first: blocks to break in the way, or a block to pillar on. True while busy. */
     private boolean work(int[] q, int fx, int fy, int fz) {
         Nav.Move m = Nav.Move.values()[q[3]];
-        if (m == Nav.Move.PILLAR && q[0] == fx && q[2] == fz && q[1] > fy) { forwardSpeed = 0; brain.pillar(fx, fy, fz); return true; }
+        if (m == Nav.Move.PILLAR && q[0] == fx && q[2] == fz && q[1] > fy) {
+            int head = world.getBlock(fx, fy + 2, fz);
+            if (head != 0 && Bots.block(head) != null && Bots.block(head).material.blocksMovement()) { forwardSpeed = 0; face(fx + 0.5, fy + 2.5, fz + 0.5); brain.dig(fx, fy + 2, fz); stuckTicks = 0; return true; } // room over its head first (planned)
+            forwardSpeed = 0;
+            if (brain.pillar(fx, fy, fz)) { stuckTicks = 0; return true; }
+            return false; // it can't: steering and the stuck handling take over (it stood still for good before)
+        }
         if (m != Nav.Move.DIG && m != Nav.Move.DIG_DOWN && m != Nav.Move.UP) return false;
         if (Math.abs(q[0] - fx) + Math.abs(q[2] - fz) > 1) return false; // not next to it yet
         int[][] cells = m == Nav.Move.UP ? new int[][]{{fx, fy + 2, fz}, {q[0], q[1], q[2]}, {q[0], q[1] + 1, q[2]}}
