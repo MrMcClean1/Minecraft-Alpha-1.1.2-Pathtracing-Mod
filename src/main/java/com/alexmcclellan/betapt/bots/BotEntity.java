@@ -63,17 +63,50 @@ public class BotEntity extends MobEntity {
         Bots.tickShared(this.world);
         if (this.world.isMultiplayer) return;
         // stuck inside a block (sand fell, a door closed): climb out like a player would dig out
-        if (isInWall()) { if (++wallTicks > 4) { setPosition(x, world.getHeight(MathHelper.floor(x), MathHelper.floor(z)) + 0.1, z); wallTicks = 0; } } else wallTicks = 0;
+        if (isInWall()) { if (++wallTicks > 4) { climbOut(); wallTicks = 0; } } else wallTicks = 0;
         this.sidewaysSpeed = 0;
         this.forwardSpeed = 0;
         this.jumping = false;
         try { brain.tick(); } catch (Throwable t) { if (errors++ < 3) { StringBuilder sb = new StringBuilder(); for (StackTraceElement e : t.getStackTrace()) { if (sb.length() > 400) break; sb.append(" at ").append(e); } Bots.log("brain error for " + botName() + ": " + t + sb); } }
+        walkedLast = forwardSpeed > 0;
         if (this.isSubmergedIn(net.minecraft.block.material.Material.WATER) || this.isInLava()) this.jumping = true;
+        watchMovement();
         if (DEBUG && ticks % 40 == 0) Bots.log(String.format("debug %s at %.1f %.1f %.1f fwd %.2f yaw %.0f ground %s mode %s job %s path %s jobTicks %d enemy %s owner %s",
                 botName(), x, y, z, forwardSpeed, yaw, onGround, brain.mode, brain.job, route != null, brain.jobTicks, brain.enemy == null ? "-" : brain.enemy.getClass().getSimpleName() + " d" + Math.round(distanceTo(brain.enemy)),
                 Bots.player(world, owner) == null ? "-" : String.format("%.1f %.1f %.1f", Bots.player(world, owner).x, Bots.player(world, owner).y, Bots.player(world, owner).z)));
     }
     static final boolean DEBUG = Boolean.getBoolean("classicbots.debug") || debugFile(); // or the file .minecraft/classicbots-test/debug
+
+    /** Out of a block it is stuck in: up to the nearest spot within 4 blocks with room for a body, else the top. */
+    private void climbOut() {
+        int fx = MathHelper.floor(x), fy = MathHelper.floor(shape.minY + 0.01), fz = MathHelper.floor(z);
+        Nav n = planner();
+        for (int up = 0; up <= 4; up++) if (n.passable(fx, fy + up, fz) && n.passable(fx, fy + up + 1, fz)) { setPositionAndAngles(fx + 0.5, fy + up + 0.01, fz + 0.5, yaw, pitch); Nav.lifts++; return; }
+        setPositionAndAngles(x, world.getHeight(fx, fz) + 0.1, z, yaw, pitch);
+        Nav.lifts++;
+    }
+
+    // odd movement, counted for the tests (and logged with debug on): turning on the spot, or a long time in the air
+    private float seenYaw; private double turned, spunX, spunZ; private int airTicks;
+    private void watchMovement() {
+        float d = yaw - seenYaw;
+        while (d < -180) d += 360;
+        while (d >= 180) d -= 360;
+        seenYaw = yaw; turned += Math.abs(d);
+        if (ticks % 40 == 0) {
+            double moved = Math.sqrt((x - spunX) * (x - spunX) + (z - spunZ) * (z - spunZ));
+            if (turned > 540 && moved < 2 && walking()) { Nav.spins++; if (DEBUG) Bots.log(String.format("debug odd move %s: spinning, turned %.0f degrees in 2 s and moved %.1f, at %.1f %.1f %.1f", botName(), turned, moved, x, y, z)); }
+            turned = 0; spunX = x; spunZ = z;
+        }
+        int fx = MathHelper.floor(x), fy = MathHelper.floor(shape.minY + 0.01), fz = MathHelper.floor(z);
+        int at = world.getBlock(fx, fy, fz);
+        airTicks = onGround || Nav.water(at) || Nav.lava(at) || at == 65 ? 0 : airTicks + 1;
+        if (airTicks == 30) {
+            int drop = 0; while (drop < 64 && fy - drop > 0 && world.getBlock(fx, fy - drop - 1, fz) == 0) drop++;
+            Nav.flights++;
+            if (DEBUG) Bots.log(String.format("debug odd move %s: 1.5 s in the air, %d above the ground, at %.1f %.1f %.1f", botName(), drop, x, y, z));
+        }
+    }
 
     private static boolean debugFile() {
         try { return net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("classicbots-test").resolve("debug").toFile().isFile(); }
@@ -98,37 +131,77 @@ public class BotEntity extends MobEntity {
     private Nav.Path route;
     private Set<Long> routeKeys;
     private int routeTx = Integer.MIN_VALUE, routeTy, routeTz, routeAge;
+    private int[] lastBad; // the route point the last repair went round
+    private int spliceAt = -1; // >= 0: the search running repairs the route up to this point
+    private boolean viaWaypoint; // the search running goes to a region route's waypoint, not the goal
 
     /** Walk toward a spot; true once within reach. Plans with Nav (dig through, pillar, doors, ladders, water). */
     public boolean walkTo(double tx, double ty, double tz, double reach) {
         double dx = tx - x, dz = tz - z, dy = ty - y;
-        if (dx * dx + dz * dz < reach * reach && Math.abs(dy) < 2.5) { route = null; search = null; return true; }
+        // there: near enough across, and level with it (by the eyes, for a player or mob, or by the feet, for a block)
+        if (dx * dx + dz * dz < reach * reach && (Math.abs(dy) < 2.5 || Math.abs(ty - shape.minY) < 1.5)) { route = null; search = null; return true; }
         int bx = MathHelper.floor(tx), by = MathHelper.floor(ty), bz = MathHelper.floor(tz);
         int fx = MathHelper.floor(x), fy = MathHelper.floor(shape.minY + 0.01), fz = MathHelper.floor(z);
         boolean moved = Math.abs(bx - routeTx) + Math.abs(by - routeTy) + Math.abs(bz - routeTz) > 2;
         routeAge++;
         // plan again when the goal moved, the route ran out or something on it changed (not on a timer)
-        if (search == null && (route == null || moved || route.done() || routeAge % 20 == 0 && !planner().stillGood(route))) {
+        int bad = -1;
+        if (search == null && (route == null || moved || route.done() || routeAge % 20 == 0 && (bad = planner().firstBad(route)) >= 0)) {
             List<double[]> mobs = new ArrayList<>();
             for (Object o : world.getEntitiesOfType(MobEntity.class, shape.grown(32, 16, 32)))
                 if (o instanceof net.minecraft.entity.mob.monster.Monster && !((MobEntity) o).removed) { Entity e = (Entity) o; mobs.add(new double[]{e.x, e.y, e.z}); }
             int blocks = count(3) + count(4);
-            search = new Nav(world, fx, fy, fz, bx, by, bz, Math.max(0.8, reach - 0.3), brain::digTicks, blocks, 6000, moved ? null : routeKeys, mobs);
+            spliceAt = -1; viaWaypoint = false;
+            int sy = fy; // mid-jump: plan from the ground under it (planned from the air, a step up was really two)
+            if (!onGround) { Nav n0 = planner(); while (sy > 1 && fy - sy < 3 && n0.passable(fx, sy - 1, fz) && !Nav.water(world.getBlock(fx, sy - 1, fz)) && !Nav.water(world.getBlock(fx, sy, fz)) && !n0.ladder(fx, sy, fz)) sy--; }
+            int[] badAt = bad >= 0 && route != null ? route.points.get(bad) : null;
+            if (badAt != null && DEBUG) Bots.log("debug path " + botName() + ": route point " + badAt[0] + " " + badAt[1] + " " + badAt[2] + " (" + Nav.Move.values()[badAt[3]] + ") no longer works: blocks " + world.getBlock(badAt[0], badAt[1] - 1, badAt[2]) + " " + world.getBlock(badAt[0], badAt[1], badAt[2]) + " " + world.getBlock(badAt[0], badAt[1] + 1, badAt[2]));
+            boolean again = badAt != null && lastBad != null && badAt[0] == lastBad[0] && badAt[1] == lastBad[1] && badAt[2] == lastBad[2];
+            lastBad = badAt;
+            if (bad >= 0 && !moved && route != null && !route.done() && !again) { // the same point twice: plan afresh instead
+                // a block on the route changed: plan only round it, to a few points past it, and keep the rest
+                spliceAt = Math.min(route.points.size() - 1, bad + 3);
+                int[] r = route.points.get(spliceAt);
+                search = new Nav(world, fx, sy, fz, r[0], r[1], r[2], 0.8, brain::digTicks, blocks, 1500, routeKeys, mobs);
+            } else {
+                Nav full = new Nav(world, fx, sy, fz, bx, by, bz, Math.max(0.8, reach - 0.3), brain::digTicks, blocks, 6000, moved ? null : routeKeys, mobs);
+                Nav.Path hit = full.cached(fx, sy, fz);
+                int[] way = hit == null ? full.waypoint(fx, sy, fz) : null;
+                if (hit != null) {
+                    routeKeys = new HashSet<>();
+                    for (int[] q : hit.points) routeKeys.add(Nav.key(q[0], q[1], q[2]));
+                    route = full.shorten(hit); routeAge = 0;
+                    if (DEBUG) Bots.log("debug path " + botName() + " to " + bx + " " + by + " " + bz + ": " + hit.points.size() + " steps from the path cache");
+                } else if (way != null) {
+                    viaWaypoint = true;
+                    search = new Nav(world, fx, sy, fz, way[0], way[1], way[2], 2.5, brain::digTicks, blocks, 6000, moved ? null : routeKeys, mobs);
+                } else search = full;
+            }
             routeTx = bx; routeTy = by; routeTz = bz;
         }
         if (search != null && search.step(500)) {
             Nav.Path p = search.result();
-            if (p != null) {
+            if (spliceAt >= 0) {
+                if (p != null && p.complete && route != null && spliceAt < route.points.size()) {
+                    Nav.repairs++;
+                    for (int[] q : p.points) routeKeys.add(Nav.key(q[0], q[1], q[2]));
+                    route = Nav.join(search.shorten(p), new ArrayList<>(route.points.subList(spliceAt + 1, route.points.size())));
+                } else route = null; // no way round close by: a whole new plan next tick
+            } else if (p != null && p.complete && p.points.isEmpty() && !viaWaypoint) {
+                route = null; search = null; spliceAt = -1; return true; // the planner says it is there already
+            } else if (p != null) {
                 routeKeys = new HashSet<>();
                 for (int[] q : p.points) routeKeys.add(Nav.key(q[0], q[1], q[2]));
                 route = search.shorten(p);
+                if (!viaWaypoint) Nav.remember(world, bx, by, bz, p);
             } else route = null;
             routeAge = 0;
             search = null;
-            if (DEBUG) Bots.log("debug path " + botName() + " to " + bx + " " + by + " " + bz + ": " + (p == null ? "none" : p.points.size() + " steps" + (p.complete ? "" : " (partial)") + ", " + (route == null ? 0 : route.points.size()) + " after shortening, " + p.searched + " searched"));
+            if (DEBUG) Bots.log("debug path " + botName() + " to " + bx + " " + by + " " + bz + (spliceAt >= 0 ? " (repair)" : viaWaypoint ? " (via a region waypoint)" : "") + ": " + (p == null ? "none" : p.points.size() + " steps" + (p.complete ? "" : " (partial)") + ", " + (route == null ? 0 : route.points.size()) + " after shortening, " + p.searched + " searched"));
+            spliceAt = -1;
         }
         int[] q = route == null ? null : route.next();
-        while (q != null && Math.abs(q[0] + 0.5 - x) < 0.35 && Math.abs(q[2] + 0.5 - z) < 0.35 && Math.abs(q[1] - fy) <= 1) { route.index++; q = route.next(); }
+        while (q != null && Math.abs(q[1] - fy) <= 1 && (Math.abs(q[0] + 0.5 - x) < 0.35 && Math.abs(q[2] + 0.5 - z) < 0.35 || passed(q))) { route.index++; q = route.next(); }
         if (q != null && work(q, fx, fy, fz)) return false; // digging or building on the way
         double gx = q != null ? q[0] + 0.5 : tx, gz = q != null ? q[2] + 0.5 : tz, gy = q != null ? q[1] : ty;
         double h2 = dx * dx + dz * dz;
@@ -143,8 +216,22 @@ public class BotEntity extends MobEntity {
         double d = Math.sqrt(h2) + Math.abs(dy);
         if (d < bestDist - 0.5) { bestDist = d; stuckTicks = 0; brain.progress(); } else stuckTicks++;
         if (bx != lastGoalX || bz != lastGoalZ) { lastGoalX = bx; lastGoalZ = bz; bestDist = d; stuckTicks = 0; }
-        if (stuckTicks > 60) { stuckTicks = 0; bestDist = d; route = null; search = null; brain.stuck(tx, ty, tz); }
+        if (stuckTicks > 60) { // stuck: clear the way toward the route's next point (it may go round), else the goal
+            stuckTicks = 0; bestDist = d; route = null; search = null; spliceAt = -1; Nav.forget(world, bx, by, bz); // not that way again
+            if (q != null) brain.stuck(q[0] + 0.5, q[1], q[2] + 0.5); else brain.stuck(tx, ty, tz);
+        }
         return false;
+    }
+
+    /** Past this point already: within a block of it, on a plain step, and nearer the next point than it is. */
+    private boolean passed(int[] q) {
+        if (q[3] != Nav.Move.WALK.ordinal() && q[3] != Nav.Move.DIAG.ordinal() || route.index + 1 >= route.points.size()) return false;
+        int[] n = route.points.get(route.index + 1);
+        if (n[1] != q[1]) return false;
+        double qx = q[0] + 0.5 - x, qz = q[2] + 0.5 - z;
+        if (qx * qx + qz * qz > 1) return false;
+        double nx = n[0] + 0.5 - x, nz = n[2] + 0.5 - z, gx = n[0] - q[0], gz = n[2] - q[2];
+        return nx * nx + nz * nz < gx * gx + gz * gz;
     }
 
     private Nav planner() { return new Nav(world, 0, 0, 0, 0, 0, 0, 1, null, 0, 0, null, null); }
@@ -175,12 +262,15 @@ public class BotEntity extends MobEntity {
         float turn = want - yaw;
         while (turn < -180) turn += 360;
         while (turn >= 180) turn -= 360;
-        yaw += Math.max(-40, Math.min(40, turn));
-        forwardSpeed = walkSpeed;
+        double hd = Math.sqrt((gx - x) * (gx - x) + (gz - z) * (gz - z));
+        if (hd > 0.3) yaw += Math.max(-40, Math.min(40, turn)); // right on the point: no turning (the way to it swings round as it jitters)
+        forwardSpeed = hd <= 0.3 ? walkSpeed * 0.3F : walkSpeed;
         if (gy > shape.minY + 0.5 || collidingHorizontally) jumping = true;
     }
 
     boolean walking() { return forwardSpeed > 0; }
+    /** Walked last tick (the brain runs before this tick's walking, with the speed already reset). */
+    boolean walkedLast;
 
     // for the brain's survival reflexes (AltoClef-style)
     int airLeft() { return breath; }
@@ -188,13 +278,23 @@ public class BotEntity extends MobEntity {
     boolean underwater() { return isSubmergedIn(net.minecraft.block.material.Material.WATER); }
     void holdJump() { jumping = true; }
 
-    public void stopMoving() { route = null; search = null; forwardSpeed = 0; }
+    public void stopMoving() { route = null; search = null; spliceAt = -1; forwardSpeed = 0; }
 
     public void face(double tx, double ty, double tz) {
         double dx = tx - x, dz = tz - z, dy = ty - (y + getEyeHeight());
-        yaw = (float) (Math.atan2(dz, dx) * 180.0 / Math.PI) - 90.0F;
+        // the short way round from where it faces now: a yaw that jumps by 360 (atan2 gives -180..180, steering adds
+        // turns up) is the same direction, but the game draws the frames in between as a whole turn: spinning on the spot
+        yaw += wrap((float) (Math.atan2(dz, dx) * 180.0 / Math.PI) - 90.0F - yaw);
         pitch = (float) -(Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)) * 180.0 / Math.PI);
-        bodyYaw = yaw;
+        bodyYaw += wrap(yaw - bodyYaw);
+    }
+
+    /** An angle as -180..180. */
+    static float wrap(float a) {
+        a %= 360;
+        if (a >= 180) a -= 360;
+        if (a < -180) a += 360;
+        return a;
     }
 
     // ------------------------------------------------------------------ inventory

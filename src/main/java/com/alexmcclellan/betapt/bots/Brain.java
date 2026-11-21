@@ -729,6 +729,9 @@ public class Brain {
         int sx = Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? 1 : -1) : 0, sz = sx == 0 ? (dz > 0 ? 1 : -1) : 0;
         int[][] cand = gy < y - 1 ? new int[][]{{x + sx, y + 1, z + sz}, {x + sx, y, z + sz}, {x + sx, y - 1, z + sz}} : new int[][]{{x + sx, y + 1, z + sz}, {x + sx, y, z + sz}};
         if (gy > y + 2 && Math.abs(dx) < 2 && Math.abs(dz) < 2) { pillar(x, y, z); return; }
+        if (gy > y && Bots.block(Names.world(b).getBlock(x, y + 2, z)) != null && Bots.block(Names.world(b).getBlock(x, y + 2, z)).material.blocksMovement() && !liquidNext(x, y + 2, z))
+            for (int i = 0; i < 400 && !dig(x, y + 2, z); i++) { } // a step up with no room over its head to jump
+        if (BotEntity.DEBUG) Bots.log("debug stuck " + b.botName() + " at " + x + " " + y + " " + z + " toward " + (int) Math.floor(gx) + " " + (int) Math.floor(gy) + " " + (int) Math.floor(gz) + ": blocks ahead " + Names.world(b).getBlock(x + sx, y - 1, z + sz) + " " + Names.world(b).getBlock(x + sx, y, z + sz) + " " + Names.world(b).getBlock(x + sx, y + 1, z + sz) + " " + Names.world(b).getBlock(x + sx, y + 2, z + sz) + ", over its head " + Names.world(b).getBlock(x, y + 2, z));
         if (gy < y - 1 && Math.abs(dx) < 0.8 && Math.abs(dz) < 0.8) { // straight below: dig down, never into lava or water
             int below = Names.world(b).getBlock(x, y - 1, z), under = Names.world(b).getBlock(x, y - 2, z);
             if (below != 0 && !liquidNext(x, y - 1, z) && !(under >= 8 && under <= 11)) {
@@ -749,9 +752,11 @@ public class Brain {
 
     void pillar(int x, int y, int z) {
         int block = b.count(3) > 0 ? 3 : b.count(4) > 0 ? 4 : 0;
+        int at = Names.world(b).getBlock(x, y, z);
         if (block == 0 || Names.world(b).getBlock(x, y + 2, z) != 0) return;
+        if (at != 0 && (Nav.water(at) || Bots.block(at) == null || Bots.block(at).material.blocksMovement())) return; // nothing to put a block in: no hop (it bounced up and down)
         b.setPosition(b.x, b.y + 1.1, b.z);
-        if (Names.world(b).getBlock(x, y, z) == 0) { Names.world(b).setBlock(x, y, z, block); b.take(block, 1); }
+        Names.world(b).setBlock(x, y, z, block); b.take(block, 1);
     }
 
     private boolean liquidNext(int x, int y, int z) {
@@ -1153,11 +1158,12 @@ public class Brain {
     /** A closed wooden door it walks up to gets opened, and closed again once it's 3 blocks past. */
     private void doors() {
         if (openDoor != null && Math.abs(b.x - openDoor[0] - 0.5) + Math.abs(b.z - openDoor[2] - 0.5) > 3) { door(openDoor, false); openDoor = null; }
-        if (!b.walking() || b.ticks % 5 != 0) return;
+        if (!b.walkedLast || b.ticks % 5 != 0) return;
         int fx = MathHelper.floor(b.x), fy = MathHelper.floor(b.shape.minY + 0.01), fz = MathHelper.floor(b.z);
-        for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) {
-            if (Names.world(b).getBlock(fx + dx, fy, fz + dz) != 64) continue;
-            int[] p = {fx + dx, fy, fz + dz};
+        for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) for (int dy = 0; dy <= 1; dy++) {
+            if (Names.world(b).getBlock(fx + dx, fy + dy, fz + dz) != 64) continue;
+            int[] p = {fx + dx, fy + dy, fz + dz};
+            if ((Names.world(b).getBlockMetadata(p[0], p[1], p[2]) & 8) != 0) { p[1]--; if (Names.world(b).getBlock(p[0], p[1], p[2]) != 64) continue; } // the top half (mid-jump): the bottom half holds open or shut
             if ((Names.world(b).getBlockMetadata(p[0], p[1], p[2]) & 4) != 0) continue; // open already
             if (openDoor != null) door(openDoor, false);
             door(p, true); openDoor = p;
