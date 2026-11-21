@@ -22,12 +22,12 @@ public final class BotTest {
         try {
             java.io.File f = net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("classicbots-test").resolve("run").toFile();
             if (!f.isFile()) return false;
-            try { String w = new String(java.nio.file.Files.readAllBytes(f.toPath())); ONLY_TOWN = w.contains("town"); ONLY_DOCTOR = w.contains("doctor"); } catch (Throwable ignored) {}
+            try { String w = new String(java.nio.file.Files.readAllBytes(f.toPath())); ONLY_TOWN = w.contains("town"); ONLY_DOCTOR = w.contains("doctor"); ONLY_NAV = w.contains("nav"); } catch (Throwable ignored) {}
             return f.delete();
         } catch (Throwable t) { return false; }
     }
     /** "town" in the run file: spawn, then straight to the town steps. */
-    private static boolean ONLY_TOWN, ONLY_DOCTOR;
+    private static boolean ONLY_TOWN, ONLY_DOCTOR, ONLY_NAV;
     private static int step, wait, passed, failed;
     private static BotEntity bot;
     private static long t0;
@@ -75,7 +75,7 @@ public final class BotTest {
             case 1: if (wait > 100) { mc.world.setTime(1000); say(p, "/bot on"); say(p, "/bot spawn Tess"); next(); } return;
             case 2:
                 for (BotEntity b : Bots.bots(mc.world)) if (b.botName().equals("Tess")) bot = b;
-                if (bot != null && bot.owner.equals(p.name) && bot.distanceTo(p) < 5) { pass("spawn: Tess is next to " + p.name); if (ONLY_TOWN) step = 32; if (ONLY_DOCTOR) step = 42; }
+                if (bot != null && bot.owner.equals(p.name) && bot.distanceTo(p) < 5) { pass("spawn: Tess is next to " + p.name); if (ONLY_TOWN) step = 32; if (ONLY_DOCTOR) step = 42; if (ONLY_NAV) step = 45; }
                 else if (wait > 40) fail("spawn: no bot (" + Bots.bots(mc.world).size() + " bots)");
                 return;
             case 3: {
@@ -264,8 +264,55 @@ public final class BotTest {
                 mc.world.setBlock(furnace[0], furnace[1], furnace[2], 0);
                 BotConfig.machineDoctor = doctorWas;
                 return;
-            case 45: say(p, "Tess follow me"); say(p, "/bot list"); next(); return;
-            case 46:
+            case 45: {
+                // a navigation course beside you, along +x on a stone floor: a wall with a wooden door, a water channel
+                // two deep, a ledge one up then down again, and a stone wall with no way round (dig through it)
+                bot.brain.mode = Brain.Mode.STAY; bot.brain.job = Brain.Job.NONE;
+                int x0 = (int) Math.floor(p.x) + 4, z0 = (int) Math.floor(p.z), y0 = mc.world.getHeight(x0, z0);
+                for (int x = x0 - 1; x <= x0 + 22; x++) for (int z = z0 - 3; z <= z0 + 3; z++) {
+                    for (int y = y0 - 4; y < y0; y++) mc.world.setBlock(x, y, z, 1);
+                    for (int y = y0; y <= y0 + 5; y++) mc.world.setBlock(x, y, z, Math.abs(z - z0) == 3 && y <= y0 + 4 ? 1 : 0); // side walls: no way round
+                }
+                for (int z = z0 - 2; z <= z0 + 2; z++) for (int y = y0; y <= y0 + 2; y++) mc.world.setBlock(x0 + 4, y, z, 4); // wall with a door
+                mc.world.setBlockWithMetadata(x0 + 4, y0, z0, 64, 0); mc.world.setBlockWithMetadata(x0 + 4, y0 + 1, z0, 64, 8);
+                for (int x = x0 + 8; x <= x0 + 9; x++) for (int z = z0 - 2; z <= z0 + 2; z++) { mc.world.setBlock(x, y0 - 1, z, 9); mc.world.setBlock(x, y0 - 2, z, 9); } // water
+                for (int x = x0 + 13; x <= x0 + 15; x++) for (int z = z0 - 2; z <= z0 + 2; z++) mc.world.setBlock(x, y0, z, 1); // a ledge
+                for (int z = z0 - 2; z <= z0 + 2; z++) for (int y = y0; y <= y0 + 2; y++) mc.world.setBlock(x0 + 18, y, z, 1); // stone wall
+                bot.setPositionAndAngles(x0 + 0.5, y0 + 0.1, z0 + 0.5, 0, 0);
+                bot.add(new ItemStack(274, 1, 0));
+                p.setPosition(x0 + 21.5, y0 + p.eyeHeight + 0.1, z0 + 0.5);
+                Nav.resetStats(); courseStart = System.currentTimeMillis();
+                say(p, "Tess come here");
+                next();
+                return;
+            }
+            case 46: {
+                double d = bot.distanceTo(p);
+                if (d < 4) pass("navigation course (door, water, ledge, dig through): across in " + (System.currentTimeMillis() - courseStart) / 1000 + " s, " + Nav.stats());
+                else if (wait > 20 * 90) fail("navigation course: still " + (int) d + " blocks away at " + (int) Math.floor(bot.x) + " " + (int) Math.floor(bot.y) + " " + (int) Math.floor(bot.z) + "; bot: " + bot.brain.statusLine() + ", " + Nav.stats());
+                else return;
+                // then a long walk over open country: you 60 blocks off on dry ground, "come here"
+                int[][] offs = {{60, 0}, {0, 60}, {-60, 0}, {0, -60}, {42, 42}, {-42, -42}, {42, -42}, {-42, 42}};
+                for (int[] o : offs) {
+                    int x = (int) Math.floor(p.x) + o[0], z = (int) Math.floor(p.z) + o[1], y = mc.world.getHeight(x, z);
+                    int below = mc.world.getBlock(x, y - 1, z);
+                    if (below >= 8 && below <= 11 || below == 0) continue;
+                    p.setPosition(x + 0.5, y + p.eyeHeight + 0.1, z + 0.5);
+                    break;
+                }
+                Nav.resetStats(); courseStart = System.currentTimeMillis(); wait = 0;
+                return;
+            }
+            case 47:
+                if (wait == 60) say(p, "Tess come here"); // the chunks around you load first
+                if (wait <= 60) return;
+                if (bot.distanceTo(p) < 4) pass("long walk (60 blocks over open country): " + (System.currentTimeMillis() - courseStart) / 1000 + " s, " + Nav.stats());
+                else if (wait > 20 * 60) fail("long walk: still " + (int) bot.distanceTo(p) + " blocks away; bot: " + bot.brain.statusLine() + ", " + Nav.stats());
+                else return;
+                say(p, "Tess follow me");
+                return;
+            case 48: say(p, "Tess follow me"); say(p, "/bot list"); next(); return;
+            case 49:
                 Bots.log("BOTTEST Done: " + passed + " passed, " + failed + " failed in " + (System.currentTimeMillis() - t0) / 1000 + " s (model " + Model.status + ")");
                 next();
                 TestQuiet.restore();
@@ -407,6 +454,7 @@ public final class BotTest {
     private static boolean doctorWas;
     private static int[] furnace;
     private static ZombieEntity zombie;
+    private static long courseStart;
     private static Blueprint testPlan;
     private static int tpx, tpy, tpz, tpf, mineY, oresBefore;
 }

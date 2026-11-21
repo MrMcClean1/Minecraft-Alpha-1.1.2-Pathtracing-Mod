@@ -83,12 +83,143 @@ final class Nav {
         return Math.sqrt(dx * dx + dz * dz) * WALK + Math.abs(dy) * (dy < 0 ? JUMP : 2);
     }
 
+    // measurements for the bot tests: plans made, nodes looked at, time spent planning
+    static int plans, partial, repairs, hits, coarse, spins, flights, lifts; static long nodes, nanos;
+    static void resetStats() { plans = partial = repairs = hits = coarse = spins = flights = lifts = 0; nodes = nanos = 0; }
+    static String stats() { return plans + " plans (" + partial + " partial, " + repairs + " repairs, " + hits + " from the cache, " + coarse + " with a region route), " + nodes + " nodes, " + nanos / 1000000 + " ms planning; odd moves: " + spins + " spins, " + flights + " long times in the air, " + lifts + " lifts out of a block"; }
+
+    // ---- recent paths (Maple / PerViamInvenire idea: keep what was worked out): the last 32 complete paths per
+    // world by goal; a new trip to the same goal starting on one of them takes the rest of it, if still walkable
+
+    private static final Map<World, LinkedHashMap<Long, List<int[]>>> CACHE = new WeakHashMap<>();
+
+    static void remember(World w, int tx, int ty, int tz, Path raw) {
+        if (raw == null || !raw.complete || raw.points.size() < 4) return;
+        for (int[] q : raw.points) if (q[3] == Move.PILLAR.ordinal() || q[3] == Move.DIG_DOWN.ordinal()) return; // they change the ground under them
+        LinkedHashMap<Long, List<int[]>> m = CACHE.computeIfAbsent(w, k -> new LinkedHashMap<Long, List<int[]>>(16, 0.75f, true) {
+            @Override protected boolean removeEldestEntry(Map.Entry<Long, List<int[]>> e) { return size() > 32; }
+        });
+        m.put(key(tx, ty, tz), new ArrayList<>(raw.points));
+    }
+
+    /** It got stuck on a remembered path: drop the paths to (about) this goal. */
+    static void forget(World w, int tx, int ty, int tz) {
+        LinkedHashMap<Long, List<int[]>> m = CACHE.get(w);
+        if (m != null) for (int ox = -1; ox <= 1; ox++) for (int oy = -1; oy <= 1; oy++) for (int oz = -1; oz <= 1; oz++) m.remove(key(tx + ox, ty + oy, tz + oz));
+    }
+
+    /** The rest of a remembered path to (about) this goal that passes the start, or null. */
+    Path cached(int sx, int sy, int sz) {
+        LinkedHashMap<Long, List<int[]>> m = CACHE.get(w);
+        if (m == null) return null;
+        for (int ox = -1; ox <= 1; ox++) for (int oy = -1; oy <= 1; oy++) for (int oz = -1; oz <= 1; oz++) {
+            List<int[]> pts = m.get(key(tx + ox, ty + oy, tz + oz));
+            if (pts == null) continue;
+            int from = -1;
+            for (int i = pts.size() - 1; i >= 0 && from < 0; i--) { int[] q = pts.get(i); if (Math.abs(q[0] - sx) <= 1 && Math.abs(q[2] - sz) <= 1 && Math.abs(q[1] - sy) <= 1) from = i + 1; }
+            if (from < 0 || from >= pts.size()) continue;
+            Path p = new Path();
+            p.complete = true;
+            for (int i = from; i < pts.size(); i++) p.points.add(pts.get(i));
+            if (!walkable(p, 0, p.points.size())) { m.remove(key(tx + ox, ty + oy, tz + oz)); continue; }
+            hits++;
+            return p;
+        }
+        return null;
+    }
+
+    // ---- a region route for long trips (HPA* idea, bevy_northstar's hpa module): the land as 8 by 8 cells, each
+    // known by its ground height and whether it is water or lava (kept a minute); A* over the cells finds the way
+    // round lakes, lava and cliffs, and the block search only plans to a waypoint about 32 blocks along it
+
+    static final int CELL = 8;
+    private static final Map<World, HashMap<Long, long[]>> LAND = new WeakHashMap<>(); // cell -> {height, kind, time}
+
+    /** {ground height, 0 land / 1 water / 2 lava / 3 unknown, time} of a cell, from its middle column. */
+    private long[] land(int cx, int cz) {
+        HashMap<Long, long[]> m = LAND.computeIfAbsent(w, k -> new HashMap<>());
+        long k = ck(cx, cz);
+        long[] c = m.get(k);
+        long now = System.currentTimeMillis();
+        if (c != null && now - c[2] < 60000) return c;
+        int x = cx * CELL + CELL / 2, z = cz * CELL + CELL / 2;
+        if (!loaded(x, 64, z)) return new long[]{-1, 3, now};
+        int y = w.getHeight(x, z);
+        while (y > 2 && (id(x, y - 1, z) == 0 || id(x, y - 1, z) == 18 || id(x, y - 1, z) == 17)) y--; // under the trees
+        int below = id(x, y - 1, z);
+        c = new long[]{y, water(below) ? 1 : lava(below) ? 2 : 0, now};
+        if (m.size() > 20000) m.clear();
+        m.put(k, c);
+        return c;
+    }
+
+    /** A waypoint about 32 blocks along a region route to the goal, or null if the goal is close or no route was found. */
+    int[] waypoint(int sx, int sy, int sz) {
+        int scx = Math.floorDiv(sx, CELL), scz = Math.floorDiv(sz, CELL), gcx = Math.floorDiv(tx, CELL), gcz = Math.floorDiv(tz, CELL);
+        if (Math.abs(scx - gcx) + Math.abs(scz - gcz) <= 4) return null;
+        int pad = 6, x0 = Math.min(scx, gcx) - pad, x1 = Math.max(scx, gcx) + pad, z0 = Math.min(scz, gcz) - pad, z1 = Math.max(scz, gcz) + pad;
+        HashMap<Long, double[]> g = new HashMap<>(); // cell -> {cost, parent x, parent z, closed}
+        PriorityQueue<double[]> q = new PriorityQueue<>(Comparator.comparingDouble((double[] a) -> a[0]));
+        g.put(ck(scx, scz), new double[]{0, Integer.MIN_VALUE, 0, 0});
+        q.add(new double[]{0, scx, scz});
+        int n = 0;
+        boolean found = false;
+        while (!q.isEmpty() && n++ < 4000) {
+            double[] c = q.poll();
+            int cx = (int) c[1], cz = (int) c[2];
+            double[] cg = g.get(ck(cx, cz));
+            if (cg[3] > 0) continue;
+            cg[3] = 1;
+            if (cx == gcx && cz == gcz) { found = true; break; }
+            long[] here = land(cx, cz);
+            for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) {
+                int nx = cx + dx, nz = cz + dz;
+                if (dx == 0 && dz == 0 || nx < x0 || nx > x1 || nz < z0 || nz > z1) continue;
+                long[] there = land(nx, nz);
+                if (there[1] == 2) continue;
+                double step = (dx != 0 && dz != 0 ? 1.414 : 1) * CELL * WALK;
+                if (there[1] == 1) step *= SWIM / WALK * 1.5;
+                if (there[1] != 3 && here[1] != 3) { long dh = Math.abs(there[0] - here[0]); if (dh > 3) step += (dh - 3) * JUMP * 3; }
+                double ng = cg[0] + step;
+                double[] o = g.get(ck(nx, nz));
+                if (o != null && (o[3] > 0 || o[0] <= ng)) continue;
+                g.put(ck(nx, nz), new double[]{ng, cx, cz, 0});
+                double hx = nx - gcx, hz = nz - gcz;
+                q.add(new double[]{ng + Math.sqrt(hx * hx + hz * hz) * CELL * WALK, nx, nz});
+            }
+        }
+        if (!found) return null;
+        List<int[]> cells = new ArrayList<>();
+        for (int cx = gcx, cz = gcz; ; ) {
+            cells.add(0, new int[]{cx, cz});
+            double[] c = g.get(ck(cx, cz));
+            if (c[1] == Integer.MIN_VALUE) break;
+            cx = (int) c[1]; cz = (int) c[2];
+        }
+        for (int i = 0; i < cells.size() - 1; i++) {
+            int[] c = cells.get(i);
+            int x = c[0] * CELL + CELL / 2, z = c[1] * CELL + CELL / 2;
+            if (Math.sqrt((double) (x - sx) * (x - sx) + (double) (z - sz) * (z - sz)) < 32) continue;
+            long[] l = land(c[0], c[1]);
+            coarse++;
+            return new int[]{x, l[1] == 3 ? sy : (int) l[0], z};
+        }
+        return null; // the goal's own cell is next: plan to the goal itself
+    }
+
+    private static long ck(int x, int z) { return ((long) x << 32) ^ (z & 0xffffffffL); }
+
     boolean done() { return result != null; }
     Path result() { return result; }
 
     /** Looks at up to n more nodes; true once finished (result() then holds the path, possibly partial, or null). */
     boolean step(int n) {
         if (result != null) return true;
+        long t = System.nanoTime();
+        try { return search(n); } finally { nanos += System.nanoTime() - t; }
+    }
+
+    private boolean search(int n) {
         while (n-- > 0) {
             Node c = open.poll();
             if (c == null) { finish(best, false); return true; }
@@ -106,6 +237,7 @@ final class Nav {
     private void finish(Node end, boolean complete) {
         Path p = new Path();
         p.complete = complete; p.searched = expanded;
+        plans++; nodes += expanded; if (!complete) partial++;
         LinkedList<Node> chain = new LinkedList<>();
         for (Node x = end; x != null && x.parent != null; x = x.parent) chain.addFirst(x);
         for (Node x : chain) p.points.add(new int[]{x.x, x.y, x.z, x.move.ordinal()});
@@ -280,14 +412,33 @@ final class Nav {
     }
 
     /** Still walkable as planned? (Only a change on the path makes it plan again: mineflayer-pathfinder's rule.) */
-    boolean stillGood(Path p) {
-        for (int i = p.index; i < Math.min(p.points.size(), p.index + 12); i++) {
-            int[] q = p.points.get(i);
-            Move m = Move.values()[q[3]];
-            if (m == Move.DIG || m == Move.DIG_DOWN || m == Move.PILLAR) continue; // it changes those itself
-            if (!passable(q[0], q[1], q[2]) || !passable(q[0], q[1] + 1, q[2])) return false;
-            if ((m == Move.WALK || m == Move.DIAG || m == Move.UP) && !floor(q[0], q[1] - 1, q[2]) && !water(id(q[0], q[1], q[2])) && !ladder(q[0], q[1], q[2])) return false;
-        }
+    boolean stillGood(Path p) { return firstBad(p) < 0; }
+
+    /** The first of the next 12 points that no longer works, or -1. */
+    int firstBad(Path p) {
+        for (int i = p.index; i < Math.min(p.points.size(), p.index + 12); i++) if (!good(p.points.get(i), false)) return i;
+        return -1;
+    }
+
+    private boolean walkable(Path p, int from, int to) {
+        for (int i = from; i < to; i++) if (!good(p.points.get(i), true)) return false;
         return true;
+    }
+
+    /** strict: dug spots must be open still (a remembered path); otherwise what it digs or builds itself is skipped. */
+    private boolean good(int[] q, boolean strict) {
+        Move m = Move.values()[q[3]];
+        if (m == Move.DIG_DOWN || m == Move.PILLAR || (m == Move.DIG || m == Move.UP) && !strict) return true; // it changes those itself (a step up may need leaves dug)
+        if (!passable(q[0], q[1], q[2]) || !passable(q[0], q[1] + 1, q[2])) return false;
+        if ((m == Move.WALK || m == Move.DIAG || m == Move.UP || m == Move.DIG) && !floor(q[0], q[1] - 1, q[2]) && !water(id(q[0], q[1], q[2])) && !ladder(q[0], q[1], q[2])) return false;
+        return true;
+    }
+
+    /** A repaired stretch, then the rest of the old path (D* Lite's point: fix the broken part, keep the rest). */
+    static Path join(Path head, List<int[]> tail) {
+        Path p = new Path();
+        p.complete = true; p.searched = head.searched;
+        p.points.addAll(head.points); p.points.addAll(tail);
+        return p;
     }
 }
