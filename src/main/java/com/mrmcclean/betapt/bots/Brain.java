@@ -963,9 +963,13 @@ public class Brain {
         if (job == Job.GATHER || job == Job.HUNT || job == Job.DELIVER || job == Job.DEPOSIT) resumeJob = job;
         boolean wet = false;
         for (int dy = -1; dy <= 1; dy++) { int id = Names.world(b).getBlock(x, y + dy, z); if (id >= 8 && id <= 11) wet = true; }
-        if (wet) { hadThings = false; resumeJob = Job.NONE; job = Job.NONE; say("Ouch, I got knocked out in the water. My things are gone, I'm not going back in."); return; }
+        // nothing to go back for (it carried nothing, or its things went into water): straight back to the errand, as a player would
+        Job errand = resumeJob == Job.DELIVER ? Job.GATHER : resumeJob == Job.DEPOSIT ? Job.NONE : resumeJob; // its haul is gone: get it again
+        if (wet) { hadThings = false; resumeJob = Job.NONE; job = Job.NONE; if (errand != Job.NONE && want != null) startJob(errand);
+            say("Ouch, I got knocked out in the water. My things are gone, I'm not going back in." + (job != Job.NONE ? " Back to the " + want.label + "." : "")); return; }
         if (hadThings) { tx = x; ty = y; tz = z; startJob(Job.RECOVER); say("Ouch, I got knocked out. Going back for my things at " + x + ", " + y + ", " + z + "."); }
-        else { job = Job.NONE; say("Ouch, I got knocked out."); }
+        else if (errand != Job.NONE && want != null) { resumeJob = Job.NONE; startJob(errand); say("Ouch, I got knocked out. Back to the " + want.label + "."); }
+        else { resumeJob = Job.NONE; job = Job.NONE; say("Ouch, I got knocked out."); }
     }
 
     // ------------------------------------------------------------------ talking
