@@ -28,7 +28,11 @@ public class BotsScreen extends Screen {
         this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(7, left, top + 96, 150, 20, text(7)));
         this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(8, right, top + 96, 150, 20, text(8)));
         this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(9, left, top + 120, 150, 20, text(9)));
-        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(200, this.width / 2 - 100, top + 150, 200, 20, "Done"));
+        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(10, right, top + 120, 150, 20, text(10)));
+        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(11, left, top + 144, 150, 20, text(11)));
+        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(12, right, top + 144, 150, 20, text(12)));
+        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(13, left, top + 168, 150, 20, text(13)));
+        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(200, this.width / 2 - 100, top + 196, 200, 20, "Done"));
     }
 
     private static String onOff(boolean b) { return b ? "ON" : "OFF"; }
@@ -44,6 +48,10 @@ public class BotsScreen extends Screen {
             case 7 -> "Bot towns: " + onOff(BotConfig.towns);
             case 8 -> "Machine help: " + onOff(BotConfig.machineDoctor);
             case 9 -> "Voice chat (V): " + onOff(BotConfig.voiceChat);
+            case 10 -> "Progression guide: " + onOff(BotConfig.progressionGuide);
+            case 11 -> "Names over bots: " + onOff(BotConfig.nametags);
+            case 12 -> "Bots (all of it): " + onOff(BotConfig.enabled);
+            case 13 -> "Bot chat: " + BotConfig.botChat;
             default -> "";
         };
     }
@@ -60,6 +68,10 @@ public class BotsScreen extends Screen {
             case 7 -> BotConfig.towns = !BotConfig.towns;
             case 8 -> BotConfig.machineDoctor = !BotConfig.machineDoctor;
             case 9 -> BotConfig.voiceChat = !BotConfig.voiceChat;
+            case 10 -> BotConfig.progressionGuide = !BotConfig.progressionGuide;
+            case 11 -> BotConfig.nametags = !BotConfig.nametags;
+            case 12 -> BotConfig.enabled = !BotConfig.enabled;
+            case 13 -> BotConfig.botChat = BotConfig.botChat.equals("all") ? "replies" : BotConfig.botChat.equals("replies") ? "off" : "all";
             case 200 -> { this.minecraft.openScreen(this.parent); return; }
             default -> { return; }
         }
@@ -73,7 +85,7 @@ public class BotsScreen extends Screen {
         int top = this.height / 6;
         if (top - 20 >= 2) this.drawCenteredString(this.textRenderer, "Bots", this.width / 2, top - 20, 0xFFFFFF);
         this.drawCenteredString(this.textRenderer, "What a bot puts into a hut or house it builds. Tab: hold it to see your bots.", this.width / 2, top + 76, 0xA0A0A0);
-        this.drawCenteredString(this.textRenderer, "Optional: towns (/bot town start), furnace help, voice chat (hold V).", this.width / 2, top + 84, 0xA0A0A0);
+        this.drawCenteredString(this.textRenderer, "Towns (/bot town start) and the guide (\"what next?\") are on; furnace help and voice (hold V) are optional.", this.width / 2, top + 84, 0xA0A0A0);
         super.render(mouseX, mouseY, delta);
     }
 }

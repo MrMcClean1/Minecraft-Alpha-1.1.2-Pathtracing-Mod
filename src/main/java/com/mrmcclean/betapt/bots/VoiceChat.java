@@ -35,6 +35,7 @@ public final class VoiceChat {
 
     /** Every client tick: the key held starts and stops recording; words heard go into chat on the game's thread. */
     public static void tick(boolean inGame, PlayerEntity p, File dir) {
+        if (inGame && p != null) Bots.autoSpawn(p, Names.world(p)); // bots that join you by themselves (autoSpawn), every client tick's chance
         if (!BotConfig.voiceChat || BotTest.ON) return;
         gameDir = dir;
         if (p != null && ticks++ % 40 == 0) for (BotEntity b : Bots.bots(Names.world(p))) known.add(b.botName());
@@ -51,7 +52,7 @@ public final class VoiceChat {
 
     /** The bot the player looks at (the nearest one in front, within 32 blocks), or null. */
     static String lookedAt(PlayerEntity p) {
-        double yaw = Math.toRadians(p.yaw), pitch = Math.toRadians(p.pitch);
+        double yaw = Math.toRadians(p.yaw + Names.YAW_OFFSET), pitch = Math.toRadians(p.pitch);
         double lx = -Math.sin(yaw) * Math.cos(pitch), ly = -Math.sin(pitch), lz = Math.cos(yaw) * Math.cos(pitch);
         String best = null; double bd = 0.95;
         for (BotEntity b : Bots.bots(Names.world(p))) {

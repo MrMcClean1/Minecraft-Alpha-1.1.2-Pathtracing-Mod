@@ -6,13 +6,14 @@ import java.io.FileOutputStream;
 import java.util.Properties;
 
 /**
- * Settings for the bots, in config/classicbots.properties. Bots are off until enabled=true (or "/bot on" in chat).
+ * Settings for the bots, in config/classicbots.properties. Bots are on by default (MrMcClean, 2026-11-22); enabled=false
+ * (or "/bot off" in chat, or the Bots screen) switches the whole bot system off: towns, the guide and names with it.
  * The same file works in single player and on a server; the server's copy decides there.
  */
 public final class BotConfig {
     private BotConfig() {}
 
-    public static boolean enabled = false;
+    public static boolean enabled = true;
     /** Anyone may give orders to any bot (false: only the player who made it). */
     public static boolean anyoneCommands = false;
     /** Bots may take from and put into chests away from their home (their owner's base). */
@@ -26,8 +27,16 @@ public final class BotConfig {
     /** What a bot puts into a hut or house it has just built (Options > Bots...). */
     public static boolean houseDoor = true, houseTorches = true, houseBed = true, houseChest = true, houseFurnace = true;
     public static int maxBotsPerPlayer = 4;
-    /** Optional: bot towns (/bot town start), off until switched on; a new building plot every townDaysPerHouse days. */
-    public static boolean towns = false;
+    /** Bots that join you by themselves when you enter a world with none of yours yet (as Tekkit's autoSpawn; 0: none). */
+    public static int autoSpawn = 3;
+    /** Bot towns: on by default (MrMcClean, 2026-11-22), but nothing happens until /bot town start; a new plot every townDaysPerHouse days. */
+    /** Progression guide (on by default): bots say what to do next ("what next?", /bot next) and fetch it ("help me with that"). */
+    public static boolean progressionGuide = true;
+    /** Names over the bots (on by default; /bot nametags off). */
+    public static boolean nametags = true;
+    /** What bots say in chat: all (answers and updates), replies (only when you speak to them), off (nothing). /bot chat. */
+    public static String botChat = "all";
+    public static boolean towns = true;
     public static int townDaysPerHouse = 1;
     /** Optional: "why isn't my furnace working?" answered by the bot (/bot doctor on). */
     public static boolean machineDoctor = false;
@@ -59,6 +68,11 @@ public final class BotConfig {
         houseDoor = b(p, "house.door", houseDoor); houseTorches = b(p, "house.torches", houseTorches); houseBed = b(p, "house.bed", houseBed);
         houseChest = b(p, "house.chest", houseChest); houseFurnace = b(p, "house.furnace", houseFurnace);
         maxBotsPerPlayer = i(p, "maxBotsPerPlayer", maxBotsPerPlayer);
+        autoSpawn = i(p, "autoSpawn", autoSpawn);
+        progressionGuide = b(p, "progressionGuide", progressionGuide);
+        nametags = b(p, "nametags", nametags);
+        botChat = p.getProperty("botChat", botChat).trim().toLowerCase(java.util.Locale.ROOT);
+        if (!botChat.equals("all") && !botChat.equals("replies") && !botChat.equals("off")) botChat = "all";
         towns = b(p, "towns", towns);
         townDaysPerHouse = i(p, "townDaysPerHouse", townDaysPerHouse);
         machineDoctor = b(p, "machineDoctor", machineDoctor);
@@ -87,6 +101,10 @@ public final class BotConfig {
         p.setProperty("house.door", "" + houseDoor); p.setProperty("house.torches", "" + houseTorches); p.setProperty("house.bed", "" + houseBed);
         p.setProperty("house.chest", "" + houseChest); p.setProperty("house.furnace", "" + houseFurnace);
         p.setProperty("maxBotsPerPlayer", "" + maxBotsPerPlayer);
+        p.setProperty("autoSpawn", "" + autoSpawn);
+        p.setProperty("progressionGuide", "" + progressionGuide);
+        p.setProperty("nametags", "" + nametags);
+        p.setProperty("botChat", botChat);
         p.setProperty("towns", "" + towns);
         p.setProperty("townDaysPerHouse", "" + townDaysPerHouse);
         p.setProperty("machineDoctor", "" + machineDoctor);

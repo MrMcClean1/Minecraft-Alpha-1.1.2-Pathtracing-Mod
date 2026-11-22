@@ -7,6 +7,9 @@ import net.minecraft.block.material.Material;
 public final class Names {
     private Names() {}
 
+    /** Yaw counted as from Alpha on (0 faces +z); Classic 0.30's own Names has 180. */
+    static final double YAW_OFFSET = 0;
+
     private static final String[] NAMES = new String[400];
     static {
         String[] b = {"", "stone", "grass", "dirt", "cobblestone", "planks", "sapling", "bedrock", "water", "water", "lava", "lava", "sand", "gravel",

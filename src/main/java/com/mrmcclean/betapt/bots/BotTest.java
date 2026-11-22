@@ -7,6 +7,7 @@ import net.minecraft.entity.mob.player.PlayerEntity;
 import net.minecraft.inventory.Inventory;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NbtCompound;
+import java.util.*;
 
 /**
  * The bots' own test (-Dclassicbots.test=true): makes a fresh single player world, turns bots on, and checks each
@@ -22,12 +23,12 @@ public final class BotTest {
         try {
             java.io.File f = net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("classicbots-test").resolve("run").toFile();
             if (!f.isFile()) return false;
-            try { String w = new String(java.nio.file.Files.readAllBytes(f.toPath())); ONLY_TOWN = w.contains("town"); ONLY_DOCTOR = w.contains("doctor"); ONLY_NAV = w.contains("nav"); ONLY_VOICE = w.contains("voice"); } catch (Throwable ignored) {}
+            try { String w = new String(java.nio.file.Files.readAllBytes(f.toPath())); ONLY_TOWN = w.contains("town"); ONLY_DOCTOR = w.contains("doctor"); ONLY_NAV = w.contains("nav"); ONLY_VOICE = w.contains("voice"); ONLY_GUIDE = w.contains("guide"); ONLY_TAGS = w.contains("nametags"); } catch (Throwable ignored) {}
             return f.delete();
         } catch (Throwable t) { return false; }
     }
     /** "town" in the run file: spawn, then straight to the town steps. */
-    private static boolean ONLY_TOWN, ONLY_DOCTOR, ONLY_NAV, ONLY_VOICE;
+    private static boolean ONLY_TOWN, ONLY_DOCTOR, ONLY_NAV, ONLY_VOICE, ONLY_GUIDE, ONLY_TAGS;
     private static int step, wait, passed, failed;
     private static BotEntity bot;
     private static long t0;
@@ -75,7 +76,7 @@ public final class BotTest {
             case 1: if (wait > 100) { mc.world.setTime(1000); say(p, "/bot on"); say(p, "/bot spawn Tess"); next(); } return;
             case 2:
                 for (BotEntity b : Bots.bots(mc.world)) if (b.botName().equals("Tess")) bot = b;
-                if (bot != null && bot.owner.equals(p.name) && bot.distanceTo(p) < 5) { pass("spawn: Tess is next to " + p.name); if (ONLY_TOWN) step = 32; if (ONLY_DOCTOR) step = 42; if (ONLY_NAV) step = 45; if (ONLY_VOICE) step = 48; }
+                if (bot != null && bot.owner.equals(p.name) && bot.distanceTo(p) < 5) { pass("spawn: Tess is next to " + p.name); if (ONLY_TOWN) step = 32; if (ONLY_DOCTOR) step = 42; if (ONLY_NAV) step = 45; if (ONLY_VOICE) step = 48; if (ONLY_GUIDE) step = 50; if (ONLY_TAGS) step = 55; }
                 else if (wait > 40) fail("spawn: no bot (" + Bots.bots(mc.world).size() + " bots)");
                 return;
             case 3: {
@@ -319,8 +320,98 @@ public final class BotTest {
                 if (r != null && r.startsWith("PASS")) pass(r.substring(5)); else fail(r == null ? "voice: no answer in 60 s" : r.substring(5));
                 return;
             }
-            case 50: say(p, "Tess follow me"); say(p, "/bot list"); next(); return;
+            case 50: { // the progression guide (on by default): "what next?", "help me with that", and the bot's "Nice" once the step is done
+                guideWas = BotConfig.progressionGuide; BotConfig.progressionGuide = true;
+                bot.brain.mode = Brain.Mode.FOLLOW; bot.brain.job = Brain.Job.NONE;
+                bot.brain.lastReport = "";
+                say(p, "Tess what next?");
+                next();
+                return;
+            }
             case 51:
+                if (bot.brain.lastReport.startsWith("Next:") || bot.brain.lastReport.contains("every step")) { pass("guide: \"" + bot.brain.lastReport + "\" (" + Guide.steps().size() + " steps in this version)"); bot.brain.lastReport = ""; guideIdx = Guide.next(p); guideHas = bot.count(Guide.steps().get(Math.max(0, guideIdx)).ids[0]); say(p, "Tess help me with that"); }
+                else if (wait > 100) { fail("guide: no next step said: \"" + bot.brain.lastReport + "\""); say(p, "Tess help me with that"); }
+                return;
+            case 52:
+                // fetching, or already done (it had the parts and made it on the spot)
+                if (bot.brain.job == Brain.Job.GATHER || bot.brain.job == Brain.Job.HUNT || Guide.next(p) != guideIdx || guideIdx >= 0 && bot.count(Guide.steps().get(guideIdx).ids[0]) > guideHas) pass("guide: \"help me with that\" sets it fetching: " + bot.brain.statusLine());
+                else if (wait > 100) fail("guide: \"help me with that\": " + bot.brain.lastReport + "; " + bot.brain.statusLine());
+                else return;
+                bot.brain.lastReport = "";
+                { int gi = Guide.next(p); if (gi >= 0 && Guide.steps().get(gi).dim == 0) { int gid = Guide.steps().get(gi).ids[0], gn = Guide.steps().get(gi).amount; bot.brain.job = Brain.Job.NONE; bot.add(new ItemStack(gid, gn, 0)); bot.giveTo(p, gid, gn); } } // as if you'd made it: handed over, so the step is done
+                return;
+            case 53:
+                if (bot.brain.lastReport.startsWith("Nice")) { pass("guide: the step done is noticed: \"" + bot.brain.lastReport + "\" in " + wait / 20 + " s"); BotConfig.progressionGuide = guideWas; }
+                else if (wait > 20 * 240) { fail("guide: no \"Nice\" after the step: " + bot.brain.lastReport + "; " + bot.brain.statusLine()); BotConfig.progressionGuide = guideWas; }
+                return;
+            case 54: { // with nothing from you (keeping house), a bot works through the guide on its own
+                if (wait == 1) { bot.brain.mode = Brain.Mode.HOME; bot.brain.job = Brain.Job.NONE; bot.brain.guideDone.clear(); bot.brain.guideRest = 0; bot.brain.guideTries = 0; return; }
+                if (bot.brain.job == Brain.Job.GATHER || bot.brain.job == Brain.Job.HUNT) {
+                    String first = bot.brain.statusLine();
+                    // infinite progression: with every step done it keeps going (mining, wood, building by home, exploring)
+                    bot.brain.job = Brain.Job.NONE;
+                    for (int i = 0; i < Guide.steps().size(); i++) bot.brain.guideDone.add(i);
+                    bot.brain.guideRest = 0;
+                    boolean more = Guide.work(bot.brain) && bot.brain.job != Brain.Job.NONE;
+                    String then = bot.brain.statusLine();
+                    bot.brain.job = Brain.Job.NONE; bot.brain.mode = Brain.Mode.STAY;
+                    if (more) pass("guide: left to itself it works on its own next step (" + first + "), and with every step done it keeps going (" + then + ")");
+                    else fail("guide: with every step done it stopped: " + then);
+                }
+                else if (wait > 200) { fail("guide: left to itself it did nothing: " + bot.brain.statusLine()); bot.brain.mode = Brain.Mode.STAY; }
+                return;
+            }
+            case 55: { // names over the bots (on by default): drawn with the switch on, none with it off
+                tagsWas = BotConfig.nametags; BotConfig.nametags = true;
+                bot.brain.mode = Brain.Mode.STAY; bot.brain.job = Brain.Job.NONE;
+                int bx = (int) Math.floor(p.x), bz = (int) Math.floor(p.z) + 4, by = mc.world.getHeight(bx, bz);
+                bot.setPositionAndAngles(bx + 0.5, by + 0.1, bz + 0.5, 180, 0);
+                p.yaw = 0; p.pitch = 0;
+                tagsBefore = BotRenderer.tagsDrawn;
+                next();
+                return;
+            }
+            case 56: {
+                p.yaw = 0; p.pitch = 0;
+                if (wait == 60) { tagsOn = BotRenderer.tagsDrawn - tagsBefore; BotConfig.nametags = false; tagsBefore = BotRenderer.tagsDrawn; }
+                if (wait < 120) return;
+                int off = BotRenderer.tagsDrawn - tagsBefore;
+                BotConfig.nametags = tagsWas;
+                if (tagsOn > 0 && off == 0) pass("names over the bots: drawn " + tagsOn + " times in 3 s with the switch on, none with it off");
+                else fail("names over the bots: " + tagsOn + " drawn with the switch on, " + off + " with it off");
+                return;
+            }
+            case 57: { // bot chat levels: replies lets an answer through but not an update; off lets nothing through
+                chatWas = BotConfig.botChat; BotConfig.botChat = "replies";
+                bot.brain.replyUntil = 0;
+                spokenBefore = bot.brain.spoken;
+                bot.brain.say("Just an update on what I'm doing.");
+                updateLeaked = bot.brain.spoken != spokenBefore;
+                spokenBefore = bot.brain.spoken;
+                say(p, "Tess what next?");
+                next();
+                return;
+            }
+            case 58: {
+                if (wait == 1) { answered = bot.brain.spoken > spokenBefore; BotConfig.botChat = "off"; spokenBefore = bot.brain.spoken; say(p, "Tess what next?"); return; }
+                if (wait < 60) return;
+                boolean silent = bot.brain.spoken == spokenBefore;
+                BotConfig.botChat = chatWas;
+                if (!updateLeaked && answered && silent) pass("bot chat: \"replies\" keeps updates quiet and answers you; \"off\" says nothing");
+                else fail("bot chat: update said " + updateLeaked + ", answered with replies " + answered + ", silent with off " + silent);
+                return;
+            }
+            case 59: { // bots join you by themselves (autoSpawn, 3 as in Tekkit): your bots made up to 3, then the extras sent off
+                Bots.spawnUpTo(p);
+                List<String> mine = new ArrayList<>();
+                for (BotEntity x : Bots.bots(mc.world)) if (x.owner.equals(p.name)) mine.add(x.botName());
+                boolean ok = mine.size() >= Math.min(BotConfig.autoSpawn, BotConfig.maxBotsPerPlayer);
+                for (String n : mine) if (!n.equals("Tess")) say(p, "/bot remove " + n);
+                if (ok) pass("auto spawn: " + mine.size() + " bots of yours (" + String.join(", ", mine) + "), autoSpawn " + BotConfig.autoSpawn); else fail("auto spawn: only " + mine);
+                return;
+            }
+            case 60: say(p, "Tess follow me"); say(p, "/bot list"); next(); return;
+            case 61:
                 Bots.log("BOTTEST Done: " + passed + " passed, " + failed + " failed in " + (System.currentTimeMillis() - t0) / 1000 + " s (model " + Model.status + ")");
                 next();
                 TestQuiet.restore();
@@ -462,6 +553,11 @@ public final class BotTest {
 
     private static boolean doctorWas;
     private static int[] furnace;
+    private static int guideIdx, guideHas;
+    private static boolean guideWas, tagsWas, updateLeaked, answered;
+    private static String chatWas;
+    private static int spokenBefore;
+    private static int tagsBefore, tagsOn;
     private static ZombieEntity zombie;
     private static long courseStart;
     private static Blueprint testPlan;

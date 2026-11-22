@@ -29,6 +29,7 @@ public final class Bots {
         if (loaded) return;
         loaded = true;
         BotConfig.load(new java.io.File(FabricLoader.getInstance().getConfigDir().toFile(), ""));
+        Guide.load(new java.io.File(FabricLoader.getInstance().getConfigDir().toFile(), ""));
         LOG.info("Classic Bots {} (say /bot help in chat)", BotConfig.enabled ? "on" : "off; /bot on or enabled=true in config/classicbots.properties");
     }
 
@@ -115,6 +116,29 @@ public final class Bots {
         return false;
     }
 
+    private static Object autoSpawnedIn;
+    private static int autoSpawnWait;
+
+    /**
+     * Bots join you by themselves (autoSpawn, 3 by default, as Tekkit): a few seconds after you enter a world where
+     * you have no bots yet, once per world. Not during the bot test (it makes its own).
+     */
+    public static void autoSpawn(PlayerEntity p, Object world) {
+        if (p == null || world == null || !BotConfig.enabled || BotConfig.autoSpawn <= 0 || BotTest.ON || autoSpawnedIn == world) return;
+        if (++autoSpawnWait < 100) return; // let the world settle first
+        autoSpawnWait = 0;
+        autoSpawnedIn = world;
+        spawnUpTo(p);
+    }
+
+    /** Your bots made up to autoSpawn (the bot test checks it); how many it made. */
+    static int spawnUpTo(PlayerEntity p) {
+        int mine = 0, made = 0;
+        for (BotEntity b : bots(Names.world(p))) if (b.owner.equals(p.name)) mine++;
+        for (int i = mine; i < Math.min(BotConfig.autoSpawn, BotConfig.maxBotsPerPlayer); i++) { command(p, "spawn"); made++; }
+        return made;
+    }
+
     private static void command(PlayerEntity p, String args) {
         String[] a = args.isEmpty() ? new String[]{"help"} : args.split("\\s+");
         String c = a[0].toLowerCase(Locale.ROOT);
@@ -142,6 +166,28 @@ public final class Bots {
                 if (w.isMultiplayer) { tell(p, "Bots run on the server; this server doesn't have them."); return; }
                 w.addEntity(b);
                 b.brain.say("Hi " + p.name + "! Tell me what to do, like \"" + name + " follow me\" or \"" + name + " bring me 16 wood\".");
+                return;
+            }
+            case "next": { // the progression guide's next step for you
+                if (p != null) tell(p, Guide.nextLine(p));
+                return;
+            }
+            case "chat": { // what bots say: /bot chat all|replies|off
+                String t = a.length > 1 ? a[1].toLowerCase(Locale.ROOT) : "";
+                if (t.equals("all") || t.equals("replies") || t.equals("off")) { BotConfig.botChat = t; BotConfig.save(); }
+                tell(p, "Bots' chat: " + BotConfig.botChat + (BotConfig.botChat.equals("all") ? " (answers and updates)" : BotConfig.botChat.equals("replies") ? " (only when you speak to them)" : " (silent)") + ". /bot chat all|replies|off");
+                return;
+            }
+            case "nametags": { // names over the bots: /bot nametags on|off (on by default)
+                String t = a.length > 1 ? a[1].toLowerCase(Locale.ROOT) : "";
+                if (t.equals("on") || t.equals("off")) { BotConfig.nametags = t.equals("on"); BotConfig.save(); }
+                tell(p, "Names over the bots: " + (BotConfig.nametags ? "on" : "off") + ".");
+                return;
+            }
+            case "guide": { // /bot guide on|off
+                String t = a.length > 1 ? a[1].toLowerCase(Locale.ROOT) : "";
+                if (t.equals("on") || t.equals("off")) { BotConfig.progressionGuide = t.equals("on"); BotConfig.save(); }
+                tell(p, "Progression guide: " + (BotConfig.progressionGuide ? "on (" + Guide.steps().size() + " steps here). Ask a bot \"what next?\" or /bot next." : "off (/bot guide on)."));
                 return;
             }
             case "voice": { // optional voice chat: /bot voice on|off

@@ -8,7 +8,7 @@ import java.util.regex.Pattern;
 public final class Orders {
     private Orders() {}
 
-    public enum Kind { FOLLOW, STAY, COME, GUARD, GATHER, HOME_SET, HOME_GO, CHORE, CHORES_CLEAR, GIVE, GIVE_ALL, INVENTORY, DEPOSIT, EXPLORE, STATUS, HUNT, CRAFT_TOOLS, BUILD, FARM, FARM_STOP, NONE }
+    public enum Kind { NEXT, GUIDE_HELP, FOLLOW, STAY, COME, GUARD, GATHER, HOME_SET, HOME_GO, CHORE, CHORES_CLEAR, GIVE, GIVE_ALL, INVENTORY, DEPOSIT, EXPLORE, STATUS, HUNT, CRAFT_TOOLS, BUILD, FARM, FARM_STOP, NONE }
 
     public static final class Order {
         public final Kind kind; public final String what; public final int count;
@@ -22,6 +22,9 @@ public final class Orders {
     public static Order parse(String text) {
         String t = " " + text.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9 ]", " ").replaceAll("\\s+", " ").trim() + " ";
         int n = number(t);
+        // the progression guide: "what next?", then "help me with that"
+        if (has(t, "what next", "whats next", "what s next", "what now", "next step", "what should i do", "what do i do now", "what do i do next")) return new Order(Kind.NEXT, null, 0);
+        if (has(t, "help me with that", "help with that", "help me with the next step", "help with the next step", "get me that", "fetch that")) return new Order(Kind.GUIDE_HELP, null, 0);
         if (has(t, "keep me stocked", "keep stocked", "keep us stocked", "always have", "keep the chest")) {
             String w = thing(t, "stocked with", "stocked on", "always have", "with", "on");
             return new Order(Kind.CHORE, w, n > 0 ? n : 32);

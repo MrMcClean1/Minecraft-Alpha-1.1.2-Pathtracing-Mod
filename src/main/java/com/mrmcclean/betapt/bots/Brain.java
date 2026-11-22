@@ -40,6 +40,14 @@ public class Brain {
     Job after = Job.NONE;
     /** Its town and job there (Town, optional), or null. */
     Town.Member town;
+    /** The progression guide's steps this bot has done itself (Guide.work), its tries at the current one, a rest between. */
+    final Set<Integer> guideDone = new HashSet<>();
+    int guideTries, guideRest;
+    /** Infinite progression (Guide.routine): the next routine, and houses it has added by home. */
+    int routineStep, routineHouses;
+    final Set<Integer> routineMade = new HashSet<>();
+    /** Until when what it says counts as a reply (you spoke to it): botChat=replies lets only those through. Lines said in chat. */
+    int replyUntil, spoken;
     // building: the plan, where it goes (front-left corner, facing) and how far along it is
     Blueprint plan;
     int planX, planY, planZ, planF, planIndex, planShort, outTicks;
@@ -66,6 +74,7 @@ public class Brain {
         if (eatCooldown > 0) eatCooldown--;
         b.pickUp();
         doors();
+        Guide.watch(this); // the owner's progress: says so when a step is done (progression guide, on by default)
         if (survive()) return; // first, before fighting or work (AltoClef's survival chain outranks every task)
         PlayerEntity owner = Bots.player(Names.world(b), b.owner);
         if (fight(owner)) return;
@@ -77,6 +86,7 @@ public class Brain {
             farmTimer = 600;
             if (b.distanceTo(farmX + 0.5, farmY, farmZ + 0.5) < 64 && nextFarmWork(false) != null) { harvested = planted = 0; startJob(Job.FARM); return; }
         }
+        if (Guide.work(this)) return; // nothing to do for you: its own next guide step (progression guide, on by default)
         switch (mode) {
             case FOLLOW:
                 if (owner == null) { if (b.hasHome) goHomeQuietly(); return; }
@@ -219,6 +229,8 @@ public class Brain {
 
     /** A player told this bot something. Returns true if it was an order it understood. */
     public boolean order(PlayerEntity from, Orders.Order o, String text) {
+        replyUntil = b.ticks + 20 * 30; // what it says next is a reply (30 s: a model-worded answer can take 20)
+        after = Job.NONE; // a new order: nothing left over from its own guide work (that would send its haul home, not to you)
         String who = from != null ? from.name : b.owner;
         switch (o.kind) {
             case FOLLOW: mode = Mode.FOLLOW; job = Job.NONE; ack(who, text, "Right behind you."); return true;
@@ -274,6 +286,16 @@ public class Brain {
                 startJob(Job.EXPLORE); ack(who, text, "I'll have a look around."); return true;
             }
             case STATUS: ack(who, text, statusLine()); return true;
+            case NEXT: say(from == null ? "Ask me in the game." : Guide.nextLine(from)); return true;
+            case GUIDE_HELP: {
+                if (from == null || !BotConfig.progressionGuide) { say("The progression guide is off (/bot guide on)."); return true; }
+                Want w = Guide.fetchFor(from);
+                if (w == null) { say("That step isn't something I can fetch: " + Guide.nextLine(from)); return true; }
+                want = w; wantCount = Guide.need(from); deliverToHome = false;
+                startJob(w.food() ? Job.HUNT : Job.GATHER);
+                ack(who, text, "On it: getting you " + wantCount + " " + w.label + ".");
+                return true;
+            }
             case CRAFT_TOOLS: craftTools(true); say(toolsLine()); return true;
             case BUILD: {
                 if (from == null) return false;
@@ -945,6 +967,9 @@ public class Brain {
     public void say(String text) {
         if (text == null || text.isEmpty()) return;
         lastReport = text;
+        // botChat: all (default), replies (only within 30 s of you speaking to it), off
+        if (BotConfig.botChat.equals("off") || BotConfig.botChat.equals("replies") && b.ticks > replyUntil) { Bots.log("(quiet) <" + b.botName() + "> " + text); return; }
+        spoken++;
         Bots.broadcast(Names.world(b), "<" + b.botName() + "> " + text);
     }
 
@@ -956,6 +981,7 @@ public class Brain {
 
     /** Chat that isn't an order: the model answers (and may turn it into an order), or a plain reply. */
     public void chat(PlayerEntity from, String text) {
+        replyUntil = b.ticks + 20 * 30; // what it says next is a reply (30 s: a model-worded answer can take 20)
         String who = from != null ? from.name : "someone";
         if (!Model.ready()) { say(plainReply(text)); return; }
         Model.ask(persona() + " If the player wants you to do something, start your reply with ORDER: and the request in plain words"
@@ -1359,6 +1385,11 @@ public class Brain {
         n.putBoolean("HasFarm", hasFarm);
         if (hasFarm) { n.putInt("FarmX", farmX); n.putInt("FarmY", farmY); n.putInt("FarmZ", farmZ); }
         Town.write(this, n);
+        StringBuilder gd = new StringBuilder(); for (int i : guideDone) gd.append(gd.length() == 0 ? "" : ",").append(i);
+        n.putString("GuideDone", gd.toString());
+        n.putInt("RoutineHouses", routineHouses);
+        StringBuilder rm = new StringBuilder(); for (int i : routineMade) rm.append(rm.length() == 0 ? "" : ",").append(i);
+        n.putString("RoutineMade", rm.toString());
     }
 
     void read(NbtCompound n) {
@@ -1369,6 +1400,11 @@ public class Brain {
         hasFarm = n.getBoolean("HasFarm");
         if (hasFarm) { farmX = n.getInt("FarmX"); farmY = n.getInt("FarmY"); farmZ = n.getInt("FarmZ"); }
         Town.read(this, n);
+        guideDone.clear();
+        for (String v : n.getString("GuideDone").split(",")) try { if (!v.trim().isEmpty()) guideDone.add(Integer.parseInt(v.trim())); } catch (Exception ignored) {}
+        routineHouses = n.getInt("RoutineHouses");
+        routineMade.clear();
+        for (String v : n.getString("RoutineMade").split(",")) try { if (!v.trim().isEmpty()) routineMade.add(Integer.parseInt(v.trim())); } catch (Exception ignored) {}
     }
 
     private static long key(int x, int y, int z) { return ((long) x & 0x3FFFFFF) << 38 | ((long) y & 0xFFF) << 26 | ((long) z & 0x3FFFFFF); }

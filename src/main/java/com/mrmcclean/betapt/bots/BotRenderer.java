@@ -14,6 +14,9 @@ import org.lwjgl.opengl.GL11;
 public class BotRenderer extends MobRenderer<BotEntity> {
     private final HumanoidModel body;
 
+    /** Names drawn so far (the bot test checks the switch with it). */
+    public static int tagsDrawn;
+
     public BotRenderer() { super(new HumanoidModel(0.0F), 0.5F); body = (HumanoidModel) this.model; }
 
     @Override
@@ -21,6 +24,8 @@ public class BotRenderer extends MobRenderer<BotEntity> {
         body.itemInRightHand = e.heldStack != null;
         super.render(e, dx, dy, dz, yaw, tickDelta);
         body.itemInRightHand = false;
+        if (!BotConfig.nametags) return; // names over the bots: on by default (/bot nametags off)
+        tagsDrawn++;
         TextRenderer tr = this.getTextRenderer();
         String s = e.botName();
         float g = 0.016666668F * 1.6F * (float) (Math.sqrt(e.distanceTo(this.dispatcher.camera)) / 2.0);
