@@ -23,7 +23,12 @@ public class BotsScreen extends Screen {
         this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(3, left, top + 24, 150, 20, text(3)));
         this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(4, right, top + 24, 150, 20, text(4)));
         this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(5, left, top + 48, 150, 20, text(5)));
-        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(200, this.width / 2 - 100, top + 96, 200, 20, "Done"));
+        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(6, right, top + 48, 150, 20, text(6)));
+        // optional features, off until switched on here (or with /bot town|doctor|voice on)
+        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(7, left, top + 96, 150, 20, text(7)));
+        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(8, right, top + 96, 150, 20, text(8)));
+        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(9, left, top + 120, 150, 20, text(9)));
+        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(200, this.width / 2 - 100, top + 150, 200, 20, "Done"));
     }
 
     private static String onOff(boolean b) { return b ? "ON" : "OFF"; }
@@ -36,6 +41,9 @@ public class BotsScreen extends Screen {
             case 4 -> "Chests: " + onOff(BotConfig.houseChest);
             case 5 -> "Furnaces: " + onOff(BotConfig.houseFurnace);
             case 6 -> "Beds: " + onOff(BotConfig.houseBed);
+            case 7 -> "Bot towns: " + onOff(BotConfig.towns);
+            case 8 -> "Machine help: " + onOff(BotConfig.machineDoctor);
+            case 9 -> "Voice chat (V): " + onOff(BotConfig.voiceChat);
             default -> "";
         };
     }
@@ -49,6 +57,9 @@ public class BotsScreen extends Screen {
             case 4 -> BotConfig.houseChest = !BotConfig.houseChest;
             case 5 -> BotConfig.houseFurnace = !BotConfig.houseFurnace;
             case 6 -> BotConfig.houseBed = !BotConfig.houseBed;
+            case 7 -> BotConfig.towns = !BotConfig.towns;
+            case 8 -> BotConfig.machineDoctor = !BotConfig.machineDoctor;
+            case 9 -> BotConfig.voiceChat = !BotConfig.voiceChat;
             case 200 -> { this.minecraft.openScreen(this.parent); return; }
             default -> { return; }
         }
@@ -62,6 +73,7 @@ public class BotsScreen extends Screen {
         int top = this.height / 6;
         if (top - 20 >= 2) this.drawCenteredString(this.textRenderer, "Bots", this.width / 2, top - 20, 0xFFFFFF);
         this.drawCenteredString(this.textRenderer, "What a bot puts into a hut or house it builds. Tab: hold it to see your bots.", this.width / 2, top + 76, 0xA0A0A0);
+        this.drawCenteredString(this.textRenderer, "Optional: towns (/bot town start), furnace help, voice chat (hold V).", this.width / 2, top + 84, 0xA0A0A0);
         super.render(mouseX, mouseY, delta);
     }
 }

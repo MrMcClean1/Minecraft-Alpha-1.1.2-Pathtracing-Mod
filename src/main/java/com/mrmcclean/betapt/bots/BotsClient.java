@@ -10,6 +10,7 @@ final class BotsClient {
     static Minecraft mc() { return (Minecraft) net.fabricmc.loader.api.FabricLoader.getInstance().getGameInstance(); }
 
     static void show(String msg) {
+        VoiceChat.shown(msg);
         Minecraft mc = mc();
         if (mc != null && mc.gui != null) mc.gui.addChatMessage(msg);
     }

@@ -163,10 +163,10 @@ public final class Town {
             case BUILDER: return builder(br, m);
             case FARMER:
                 if (!br.hasFarm) { br.hasFarm = true; br.farmX = m.x; br.farmY = m.y; br.farmZ = m.z + 9; br.farmTimer = 1; }
-                if (b.count(296) >= 16) { br.startJob(Brain.Job.DEPOSIT); return true; }
+                if (b.count(296) >= 16 && market(br, m)) { br.startJob(Brain.Job.DEPOSIT); return true; }
                 return false; // the brain's own farm timer runs the field
             case MINER:
-                if (b.count(4) >= 64) { br.startJob(Brain.Job.DEPOSIT); return true; }
+                if (b.count(4) >= 64 && market(br, m)) { br.startJob(Brain.Job.DEPOSIT); return true; }
                 return quarry(br, m, 32);
             case TRADER: return trader(br, m);
             case GUARD: return guard(br, m);
@@ -178,10 +178,14 @@ public final class Town {
     private static boolean quarry(Brain br, Member m, int n) {
         BotEntity b = br.b; World w = Names.world(b);
         if (flat(b, m.x + 32.5, m.z + 0.5) > 6) { b.walkTo(m.x + 32.5, w.getHeight(m.x + 32, m.z), m.z + 0.5, 4); return true; }
-        br.want = Want.of("cobblestone"); br.wantCount = b.count(4) + n; br.deliverToHome = true;
+        br.want = Want.of("cobblestone"); br.wantCount = b.count(4) + n; br.deliverToHome = market(br, m);
+        if (!br.deliverToHome) br.after = Brain.Job.GO_HOME; // no market yet: back to the town with it (not off to the player)
         br.startJob(Brain.Job.GATHER);
         return true;
     }
+
+    /** The market chest is down (else "put it away" would only say there's no chest at home, over and over). */
+    static boolean market(Brain br, Member m) { return br.findNear(new int[]{54}, m.x, m.y, m.z, 2, false) != null; }
 
     static int trades;
     private static final Random RND = new Random();
@@ -192,7 +196,7 @@ public final class Town {
             if (b.count(54) == 0) {
                 if (b.count(5) < 8 && b.count(17) >= 2) br.craft(5, 4, new int[]{17, 1});
                 if (b.count(5) >= 8) br.craft(54, 1, new int[]{5, 8});
-                if (b.count(54) == 0) { br.want = Want.of("wood"); br.wantCount = b.count(17) + 3; br.deliverToHome = true; br.startJob(Brain.Job.GATHER); return true; }
+                if (b.count(54) == 0) { br.want = Want.of("wood"); br.wantCount = b.count(17) + 3; br.deliverToHome = false; br.after = Brain.Job.GO_HOME; br.startJob(Brain.Job.GATHER); return true; } // the wood comes back to the town, not to the player
             }
             if (flat(b, m.x + 0.5, m.z + 0.5) > 4) { b.walkTo(m.x + 0.5, m.y, m.z + 2.5, 1.5); return true; }
             int cy = w.getHeight(m.x, m.z);
@@ -230,7 +234,7 @@ public final class Town {
             }
         }
         // nothing to build: put spare stone in the market, then wait for the next plot
-        if (b.count(4) >= 64) { br.startJob(Brain.Job.DEPOSIT); return true; }
+        if (b.count(4) >= 64 && market(br, m)) { br.startJob(Brain.Job.DEPOSIT); return true; }
         idle(br, m);
         return true;
     }
@@ -238,6 +242,7 @@ public final class Town {
     private static boolean trader(Brain br, Member m) {
         BotEntity b = br.b; World w = Names.world(b);
         for (BotEntity o : Bots.bots(w)) {
+            if (!market(br, m)) break; // nowhere to take it yet (the builder puts the chest down first)
             if (o == b || o.brain.town == null || o.brain.town.x != m.x || o.brain.town.z != m.z) continue;
             int id = o.brain.town.job == Job.MINER ? 4 : o.brain.town.job == Job.FARMER ? 296 : 0;
             if (id == 0 || o.count(id) < 32 && !(id == 296 && o.count(id) >= 16)) continue;

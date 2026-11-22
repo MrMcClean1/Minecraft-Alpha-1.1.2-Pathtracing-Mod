@@ -22,12 +22,12 @@ public final class BotTest {
         try {
             java.io.File f = net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("classicbots-test").resolve("run").toFile();
             if (!f.isFile()) return false;
-            try { String w = new String(java.nio.file.Files.readAllBytes(f.toPath())); ONLY_TOWN = w.contains("town"); ONLY_DOCTOR = w.contains("doctor"); ONLY_NAV = w.contains("nav"); } catch (Throwable ignored) {}
+            try { String w = new String(java.nio.file.Files.readAllBytes(f.toPath())); ONLY_TOWN = w.contains("town"); ONLY_DOCTOR = w.contains("doctor"); ONLY_NAV = w.contains("nav"); ONLY_VOICE = w.contains("voice"); } catch (Throwable ignored) {}
             return f.delete();
         } catch (Throwable t) { return false; }
     }
     /** "town" in the run file: spawn, then straight to the town steps. */
-    private static boolean ONLY_TOWN, ONLY_DOCTOR, ONLY_NAV;
+    private static boolean ONLY_TOWN, ONLY_DOCTOR, ONLY_NAV, ONLY_VOICE;
     private static int step, wait, passed, failed;
     private static BotEntity bot;
     private static long t0;
@@ -75,7 +75,7 @@ public final class BotTest {
             case 1: if (wait > 100) { mc.world.setTime(1000); say(p, "/bot on"); say(p, "/bot spawn Tess"); next(); } return;
             case 2:
                 for (BotEntity b : Bots.bots(mc.world)) if (b.botName().equals("Tess")) bot = b;
-                if (bot != null && bot.owner.equals(p.name) && bot.distanceTo(p) < 5) { pass("spawn: Tess is next to " + p.name); if (ONLY_TOWN) step = 32; if (ONLY_DOCTOR) step = 42; if (ONLY_NAV) step = 45; }
+                if (bot != null && bot.owner.equals(p.name) && bot.distanceTo(p) < 5) { pass("spawn: Tess is next to " + p.name); if (ONLY_TOWN) step = 32; if (ONLY_DOCTOR) step = 42; if (ONLY_NAV) step = 45; if (ONLY_VOICE) step = 48; }
                 else if (wait > 40) fail("spawn: no bot (" + Bots.bots(mc.world).size() + " bots)");
                 return;
             case 3: {
@@ -311,8 +311,16 @@ public final class BotTest {
                 else return;
                 say(p, "Tess follow me");
                 return;
-            case 48: say(p, "Tess follow me"); say(p, "/bot list"); next(); return;
-            case 49:
+            case 48: { VoiceChat.testVoice(net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().toFile(), "Tess"); next(); return; }
+            case 49: {
+                // voice chat: a line to speech (Piper) and back to words (Whisper), from .minecraft/classicbots-voice
+                String r = VoiceChat.testResult;
+                if (r == null && wait < 20 * 60) return;
+                if (r != null && r.startsWith("PASS")) pass(r.substring(5)); else fail(r == null ? "voice: no answer in 60 s" : r.substring(5));
+                return;
+            }
+            case 50: say(p, "Tess follow me"); say(p, "/bot list"); next(); return;
+            case 51:
                 Bots.log("BOTTEST Done: " + passed + " passed, " + failed + " failed in " + (System.currentTimeMillis() - t0) / 1000 + " s (model " + Model.status + ")");
                 next();
                 TestQuiet.restore();
@@ -363,6 +371,7 @@ public final class BotTest {
                     return;
                 }
                 if (wait == 20) {
+                    for (BotEntity b : Bots.bots(w)) { b.add(new ItemStack(291, 1, 0)); b.add(new ItemStack(295, 16, 0)); } // a hoe and seeds each, before the jobs are given (the farmer starts at once)
                     for (BotEntity b : Bots.bots(w)) { b.brain.mode = Brain.Mode.STAY; b.brain.job = Brain.Job.NONE; b.brain.plan = null; b.brain.hasFarm = false; b.setPositionAndAngles(tcx + 0.5, tcy + 0.1, tcz + 2.5, 0, 0); }
                     p.setPosition(tcx + 0.5, tcy + p.eyeHeight + 0.1, tcz + 0.5);
                     say(p, "/bot town start");

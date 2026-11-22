@@ -31,6 +31,11 @@ public final class BotConfig {
     public static int townDaysPerHouse = 1;
     /** Optional: "why isn't my furnace working?" answered by the bot (/bot doctor on). */
     public static boolean machineDoctor = false;
+    /** Optional: voice chat (hold the voice key to talk to the bot you look at; bots' lines are spoken). Files in .minecraft/classicbots-voice. */
+    public static boolean voiceChat = false;
+    public static String voiceKey = "V", voiceStt = "auto", voiceTts = "auto";
+    public static String voiceWhisper = "whisper-cli.exe", voiceWhisperModel = "ggml-base.en.bin", voicePiper = "piper.exe", voiceTtsModel = "en_US-libritts_r-medium.onnx";
+    public static int voicePiperSpeakers = 1;
     /** Language model: an Ollama (or OpenAI-style) server. Empty url = no model; the bots still work by rules. */
     public static String modelUrl = "http://127.0.0.1:11434";
     public static String model = "qwen3.5:9b";
@@ -57,6 +62,10 @@ public final class BotConfig {
         towns = b(p, "towns", towns);
         townDaysPerHouse = i(p, "townDaysPerHouse", townDaysPerHouse);
         machineDoctor = b(p, "machineDoctor", machineDoctor);
+        voiceChat = b(p, "voiceChat", voiceChat);
+        voiceKey = p.getProperty("voice.key", voiceKey).trim(); voiceStt = p.getProperty("voice.stt", voiceStt).trim(); voiceTts = p.getProperty("voice.tts", voiceTts).trim();
+        voiceWhisper = p.getProperty("voice.whisper", voiceWhisper).trim(); voiceWhisperModel = p.getProperty("voice.whisperModel", voiceWhisperModel).trim();
+        voicePiper = p.getProperty("voice.piper", voicePiper).trim(); voiceTtsModel = p.getProperty("voice.ttsModel", voiceTtsModel).trim();
         modelOn = b(p, "model.enabled", modelOn);
         modelUrl = p.getProperty("model.url", modelUrl).trim();
         model = p.getProperty("model.name", model).trim();
@@ -81,6 +90,10 @@ public final class BotConfig {
         p.setProperty("towns", "" + towns);
         p.setProperty("townDaysPerHouse", "" + townDaysPerHouse);
         p.setProperty("machineDoctor", "" + machineDoctor);
+        p.setProperty("voiceChat", "" + voiceChat);
+        p.setProperty("voice.key", voiceKey); p.setProperty("voice.stt", voiceStt); p.setProperty("voice.tts", voiceTts);
+        p.setProperty("voice.whisper", voiceWhisper); p.setProperty("voice.whisperModel", voiceWhisperModel);
+        p.setProperty("voice.piper", voicePiper); p.setProperty("voice.ttsModel", voiceTtsModel);
         p.setProperty("model.enabled", "" + modelOn);
         p.setProperty("model.url", modelUrl);
         p.setProperty("model.name", model);

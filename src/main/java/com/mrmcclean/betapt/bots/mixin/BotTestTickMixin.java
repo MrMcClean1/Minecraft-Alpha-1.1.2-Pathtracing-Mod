@@ -19,6 +19,7 @@ public class BotTestTickMixin {
     private void classicbots$tick(CallbackInfo ci) {
         Minecraft mc = (Minecraft) (Object) this;
         if (BotTest.ON) BotTest.tick(mc);
+        com.mrmcclean.betapt.bots.VoiceChat.tick(mc.world != null && mc.screen == null, mc.player, net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().toFile()); // optional voice chat
         boolean down = mc.world != null && !mc.isMultiplayer() && mc.screen == null && Keyboard.isKeyDown(mc.options.chatKey.keyCode);
         if (down && !classicbots$chatDown) mc.openScreen(new ChatScreen());
         classicbots$chatDown = down;

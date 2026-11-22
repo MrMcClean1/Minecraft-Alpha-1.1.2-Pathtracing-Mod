@@ -144,6 +144,12 @@ public final class Bots {
                 b.brain.say("Hi " + p.name + "! Tell me what to do, like \"" + name + " follow me\" or \"" + name + " bring me 16 wood\".");
                 return;
             }
+            case "voice": { // optional voice chat: /bot voice on|off
+                String t = a.length > 1 ? a[1].toLowerCase(Locale.ROOT) : "";
+                if (t.equals("on") || t.equals("off")) { BotConfig.voiceChat = t.equals("on"); BotConfig.save(); }
+                tell(p, BotConfig.voiceChat ? Voice.describe(VoiceChat.gameDir) : "Voice chat is off (/bot voice on).");
+                return;
+            }
             case "doctor": { // optional machine help: /bot doctor on|off
                 String t = a.length > 1 ? a[1].toLowerCase(Locale.ROOT) : "";
                 if (t.equals("on") || t.equals("off")) { BotConfig.machineDoctor = t.equals("on"); BotConfig.save(); }
