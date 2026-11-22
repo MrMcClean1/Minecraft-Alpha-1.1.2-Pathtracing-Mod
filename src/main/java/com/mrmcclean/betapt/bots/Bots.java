@@ -170,7 +170,7 @@ public final class Bots {
     private static double[] safeSpot;
 
     /**
-     * Player invulnerability (invulnerable=true by default): every hurt is turned away (BotTestPlayerMixin); here, each
+     * Player invulnerability (invulnerable=false by default): every hurt is turned away (BotTestPlayerMixin); here, each
      * client tick, health back to full and out of the void: back up where it last stood.
      */
     public static void keepSafe(PlayerEntity p) {
@@ -227,7 +227,7 @@ public final class Bots {
                 tell(p, "Bots' chat: " + BotConfig.botChat + (BotConfig.botChat.equals("all") ? " (answers and updates)" : BotConfig.botChat.equals("replies") ? " (only when you speak to them)" : " (silent)") + ". /bot chat all|replies|off");
                 return;
             }
-            case "invulnerable": { // the player takes no harm: /bot invulnerable on|off (on by default)
+            case "invulnerable": { // the player takes no harm: /bot invulnerable on|off (off by default)
                 String t = a.length > 1 ? a[1].toLowerCase(Locale.ROOT) : "";
                 if (t.equals("on") || t.equals("off")) { BotConfig.invulnerable = t.equals("on"); BotConfig.save(); }
                 tell(p, "Player invulnerable: " + (BotConfig.invulnerable ? "on (nothing hurts you)" : "off") + ".");

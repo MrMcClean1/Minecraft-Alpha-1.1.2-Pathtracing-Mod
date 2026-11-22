@@ -432,7 +432,7 @@ public final class BotTest {
                 step = 63; wait = 0; // the player's invulnerability next, then the rest
                 return;
             }
-            case 63: { // player invulnerability (on by default): a 30-block fall, then lava at the feet; the switch alone keeps the player alive
+            case 63: { // player invulnerability (off by default): a 30-block fall, then lava at the feet; the switch alone keeps the player alive
                 if (wait == 1) { invWas = BotConfig.invulnerable; BotConfig.invulnerable = true; REAL = true; invLow = 20; p.setPosition(p.x, p.y + 30, p.z); return; }
                 invLow = Math.min(invLow, p.health);
                 if (wait == 80) { lava = new int[]{(int) Math.floor(p.x), (int) Math.floor(p.y - p.eyeHeight + 0.01), (int) Math.floor(p.z)}; invLanded = p.health; mc.world.setBlock(lava[0], lava[1], lava[2], 11); return; }

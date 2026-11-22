@@ -35,7 +35,7 @@ public final class VoiceChat {
 
     /** Every client tick: the key held starts and stops recording; words heard go into chat on the game's thread. */
     public static void tick(boolean inGame, PlayerEntity p, File dir) {
-        Bots.keepSafe(p); // the player can't be hurt (invulnerable=true by default)
+        Bots.keepSafe(p); // the player can't be hurt (invulnerable=false by default)
         if (inGame && p != null) Bots.autoSpawn(p, Names.world(p)); // bots that join you by themselves (autoSpawn), every client tick's chance
         if (!BotConfig.voiceChat || BotTest.ON) return;
         gameDir = dir;

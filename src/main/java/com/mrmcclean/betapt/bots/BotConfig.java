@@ -34,8 +34,8 @@ public final class BotConfig {
     public static boolean progressionGuide = true;
     /** Names over the bots (on by default; /bot nametags off). */
     public static boolean nametags = true;
-    /** The player takes no harm of any kind (on by default, for testing; /bot invulnerable off, or the Bots menu). */
-    public static boolean invulnerable = true;
+    /** The player takes no harm of any kind (off by default; for testing: /bot invulnerable on, or the Bots menu). */
+    public static boolean invulnerable = false;
     /** What bots say in chat: all (answers and updates), replies (only when you speak to them), off (nothing). /bot chat. */
     public static String botChat = "all";
     public static boolean towns = true;
