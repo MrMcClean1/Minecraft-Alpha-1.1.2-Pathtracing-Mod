@@ -211,6 +211,9 @@ public class GameRendererMixin {
     @Inject(method = "render", at = @At("HEAD"))
     private void betapt$frameStart(float tickDelta, CallbackInfo ci) {
         com.mrmcclean.betapt.render.TimeLapse.beforeFrame(this.minecraft); // a recording time-lapse sets the camera
+        // a test never holds the mouse: the player's cursor stays theirs while it runs behind other windows
+        if ((com.mrmcclean.betapt.test.AlphaTest.running() || com.mrmcclean.betapt.test.WorldShots.running()) && org.lwjgl.input.Mouse.isCreated() && org.lwjgl.input.Mouse.isGrabbed())
+            org.lwjgl.input.Mouse.setGrabbed(false);
         PathTracer.INSTANCE.beginFrame(); // wait for the previous frame before the mouse is read
     }
 

@@ -76,6 +76,7 @@ public final class AlphaTest {
         mc.player.velocityX = mc.player.velocityY = mc.player.velocityZ = 0;
         ((com.mrmcclean.betapt.mixin.EntityAccessor) mc.player).betapt$setFallDistance(0f);
         mc.world.ticks = 6000;
+        mc.player.health = Math.max(mc.player.health, 20); // the test's player can't die while it runs
     }
 
     /** Every tick (Minecraft.tick, before the game's). */
