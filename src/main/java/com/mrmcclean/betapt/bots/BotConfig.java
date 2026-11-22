@@ -47,7 +47,7 @@ public final class BotConfig {
     public static int voicePiperSpeakers = 1;
     /** Language model: an Ollama (or OpenAI-style) server. Empty url = no model; the bots still work by rules. */
     public static String modelUrl = "http://127.0.0.1:11434";
-    public static String model = "qwen3.5:9b";
+    public static String model = "qwen3.5:4b";
     public static String modelApi = "ollama";
     public static int modelTimeoutMs = 20000;
     public static int modelPerMinute = 12;
