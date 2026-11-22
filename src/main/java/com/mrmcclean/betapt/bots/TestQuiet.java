@@ -27,6 +27,9 @@ public final class TestQuiet {
         return named.toArray(new Field[0]);
     }
 
+    /** A test has the game muted now (its voice stays quiet too). */
+    public static boolean on() { return options != null; }
+
     public static void mute(Object gameOptions) {
         if (gameOptions == null || options != null) return;
         options = gameOptions;

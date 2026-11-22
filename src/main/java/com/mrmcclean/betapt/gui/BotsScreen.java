@@ -13,26 +13,23 @@ public class BotsScreen extends Screen {
 
     public BotsScreen(Screen parent) { this.parent = parent; }
 
+    private static final int COUNT = 14, ROW = 22;
+
+    /** The first row: the block (toggles, a gap, Done) centred, with room for the title above when there is. */
+    private static int top(int h) { int block = (COUNT + 1) / 2 * ROW + 4 + 20; return Math.max(14, Math.min(h / 6, (h - block) / 2)); }
+
+    private static int doneY(int h) { return top(h) + (COUNT + 1) / 2 * ROW + 4; }
+
     @Override
     @SuppressWarnings("unchecked")
     public void init() {
-        int left = this.width / 2 - 155, right = this.width / 2 + 5, top = this.height / 6;
+        // two columns, rows 22 apart, the whole block centred by the screen's own height: Done stays on screen at
+        // every window size and GUI scale (the smallest is 320 x 240)
+        int left = this.width / 2 - 155, right = this.width / 2 + 5, top = top(this.height);
         this.buttons.clear();
-        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(1, left, top, 150, 20, text(1)));
-        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(2, right, top, 150, 20, text(2)));
-        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(3, left, top + 24, 150, 20, text(3)));
-        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(4, right, top + 24, 150, 20, text(4)));
-        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(5, left, top + 48, 150, 20, text(5)));
-        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(6, right, top + 48, 150, 20, text(6)));
-        // optional features, off until switched on here (or with /bot town|doctor|voice on)
-        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(7, left, top + 96, 150, 20, text(7)));
-        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(8, right, top + 96, 150, 20, text(8)));
-        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(9, left, top + 120, 150, 20, text(9)));
-        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(10, right, top + 120, 150, 20, text(10)));
-        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(11, left, top + 144, 150, 20, text(11)));
-        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(12, right, top + 144, 150, 20, text(12)));
-        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(13, left, top + 168, 150, 20, text(13)));
-        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(200, this.width / 2 - 100, top + 196, 200, 20, "Done"));
+        for (int id = 1; id <= COUNT; id++)
+            this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(id, (id - 1) % 2 == 0 ? left : right, top + (id - 1) / 2 * ROW, 150, 20, text(id)));
+        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(200, this.width / 2 - 100, doneY(this.height), 200, 20, "Done"));
     }
 
     private static String onOff(boolean b) { return b ? "ON" : "OFF"; }
@@ -52,6 +49,7 @@ public class BotsScreen extends Screen {
             case 11 -> "Names over bots: " + onOff(BotConfig.nametags);
             case 12 -> "Bots (all of it): " + onOff(BotConfig.enabled);
             case 13 -> "Bot chat: " + BotConfig.botChat;
+            case 14 -> "Player invulnerable: " + onOff(BotConfig.invulnerable);
             default -> "";
         };
     }
@@ -71,6 +69,7 @@ public class BotsScreen extends Screen {
             case 10 -> BotConfig.progressionGuide = !BotConfig.progressionGuide;
             case 11 -> BotConfig.nametags = !BotConfig.nametags;
             case 12 -> BotConfig.enabled = !BotConfig.enabled;
+            case 14 -> BotConfig.invulnerable = !BotConfig.invulnerable;
             case 13 -> BotConfig.botChat = BotConfig.botChat.equals("all") ? "replies" : BotConfig.botChat.equals("replies") ? "off" : "all";
             case 200 -> { this.minecraft.openScreen(this.parent); return; }
             default -> { return; }
@@ -82,10 +81,10 @@ public class BotsScreen extends Screen {
     @Override
     public void render(int mouseX, int mouseY, float delta) {
         this.renderBackground();
-        int top = this.height / 6;
-        if (top - 20 >= 2) this.drawCenteredString(this.textRenderer, "Bots", this.width / 2, top - 20, 0xFFFFFF);
-        this.drawCenteredString(this.textRenderer, "What a bot puts into a hut or house it builds. Tab: hold it to see your bots.", this.width / 2, top + 76, 0xA0A0A0);
-        this.drawCenteredString(this.textRenderer, "Towns (/bot town start) and the guide (\"what next?\") are on; furnace help and voice (hold V) are optional.", this.width / 2, top + 84, 0xA0A0A0);
+        int top = top(this.height), below = doneY(this.height) + 24;
+        if (top - 12 >= 2) this.drawCenteredString(this.textRenderer, "Bots", this.width / 2, top - 12, 0xFFFFFF);
+        if (below + 8 <= this.height) this.drawCenteredString(this.textRenderer, "Doors to beds: what a bot puts into a house it builds. Tab: hold it to see your bots.", this.width / 2, below, 0xA0A0A0);
+        if (below + 18 <= this.height) this.drawCenteredString(this.textRenderer, "Towns, the guide (\"what next?\") and invulnerable are on; furnace help and voice (hold V) are optional.", this.width / 2, below + 10, 0xA0A0A0);
         super.render(mouseX, mouseY, delta);
     }
 }

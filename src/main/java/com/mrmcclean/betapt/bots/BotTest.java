@@ -18,6 +18,8 @@ public final class BotTest {
 
     /** On with -Dclassicbots.test=true, or when the file .minecraft/classicbots-test/run exists (used up when read). */
     public static final boolean ON = Boolean.getBoolean("classicbots.test") || trigger();
+    /** While its invulnerability check runs: the test's own keeping-safe is off, the invulnerable switch alone keeps the player alive. */
+    public static boolean REAL;
 
     private static boolean trigger() {
         try {
@@ -38,7 +40,9 @@ public final class BotTest {
     private static void next() { step++; wait = 0; }
     /** A check inside a step that goes on (counted, logged; the step moves on with its own pass or fail). */
     private static boolean check(boolean ok, String s) { if (ok) passed++; else failed++; Bots.log("BOTTEST " + (ok ? "PASS " : "FAIL ") + s); return ok; }
-    private static boolean autoDefault;
+    private static boolean autoDefault, invWas;
+    private static int invLow, invLanded;
+    private static int[] lava;
 
     private static void say(PlayerEntity p, String msg) { ((net.minecraft.client.entity.mob.player.ClientPlayerEntity) p).sendChat(msg); }
 
@@ -425,7 +429,22 @@ public final class BotTest {
                 say(p, "/bot town stop");
                 for (String n : mine) if (!n.equals("Tess")) say(p, "/bot remove " + n);
                 say(p, "Tess follow me");
-                next(); // (she follows again for the pose steps)
+                step = 63; wait = 0; // the player's invulnerability next, then the rest
+                return;
+            }
+            case 63: { // player invulnerability (on by default): a 30-block fall, then lava at the feet; the switch alone keeps the player alive
+                if (wait == 1) { invWas = BotConfig.invulnerable; BotConfig.invulnerable = true; REAL = true; invLow = 20; p.setPosition(p.x, p.y + 30, p.z); return; }
+                invLow = Math.min(invLow, p.health);
+                if (wait == 80) { lava = new int[]{(int) Math.floor(p.x), (int) Math.floor(p.y - p.eyeHeight + 0.01), (int) Math.floor(p.z)}; invLanded = p.health; mc.world.setBlock(lava[0], lava[1], lava[2], 11); return; }
+                if (wait < 180) return; // 5 s in the lava
+                boolean alive = p.health > 0;
+                for (int dx = -3; dx <= 3; dx++) for (int dy = -1; dy <= 2; dy++) for (int dz = -3; dz <= 3; dz++) {
+                    int id = mc.world.getBlock(lava[0] + dx, lava[1] + dy, lava[2] + dz);
+                    if (id == 10 || id == 11) mc.world.setBlock(lava[0] + dx, lava[1] + dy, lava[2] + dz, 0);
+                }
+                REAL = false; BotConfig.invulnerable = invWas;
+                check(alive && invLanded > 0 && invLow > 0, "player invulnerable: fell 30 blocks (health " + invLanded + " on landing), then 5 s in lava (lowest health " + invLow + "), alive " + alive);
+                step = 60; wait = 0;
                 return;
             }
             case 60: say(p, "Tess follow me"); say(p, "/bot list"); next(); return;

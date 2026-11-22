@@ -18,6 +18,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public class BotTestPlayerMixin {
     @Inject(method = "takeDamage", at = @At("HEAD"), cancellable = true)
     private void classicbots$testSafe(Entity source, int amount, CallbackInfoReturnable<Boolean> cir) {
-        if (BotTest.ON && (Object) this instanceof PlayerEntity) cir.setReturnValue(false);
+        // the test keeps the player safe while it runs; invulnerable (on by default) does in play (BotTest.REAL: the switch alone, for its own check)
+        if ((BotTest.ON && !BotTest.REAL || com.mrmcclean.betapt.bots.BotConfig.invulnerable) && (Object) this instanceof PlayerEntity) cir.setReturnValue(false);
     }
 }

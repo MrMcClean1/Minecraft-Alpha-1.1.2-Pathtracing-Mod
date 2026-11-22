@@ -124,7 +124,7 @@ public final class Bots {
      * you have no bots yet, once per world. Not during the bot test (it makes its own).
      */
     public static void autoSpawn(PlayerEntity p, Object world) {
-        if (p == null || world == null || !BotConfig.enabled || BotTest.ON) return;
+        if (p == null || world == null || !BotConfig.enabled || BotTest.ON || otherTest()) return;
         if (BotConfig.autoSpawn > 0 && autoSpawnedIn != world) {
             if (++autoSpawnWait < 100) return; // let the world settle first
             autoSpawnWait = 0;
@@ -136,6 +136,16 @@ public final class Bots {
     }
 
     private static int autoTownWait;
+    private static java.lang.reflect.Method tracerTest;
+
+    /** A test of the game itself (the path tracer's) is running: no bots join or found towns then (they'd walk into its pictures). */
+    static boolean otherTest() {
+        if (TestQuiet.on()) return true;
+        try {
+            if (tracerTest == null) { tracerTest = Class.forName("com.mrmcclean.betapt.test.AlphaTest", false, Bots.class.getClassLoader()).getDeclaredMethod("running"); tracerTest.setAccessible(true); }
+            return (Boolean) tracerTest.invoke(null);
+        } catch (Throwable t) { return false; }
+    }
 
     /**
      * Towns found themselves (towns on, the default): three or more of your bots on their own, none of them in a town
@@ -155,6 +165,19 @@ public final class Bots {
         String s = Town.found(Names.world(p), c.hasHome ? c.homeX : (int) Math.floor(c.x), c.hasHome ? c.homeY : (int) Math.floor(c.shape.minY + 0.01), c.hasHome ? c.homeZ : (int) Math.floor(c.z), free);
         tell(p, s + ". They did it on their own: /bot town stop calls it off.");
         return s;
+    }
+
+    private static double[] safeSpot;
+
+    /**
+     * Player invulnerability (invulnerable=true by default): every hurt is turned away (BotTestPlayerMixin); here, each
+     * client tick, health back to full and out of the void: back up where it last stood.
+     */
+    public static void keepSafe(PlayerEntity p) {
+        if (p == null || !BotConfig.invulnerable) return;
+        if (p.health > 0 && p.health < 20) p.health = 20;
+        if (p.onGround && p.y > 0) safeSpot = new double[]{p.x, p.y, p.z};
+        else if (p.y < -32 && safeSpot != null) { p.setPosition(safeSpot[0], safeSpot[1] + 1, safeSpot[2]); p.velocityY = 0; }
     }
 
     /** Your bots made up to autoSpawn (the bot test checks it); how many it made. */
@@ -202,6 +225,12 @@ public final class Bots {
                 String t = a.length > 1 ? a[1].toLowerCase(Locale.ROOT) : "";
                 if (t.equals("all") || t.equals("replies") || t.equals("off")) { BotConfig.botChat = t; BotConfig.save(); }
                 tell(p, "Bots' chat: " + BotConfig.botChat + (BotConfig.botChat.equals("all") ? " (answers and updates)" : BotConfig.botChat.equals("replies") ? " (only when you speak to them)" : " (silent)") + ". /bot chat all|replies|off");
+                return;
+            }
+            case "invulnerable": { // the player takes no harm: /bot invulnerable on|off (on by default)
+                String t = a.length > 1 ? a[1].toLowerCase(Locale.ROOT) : "";
+                if (t.equals("on") || t.equals("off")) { BotConfig.invulnerable = t.equals("on"); BotConfig.save(); }
+                tell(p, "Player invulnerable: " + (BotConfig.invulnerable ? "on (nothing hurts you)" : "off") + ".");
                 return;
             }
             case "nametags": { // names over the bots: /bot nametags on|off (on by default)
@@ -272,7 +301,7 @@ public final class Bots {
             case "anyone": BotConfig.anyoneCommands = flag(a, BotConfig.anyoneCommands); BotConfig.save(); tell(p, "Anyone may give bots orders: " + BotConfig.anyoneCommands); return;
             case "map": BotConfig.showOnMap = flag(a, BotConfig.showOnMap); BotConfig.save(); tell(p, "Bots on the minimap: " + BotConfig.showOnMap); return;
             default:
-                tell(p, "/bot on|off, spawn [name], list, remove <name>, tp <name>, model [name] [url] | model off|on, grief|chests|anyone|map on|off");
+                tell(p, "/bot on|off, spawn [name], list, remove <name>, tp <name>, model [name] [url] | model off|on, grief|chests|anyone|map on|off, town [on|off|start|stop], doctor [on|off], voice [on|off], next, guide [on|off], nametags [on|off], chat [all|replies|off], invulnerable [on|off]");
                 tell(p, "Talk to a bot by name: \"Ezra follow me\", \"Ezra bring me 16 iron\", \"Ezra set up a base here\",");
                 tell(p, "\"Ezra keep me stocked with 32 coal\", \"Ezra put things away\", \"bots guard\". Right-click a bot to give it what you hold.");
         }

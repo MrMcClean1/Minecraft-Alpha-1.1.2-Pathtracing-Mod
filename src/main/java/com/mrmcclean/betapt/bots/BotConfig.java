@@ -34,6 +34,8 @@ public final class BotConfig {
     public static boolean progressionGuide = true;
     /** Names over the bots (on by default; /bot nametags off). */
     public static boolean nametags = true;
+    /** The player takes no harm of any kind (on by default, for testing; /bot invulnerable off, or the Bots menu). */
+    public static boolean invulnerable = true;
     /** What bots say in chat: all (answers and updates), replies (only when you speak to them), off (nothing). /bot chat. */
     public static String botChat = "all";
     public static boolean towns = true;
@@ -71,6 +73,7 @@ public final class BotConfig {
         autoSpawn = i(p, "autoSpawn", autoSpawn);
         progressionGuide = b(p, "progressionGuide", progressionGuide);
         nametags = b(p, "nametags", nametags);
+        invulnerable = b(p, "invulnerable", invulnerable);
         botChat = p.getProperty("botChat", botChat).trim().toLowerCase(java.util.Locale.ROOT);
         if (!botChat.equals("all") && !botChat.equals("replies") && !botChat.equals("off")) botChat = "all";
         towns = b(p, "towns", towns);
@@ -104,6 +107,7 @@ public final class BotConfig {
         p.setProperty("autoSpawn", "" + autoSpawn);
         p.setProperty("progressionGuide", "" + progressionGuide);
         p.setProperty("nametags", "" + nametags);
+        p.setProperty("invulnerable", "" + invulnerable);
         p.setProperty("botChat", botChat);
         p.setProperty("towns", "" + towns);
         p.setProperty("townDaysPerHouse", "" + townDaysPerHouse);

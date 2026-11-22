@@ -121,6 +121,7 @@ public final class Voice {
 
     /** Plays a WAV (on the calling thread, until it ends). */
     public static void play(File wav, float volume) {
+        if (BotTest.ON || TestQuiet.on()) return; // never a sound while a test runs (a Clip goes past the game's own volume)
         try (AudioInputStream in = AudioSystem.getAudioInputStream(wav)) {
             Clip c = AudioSystem.getClip();
             c.open(in);
