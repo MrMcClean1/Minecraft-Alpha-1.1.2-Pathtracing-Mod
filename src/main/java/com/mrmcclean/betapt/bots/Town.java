@@ -50,18 +50,23 @@ public final class Town {
 
     /** Founds a town at the player's feet with these bots. */
     static String found(PlayerEntity p, List<BotEntity> bots) {
-        int x = (int) Math.floor(p.x), z = (int) Math.floor(p.z), y = (int) Math.floor(p.y - p.eyeHeight + 0.01);
+        return found(Names.world(p), (int) Math.floor(p.x), (int) Math.floor(p.y - p.eyeHeight + 0.01), (int) Math.floor(p.z), bots);
+    }
+
+    /** Founds a town at x y z with these bots (their own, when three or more are on their own: Bots.autoTown). */
+    static String found(World w, int x, int y, int z, List<BotEntity> bots) {
         Job[] order = Job.values();
         int i = 0;
         StringBuilder s = new StringBuilder("Town founded at " + x + " " + y + " " + z + ":");
         ALL.remove(x + "," + y + "," + z);
-        Data d = data(x, y, z, day(Names.world(p)));
+        Data d = data(x, y, z, day(w));
         for (BotEntity b : bots) {
             Member m = new Member(d, order[i++ % order.length]);
             b.brain.town = m;
             b.hasHome = true; b.homeX = x; b.homeY = y; b.homeZ = z;
-            b.brain.mode = Brain.Mode.HOME;
-            b.brain.job = Brain.Job.NONE; b.brain.plan = null;
+            if (b.brain.mode != Brain.Mode.AUTO) b.brain.mode = Brain.Mode.HOME;
+            b.brain.townLeft = false;
+            b.brain.job = Brain.Job.NONE; b.brain.after = Brain.Job.NONE; b.brain.plan = null; // nothing left over from its own work
             s.append(' ').append(b.botName()).append(" the ").append(m.job.name().toLowerCase(Locale.ROOT));
         }
         return s.toString();

@@ -24,11 +24,13 @@ import java.util.*;
  * "keep me stocked with 32 coal" keeps 32 coal in the home chest.
  */
 public class Brain {
-    public enum Mode { FOLLOW, STAY, GUARD, HOME }
+    public enum Mode { FOLLOW, STAY, GUARD, HOME, AUTO } // AUTO: on its own (the default): its own home, the guide, routines, a town
     public enum Job { NONE, GATHER, HUNT, DELIVER, DEPOSIT, GO_HOME, COME, EXPLORE, RECOVER, BUILD, FARM }
 
     final BotEntity b;
-    public Mode mode = Mode.FOLLOW;
+    public Mode mode = Mode.AUTO;
+    /** Called off a town (/bot town stop): no town is founded for it by itself again. */
+    boolean townLeft;
     public Job job = Job.NONE;
     Want want;
     int wantCount, jobTicks, idle, eatCooldown, attackCooldown, choreTimer = 600, thinkTimer;
@@ -104,6 +106,9 @@ public class Brain {
                 break;
             case HOME:
                 goHomeQuietly();
+                break;
+            case AUTO: // on its own: a home where it first stands, then the guide and routines (above) from there
+                if (!b.hasHome && b.onGround && b.ticks > 100) setHome(null); else goHomeQuietly();
                 break;
         }
     }
@@ -233,6 +238,7 @@ public class Brain {
         after = Job.NONE; // a new order: nothing left over from its own guide work (that would send its haul home, not to you)
         String who = from != null ? from.name : b.owner;
         switch (o.kind) {
+            case AUTO: mode = Mode.AUTO; job = Job.NONE; ack(who, text, "Right, I'll get on with things myself. Call me when you need me."); return true;
             case FOLLOW: mode = Mode.FOLLOW; job = Job.NONE; ack(who, text, "Right behind you."); return true;
             case STAY: mode = Mode.STAY; job = Job.NONE; b.stopMoving(); ack(who, text, "I'll wait here."); return true;
             case COME:
@@ -335,7 +341,7 @@ public class Brain {
     private void setHome(PlayerEntity from) {
         b.hasHome = true;
         b.homeX = MathHelper.floor(b.x); b.homeY = MathHelper.floor(b.shape.minY); b.homeZ = MathHelper.floor(b.z);
-        mode = Mode.HOME;
+        if (mode != Mode.AUTO) mode = Mode.HOME; // a bot on its own keeps house as part of that
         int[] c = findNear(new int[]{54}, b.homeX, b.homeY, b.homeZ, 6, false);
         if (c == null) {
             if (b.count(54) == 0 && b.count(5) < 8 && b.count(17) >= 2) craft(5, 4, new int[]{17, 1});
@@ -1027,7 +1033,7 @@ public class Brain {
             case COME: s = "coming over"; break;
             case BUILD: s = plan == null ? "building" : "building a " + plan.name + " (" + planIndex * 100 / Math.max(1, plan.blocks.size()) + "% done)"; break;
             case FARM: s = "tending the farm"; break;
-            default: s = mode == Mode.FOLLOW ? "following you" : mode == Mode.STAY ? "waiting here" : mode == Mode.GUARD ? "on guard" : "keeping house";
+            default: s = mode == Mode.FOLLOW ? "following you" : mode == Mode.STAY ? "waiting here" : mode == Mode.GUARD ? "on guard" : mode == Mode.AUTO ? "getting on with things myself" : "keeping house";
         }
         return "I'm " + s + ", health " + b.health + "/20" + (chores.isEmpty() ? "" : ", " + chores.size() + " chore" + (chores.size() > 1 ? "s" : "")) + ".";
     }
@@ -1388,12 +1394,15 @@ public class Brain {
         StringBuilder gd = new StringBuilder(); for (int i : guideDone) gd.append(gd.length() == 0 ? "" : ",").append(i);
         n.putString("GuideDone", gd.toString());
         n.putInt("RoutineHouses", routineHouses);
+        n.putBoolean("AutoV1", true); n.putBoolean("TownLeft", townLeft);
         StringBuilder rm = new StringBuilder(); for (int i : routineMade) rm.append(rm.length() == 0 ? "" : ",").append(i);
         n.putString("RoutineMade", rm.toString());
     }
 
     void read(NbtCompound n) {
-        try { mode = Mode.valueOf(n.getString("Mode")); } catch (Exception e) { mode = Mode.FOLLOW; }
+        try { mode = Mode.valueOf(n.getString("Mode")); } catch (Exception e) { mode = Mode.AUTO; }
+        if (!n.getBoolean("AutoV1") && mode == Mode.FOLLOW) mode = Mode.AUTO; // saved before bots worked on their own: they do now
+        townLeft = n.getBoolean("TownLeft");
         chores.clear();
         NbtList l = n.getList("Chores");
         for (int i = 0; l != null && i < l.size(); i++) { NbtCompound t = (NbtCompound) l.get(i); chores.add(new Chore(t.getString("What"), t.getInt("Count"))); }

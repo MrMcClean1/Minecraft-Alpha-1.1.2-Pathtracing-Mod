@@ -175,7 +175,7 @@ public final class Guide {
         BotEntity b = br.b;
         if (br.guideRest > 0) { br.guideRest--; return false; }
         PlayerEntity o = Bots.player(Names.world(b), b.owner);
-        boolean free = br.mode == Brain.Mode.HOME || o == null || b.distanceTo(o) > 48;
+        boolean free = br.mode == Brain.Mode.HOME || br.mode == Brain.Mode.AUTO || o == null || b.distanceTo(o) > 48;
         if (!free) return false;
         List<Step> st = steps();
         for (int i = 0; i < st.size(); i++) {

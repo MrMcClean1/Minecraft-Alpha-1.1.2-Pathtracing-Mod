@@ -36,6 +36,9 @@ public final class BotTest {
     private static void pass(String s) { passed++; Bots.log("BOTTEST PASS " + s); next(); }
     private static void fail(String s) { failed++; Bots.log("BOTTEST FAIL " + s); next(); }
     private static void next() { step++; wait = 0; }
+    /** A check inside a step that goes on (counted, logged; the step moves on with its own pass or fail). */
+    private static boolean check(boolean ok, String s) { if (ok) passed++; else failed++; Bots.log("BOTTEST " + (ok ? "PASS " : "FAIL ") + s); return ok; }
+    private static boolean autoDefault;
 
     private static void say(PlayerEntity p, String msg) { ((net.minecraft.client.entity.mob.player.ClientPlayerEntity) p).sendChat(msg); }
 
@@ -76,7 +79,7 @@ public final class BotTest {
             case 1: if (wait > 100) { mc.world.setTime(1000); say(p, "/bot on"); say(p, "/bot spawn Tess"); next(); } return;
             case 2:
                 for (BotEntity b : Bots.bots(mc.world)) if (b.botName().equals("Tess")) bot = b;
-                if (bot != null && bot.owner.equals(p.name) && bot.distanceTo(p) < 5) { pass("spawn: Tess is next to " + p.name); if (ONLY_TOWN) step = 32; if (ONLY_DOCTOR) step = 42; if (ONLY_NAV) step = 45; if (ONLY_VOICE) step = 48; if (ONLY_GUIDE) step = 50; if (ONLY_TAGS) step = 55; }
+                if (bot != null && bot.owner.equals(p.name) && bot.distanceTo(p) < 5) { autoDefault = bot.brain.mode == Brain.Mode.AUTO; bot.brain.mode = Brain.Mode.FOLLOW; bot.brain.job = Brain.Job.NONE; bot.brain.after = Brain.Job.NONE; bot.brain.want = null; pass("spawn: Tess is next to " + p.name + (autoDefault ? ", on her own by default" : ", NOT on her own by default")); if (ONLY_TOWN) step = 32; if (ONLY_DOCTOR) step = 42; if (ONLY_NAV) step = 45; if (ONLY_VOICE) step = 48; if (ONLY_GUIDE) step = 50; if (ONLY_TAGS) step = 55; }
                 else if (wait > 40) fail("spawn: no bot (" + Bots.bots(mc.world).size() + " bots)");
                 return;
             case 3: {
@@ -322,6 +325,7 @@ public final class BotTest {
             }
             case 50: { // the progression guide (on by default): "what next?", "help me with that", and the bot's "Nice" once the step is done
                 guideWas = BotConfig.progressionGuide; BotConfig.progressionGuide = true;
+                Guide.done.remove(p.name); // a fresh start each run: the guide file keeps a player's steps
                 bot.brain.mode = Brain.Mode.FOLLOW; bot.brain.job = Brain.Job.NONE;
                 bot.brain.lastReport = "";
                 say(p, "Tess what next?");
@@ -401,13 +405,27 @@ public final class BotTest {
                 else fail("bot chat: update said " + updateLeaked + ", answered with replies " + answered + ", silent with off " + silent);
                 return;
             }
-            case 59: { // bots join you by themselves (autoSpawn, 3 as in Tekkit): your bots made up to 3, then the extras sent off
-                Bots.spawnUpTo(p);
+            case 59: { // bots join you by themselves (autoSpawn, 3 as in Tekkit) and get on with things on their own: homes, the guide, a town
+                if (wait == 1) { Bots.spawnUpTo(p); say(p, "Tess do your own thing"); return; }
+                if (wait < 140) return; // a few seconds: each new one picks a home and starts on something
                 List<String> mine = new ArrayList<>();
-                for (BotEntity x : Bots.bots(mc.world)) if (x.owner.equals(p.name)) mine.add(x.botName());
+                List<BotEntity> fresh = new ArrayList<>();
+                for (BotEntity x : Bots.bots(mc.world)) if (x.owner.equals(p.name)) { mine.add(x.botName()); if (!x.botName().equals("Tess")) fresh.add(x); }
                 boolean ok = mine.size() >= Math.min(BotConfig.autoSpawn, BotConfig.maxBotsPerPlayer);
+                check(ok, "auto spawn: " + mine.size() + " bots of yours (" + String.join(", ", mine) + "), autoSpawn " + BotConfig.autoSpawn);
+                StringBuilder what = new StringBuilder();
+                boolean own = autoDefault && !fresh.isEmpty();
+                for (BotEntity x : fresh) { own &= x.brain.mode == Brain.Mode.AUTO && (x.hasHome || x.brain.job != Brain.Job.NONE); what.append(x.botName()).append(": ").append(x.brain.statusLine()).append(x.hasHome ? " (home set)" : "").append("; "); }
+                check(own, "on their own from the start (no orders): " + what);
+                check(bot.brain.mode == Brain.Mode.AUTO, "\"do your own thing\" sends a bot back to its own work: " + bot.brain.statusLine());
+                for (BotEntity x : Bots.bots(mc.world)) x.brain.townLeft = false; // the town steps called Tess off one earlier
+                String town = Bots.autoTown(p);
+                int in = 0; for (BotEntity x : Bots.bots(mc.world)) if (x.owner.equals(p.name) && x.brain.town != null) in++;
+                check(town != null && in >= 3, "a town founds itself with " + in + " bots on their own: " + town);
+                say(p, "/bot town stop");
                 for (String n : mine) if (!n.equals("Tess")) say(p, "/bot remove " + n);
-                if (ok) pass("auto spawn: " + mine.size() + " bots of yours (" + String.join(", ", mine) + "), autoSpawn " + BotConfig.autoSpawn); else fail("auto spawn: only " + mine);
+                say(p, "Tess follow me");
+                next(); // (she follows again for the pose steps)
                 return;
             }
             case 60: say(p, "Tess follow me"); say(p, "/bot list"); next(); return;

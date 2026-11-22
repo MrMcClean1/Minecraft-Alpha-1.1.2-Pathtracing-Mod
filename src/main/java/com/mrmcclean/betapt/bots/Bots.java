@@ -124,11 +124,37 @@ public final class Bots {
      * you have no bots yet, once per world. Not during the bot test (it makes its own).
      */
     public static void autoSpawn(PlayerEntity p, Object world) {
-        if (p == null || world == null || !BotConfig.enabled || BotConfig.autoSpawn <= 0 || BotTest.ON || autoSpawnedIn == world) return;
-        if (++autoSpawnWait < 100) return; // let the world settle first
-        autoSpawnWait = 0;
-        autoSpawnedIn = world;
-        spawnUpTo(p);
+        if (p == null || world == null || !BotConfig.enabled || BotTest.ON) return;
+        if (BotConfig.autoSpawn > 0 && autoSpawnedIn != world) {
+            if (++autoSpawnWait < 100) return; // let the world settle first
+            autoSpawnWait = 0;
+            autoSpawnedIn = world;
+            spawnUpTo(p);
+            return;
+        }
+        if (++autoTownWait >= 600) { autoTownWait = 0; autoTown(p); } // every half a minute
+    }
+
+    private static int autoTownWait;
+
+    /**
+     * Towns found themselves (towns on, the default): three or more of your bots on their own, none of them in a town
+     * or called off one (/bot town stop), found one where the first of them stands. What it said, or null.
+     */
+    static String autoTown(PlayerEntity p) {
+        if (!BotConfig.towns || p == null) return null;
+        List<BotEntity> free = new ArrayList<>();
+        for (BotEntity b : bots(Names.world(p))) {
+            if (!b.owner.equals(p.name)) continue;
+            if (b.brain.town != null || b.brain.townLeft) return null;
+            if (b.brain.mode == Brain.Mode.AUTO) free.add(b);
+        }
+        if (free.size() < 3) return null;
+        BotEntity c = free.get(0);
+        for (BotEntity b : free) if (b.hasHome) { c = b; break; } // centred on a home one of them has, or where the first stands
+        String s = Town.found(Names.world(p), c.hasHome ? c.homeX : (int) Math.floor(c.x), c.hasHome ? c.homeY : (int) Math.floor(c.shape.minY + 0.01), c.hasHome ? c.homeZ : (int) Math.floor(c.z), free);
+        tell(p, s + ". They did it on their own: /bot town stop calls it off.");
+        return s;
     }
 
     /** Your bots made up to autoSpawn (the bot test checks it); how many it made. */
@@ -165,7 +191,7 @@ public final class Bots {
                 b.setPositionAndAngles(p.x - Math.sin(ang) * 2, p.y - p.eyeHeight + 0.1, p.z + Math.cos(ang) * 2, p.yaw + 180, 0);
                 if (w.isMultiplayer) { tell(p, "Bots run on the server; this server doesn't have them."); return; }
                 w.addEntity(b);
-                b.brain.say("Hi " + p.name + "! Tell me what to do, like \"" + name + " follow me\" or \"" + name + " bring me 16 wood\".");
+                b.brain.say("Hi " + p.name + "! I'll get on with things myself. Tell me what to do any time, like \"" + name + " follow me\" or \"" + name + " bring me 16 wood\", and \"" + name + " do your own thing\" sends me back to it.");
                 return;
             }
             case "next": { // the progression guide's next step for you
@@ -209,7 +235,7 @@ public final class Bots {
                 List<BotEntity> mine = new ArrayList<>();
                 for (BotEntity b : bots(w)) if (p != null && (b.owner.equals(p.name) || BotConfig.anyoneCommands)) mine.add(b);
                 if (t.equals("start") && p != null) { if (mine.isEmpty()) tell(p, "No bots of yours here."); else tell(p, Town.found(p, mine)); return; }
-                if (t.equals("stop")) { for (BotEntity b : mine) Town.leave(b); tell(p, "The bots stop working on the town (its buildings stay)."); return; }
+                if (t.equals("stop")) { for (BotEntity b : mine) { Town.leave(b); b.brain.townLeft = true; } tell(p, "The bots stop working on the town (its buildings stay)."); return; }
                 tell(p, Town.status(w, bots(w)));
                 return;
             }
