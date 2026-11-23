@@ -37,7 +37,7 @@ public final class BotConfig {
     /** The player takes no harm of any kind (off by default; for testing: /bot invulnerable on, or the Bots menu). */
     public static boolean invulnerable = false;
     /** What bots say in chat: all (answers and updates), replies (only when you speak to them), off (nothing). /bot chat. */
-    public static String botChat = "all";
+    public static String botChat = "replies"; // quiet unless spoken to (or working on your order); all: updates and small talk too
     public static boolean towns = true;
     public static int townDaysPerHouse = 1;
     /** Optional: "why isn't my furnace working?" answered by the bot (/bot doctor on). */
@@ -75,7 +75,7 @@ public final class BotConfig {
         nametags = b(p, "nametags", nametags);
         invulnerable = b(p, "invulnerable", invulnerable);
         botChat = p.getProperty("botChat", botChat).trim().toLowerCase(java.util.Locale.ROOT);
-        if (!botChat.equals("all") && !botChat.equals("replies") && !botChat.equals("off")) botChat = "all";
+        if (!botChat.equals("all") && !botChat.equals("replies") && !botChat.equals("off")) botChat = "replies";
         towns = b(p, "towns", towns);
         townDaysPerHouse = i(p, "townDaysPerHouse", townDaysPerHouse);
         machineDoctor = b(p, "machineDoctor", machineDoctor);

@@ -50,6 +50,9 @@ public class Brain {
     final Set<Integer> routineMade = new HashSet<>();
     /** Until when what it says counts as a reply (you spoke to it): botChat=replies lets only those through. Lines said in chat. */
     int replyUntil, spoken;
+    /** Working on something you asked for: what it says about it (done, can't find any) counts as a reply too. */
+    boolean ordered;
+    private int orderTick = -1;
     // building: the plan, where it goes (front-left corner, facing) and how far along it is
     Blueprint plan;
     int planX, planY, planZ, planF, planIndex, planShort, outTicks;
@@ -72,6 +75,7 @@ public class Brain {
     // ------------------------------------------------------------------ the loop
 
     void tick() {
+        if (ordered && job == Job.NONE && b.ticks > replyUntil) ordered = false; // the order is done: quiet again
         if (attackCooldown > 0) attackCooldown--;
         if (eatCooldown > 0) eatCooldown--;
         b.pickUp();
@@ -235,6 +239,7 @@ public class Brain {
     /** A player told this bot something. Returns true if it was an order it understood. */
     public boolean order(PlayerEntity from, Orders.Order o, String text) {
         replyUntil = b.ticks + 20 * 30; // what it says next is a reply (30 s: a model-worded answer can take 20)
+        orderTick = b.ticks; // a job it starts now is this order: what it says about it is a reply, however long it takes
         after = Job.NONE; // a new order: nothing left over from its own guide work (that would send its haul home, not to you)
         String who = from != null ? from.name : b.owner;
         switch (o.kind) {
@@ -334,9 +339,9 @@ public class Brain {
         }
     }
 
-    void startJob(Job j) { job = j; jobTicks = 0; target = null; digProgress = 0; skip.clear(); looks = 0; if (j == Job.FARM) farmSkip.clear(); }
+    void startJob(Job j) { ordered = b.ticks == orderTick || ordered && job != Job.NONE; job = j; jobTicks = 0; target = null; digProgress = 0; skip.clear(); looks = 0; if (j == Job.FARM) farmSkip.clear(); }
 
-    private void endJob(String report) { job = Job.NONE; target = null; after = Job.NONE; b.stopMoving(); if (report != null) say(report); }
+    private void endJob(String report) { job = Job.NONE; target = null; after = Job.NONE; b.stopMoving(); if (report != null) say(report); ordered = false; }
 
     private void setHome(PlayerEntity from) {
         b.hasHome = true;
@@ -977,8 +982,8 @@ public class Brain {
     public void say(String text) {
         if (text == null || text.isEmpty()) return;
         lastReport = text;
-        // botChat: all (default), replies (only within 30 s of you speaking to it), off
-        if (BotConfig.botChat.equals("off") || BotConfig.botChat.equals("replies") && b.ticks > replyUntil) { Bots.log("(quiet) <" + b.botName() + "> " + text); return; }
+        // botChat: replies (the default: only within 30 s of you speaking to it, or about an order of yours), all, off
+        if (BotConfig.botChat.equals("off") || BotConfig.botChat.equals("replies") && b.ticks > replyUntil && !ordered) { Bots.log("(quiet) <" + b.botName() + "> " + text); return; }
         spoken++;
         Bots.broadcast(Names.world(b), "<" + b.botName() + "> " + text);
     }

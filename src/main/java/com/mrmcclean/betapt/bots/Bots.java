@@ -90,7 +90,11 @@ public final class Bots {
     // ------------------------------------------------------------------ chat in
 
     /** A player said something. True if it was a /bot command (and shouldn't go further). */
+    /** The last line a player typed, whole (the bot test checks a long one arrives in one piece). */
+    public static String lastTyped = "";
+
     public static boolean chat(PlayerEntity p, String msg) {
+        if (msg != null) lastTyped = msg;
         init();
         String m = msg.trim();
         if (m.toLowerCase(Locale.ROOT).startsWith("/bot")) { command(p, m.substring(4).trim()); return true; }

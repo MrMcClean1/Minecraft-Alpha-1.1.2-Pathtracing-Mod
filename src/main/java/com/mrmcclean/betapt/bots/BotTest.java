@@ -41,6 +41,11 @@ public final class BotTest {
     /** A check inside a step that goes on (counted, logged; the step moves on with its own pass or fail). */
     private static boolean check(boolean ok, String s) { if (ok) passed++; else failed++; Bots.log("BOTTEST " + (ok ? "PASS " : "FAIL ") + s); return ok; }
     private static boolean autoDefault, invWas;
+    private static List<String> quietNames = new ArrayList<>();
+    private static int quietBase, quietSaid, quietAsk, typedLinesSeen, replyPieces;
+    private static String typedHeld = "";
+    private static final String LONG = "Tess what are you doing right now? This is a long line to check that the chat box wraps onto more lines instead of running off the edge of the screen, and that it arrives whole.";
+    private static final String LONG_REPLY = "This is a long reply from a bot, long enough that it has to wrap onto a second and third line on the screen instead of running off the right edge where nobody could read it.";
     private static int invLow, invLanded;
     private static int[] lava;
 
@@ -391,7 +396,7 @@ public final class BotTest {
             }
             case 57: { // bot chat levels: replies lets an answer through but not an update; off lets nothing through
                 chatWas = BotConfig.botChat; BotConfig.botChat = "replies";
-                bot.brain.replyUntil = 0;
+                bot.brain.replyUntil = 0; bot.brain.ordered = false; // not spoken to, and not on an order of yours either
                 spokenBefore = bot.brain.spoken;
                 bot.brain.say("Just an update on what I'm doing.");
                 updateLeaked = bot.brain.spoken != spokenBefore;
@@ -426,14 +431,61 @@ public final class BotTest {
                 String town = Bots.autoTown(p);
                 int in = 0; for (BotEntity x : Bots.bots(mc.world)) if (x.owner.equals(p.name) && x.brain.town != null) in++;
                 check(town != null && in >= 3, "a town founds itself with " + in + " bots on their own: " + town);
+                quietNames = new ArrayList<>(mine);
+                step = 65; wait = 0; // quiet by default next, then long chat, then the player's invulnerability (off, then on), then the rest
+                return;
+            }
+            case 65: { // quiet by default (botChat=replies): the bots at work say nothing for a minute, then answer when asked
+                BotEntity asked = null;
+                int all = 0;
+                for (BotEntity x : Bots.bots(mc.world)) if (x.owner.equals(p.name)) { all += x.brain.spoken; if (asked == null && !x.botName().equals("Tess")) asked = x; }
+                if (wait == 20 * 31) { quietBase = all; return; } // from when Tess's 30 s reply window is over
+                if (wait < 20 * 91) return;
+                if (asked == null) { check(false, "quiet by default: no bot of yours at work"); step = 66; wait = 0; return; }
+                if (wait == 20 * 91) { quietSaid = all - quietBase; quietAsk = asked.brain.spoken; say(p, asked.botName() + " what are you doing"); return; }
+                if (asked.brain.spoken == quietAsk && wait < 20 * 91 + 20 * 25) return; // a model-worded answer can take 20 s
+                check("replies".equals(BotConfig.botChat) && quietSaid == 0, "quiet by default (botChat " + BotConfig.botChat + "): the bots said " + quietSaid + " lines in a minute of work, nothing asked");
+                check(asked.brain.spoken > quietAsk, "...and " + asked.botName() + " answers when asked: \"" + asked.brain.lastReport + "\"");
                 say(p, "/bot town stop");
-                for (String n : mine) if (!n.equals("Tess")) say(p, "/bot remove " + n);
+                for (String n : quietNames) if (!n.equals("Tess")) say(p, "/bot remove " + n);
                 say(p, "Tess follow me");
-                step = 63; wait = 0; // the player's invulnerability next, then the rest
+                step = 66; wait = 0;
+                return;
+            }
+            case 66: { // long chat: a long typed line wraps in the chat box and is sent whole; a long bot reply wraps on screen (chat-wrap.png)
+                if (wait == 1) { mc.openScreen(new net.minecraft.client.gui.screen.game.ChatScreen()); return; }
+                if (wait == 3) {
+                    if (!(mc.screen instanceof ChatWrap.Keys)) { check(false, "long chat: the chat box didn't open (" + mc.screen + ")"); step = 64; wait = 0; return; }
+                    ChatWrap.Keys k = (ChatWrap.Keys) mc.screen;
+                    for (char c : LONG.toCharArray()) k.classicbots$type(c, 0);
+                    typedHeld = k.classicbots$text();
+                    ChatWrap.pieces = 0;
+                    bot.brain.replyUntil = bot.ticks + 200;
+                    bot.brain.say(LONG_REPLY);
+                    return;
+                }
+                if (wait == 6) { ChatWrap.grabTo = net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("classicbots-test").resolve("chat-wrap.png").toFile(); return; }
+                if (wait == 10) {
+                    typedLinesSeen = ChatWrap.typedLines; replyPieces = ChatWrap.pieces;
+                    if (mc.screen instanceof ChatWrap.Keys) ((ChatWrap.Keys) mc.screen).classicbots$type('\r', org.lwjgl.input.Keyboard.KEY_RETURN);
+                    return;
+                }
+                if (wait < 16) return;
+                check(LONG.equals(typedHeld) && typedLinesSeen >= 2 && LONG.equals(Bots.lastTyped), "a long typed line (" + LONG.length() + " characters) wraps in the chat box (" + typedLinesSeen + " lines) and is sent whole (" + LONG.equals(Bots.lastTyped) + ")");
+                check(replyPieces >= 2, "a long bot reply wraps on screen: " + replyPieces + " lines (picture chat-wrap.png: " + net.fabricmc.loader.api.FabricLoader.getInstance().getGameDir().resolve("classicbots-test").resolve("chat-wrap.png").toFile().isFile() + ")");
+                step = 64; wait = 0;
+                return;
+            }
+            case 64: { // normal play (invulnerable off, the default): a hit hurts
+                if (wait == 1) { invWas = BotConfig.invulnerable; BotConfig.invulnerable = false; REAL = true; p.health = 20; p.takeDamage(null, 4); return; }
+                if (wait < 5) return;
+                int h = p.health; p.health = 20;
+                check(!invWas && h < 20, "invulnerable off by default (" + !invWas + "): a hit (4) hurts in normal play (health " + h + " of 20)");
+                step = 63; wait = 0;
                 return;
             }
             case 63: { // player invulnerability (off by default): a 30-block fall, then lava at the feet; the switch alone keeps the player alive
-                if (wait == 1) { invWas = BotConfig.invulnerable; BotConfig.invulnerable = true; REAL = true; invLow = 20; p.setPosition(p.x, p.y + 30, p.z); return; }
+                if (wait == 1) { BotConfig.invulnerable = true; REAL = true; invLow = 20; p.setPosition(p.x, p.y + 30, p.z); return; }
                 invLow = Math.min(invLow, p.health);
                 if (wait == 80) { lava = new int[]{(int) Math.floor(p.x), (int) Math.floor(p.y - p.eyeHeight + 0.01), (int) Math.floor(p.z)}; invLanded = p.health; mc.world.setBlock(lava[0], lava[1], lava[2], 11); return; }
                 if (wait < 180) return; // 5 s in the lava
