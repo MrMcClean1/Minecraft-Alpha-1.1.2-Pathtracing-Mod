@@ -177,7 +177,8 @@ public class Brain {
                 MobEntity e = (MobEntity) o;
                 if (!(e instanceof Monster) || e.removed || e.health <= 0) continue;
                 double d = b.squaredDistanceTo(e);
-                if (d < best && b.see(e)) { best = d; enemy = e; enemyTicks = 0; }
+                // one it can see; on guard, any in its area (behind a block, down a dip: a guard goes and looks); and any right beside it
+                if (d < best && (b.see(e) || mode == Mode.GUARD || d < 4 * 4)) { best = d; enemy = e; enemyTicks = 0; }
             }
             // anything going for the owner
             if (enemy == null && owner != null && b.distanceTo(owner) < 16)
