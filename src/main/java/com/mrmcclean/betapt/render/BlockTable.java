@@ -405,6 +405,13 @@ public final class BlockTable {
 
     /** Blocks whose look comes from a block entity renderer (traced through EntityCapture, not the block table). */
     public static final java.util.Set<Integer> BER_IDS = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    /**
+     * Signs (standing 63, on a wall 68): only their renderer draws them, board and post from the sign model, then the
+     * text with the font. Their boxes are recorded and traced like an engine's; Alpha's own drawing of them still runs
+     * for the text (its board is a model box, which the real pass leaves to the tracer: EntityCapture.suppressModels).
+     */
+    public static final java.util.Set<Integer> SIGN_IDS = new java.util.HashSet<>(java.util.Arrays.asList(63, 68));
+    static { BER_IDS.addAll(SIGN_IDS); }
 
     private static boolean rendererDrawn(SingleBlockView view) {
         try {

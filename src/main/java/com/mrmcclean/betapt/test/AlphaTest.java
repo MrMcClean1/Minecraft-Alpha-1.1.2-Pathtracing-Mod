@@ -128,15 +128,30 @@ public final class AlphaTest {
             case 2 -> {
                 // the Vulkan tracer gets changed chunks a few a frame: wait (up to 10 s) until it has them all
                 if (pt.vkActive && com.mrmcclean.betapt.render.VkBridge.chunksSent > 0 && frames - settleFrom < 1200) { wait = 10; return; }
-                traced = grab(mc); pt.enabled = false; stage = 3; wait = 4;
+                // the tracer takes changed chunks in a few a frame: wait (up to 10 s) until the ones around the camera are in,
+                // then let the picture settle (the south view, the first, came out with the platform's old ground)
+                if (com.mrmcclean.betapt.render.VoxelWorld.pendingNear((int) Math.floor(mc.player.x) >> 4, (int) Math.floor(mc.player.z) >> 4, 3) > 0
+                        && frames - settleFrom < 600) { wait = 5; traceWaited = true; return; }
+                if (traceWaited) { traceWaited = false; wait = settle(); return; }
+                traced = grab(mc); pt.enabled = false; stage = 3; wait = 4; ownFrom = frames;
             }
             case 3 -> {
+                // Alpha's own picture: its renderer builds chunks a few a frame and builds none while the path tracer runs,
+                // so wait (up to 10 s) until it has none left to build, then a few frames to draw them
+                java.util.List<?> dirty = ((com.mrmcclean.betapt.mixin.WorldRendererAccessor) mc.worldRenderer).betapt$getDirtyChunks();
+                if (dirty != null && !dirty.isEmpty() && frames - ownFrom < 600) { wait = 5; ownSettled = false; return; }
+                if (!ownSettled) { ownSettled = true; wait = 10; return; }
+                ownSettled = false;
                 compare(mc, traced, grab(mc));
                 pt.enabled = true;
                 view++;
                 status = "Alpha test: view " + view + " of " + VIEWS.length;
                 if (view < VIEWS.length) { stage = 2; wait = settle(); settleFrom = frames; }
-                else { stage = 4; startScreenshot(mc); wait = 40; }
+                else {
+                    int signs = com.mrmcclean.betapt.render.EntityCapture.lastSignsTraced;
+                    check(signs >= 2, "signs traced, board and post (2 on the platform, " + signs + " recorded in the last traced frame)");
+                    stage = 4; startScreenshot(mc); wait = 40;
+                }
             }
             case 4 -> { finishScreenshot(); rtx = 0; rtxStart(); stage = 6; }
             case 6 -> { // NVIDIA RTX on the Vulkan tracer: DLSS, then with Ray Reconstruction, then with Frame Generation
@@ -150,11 +165,13 @@ public final class AlphaTest {
                 else {
                     pt.rayReconstruction = false; pt.frameGeneration = false; pt.upscaler = PathTracer.UPSCALER_FSR; pt.renderScale = 1f;
                     com.mrmcclean.betapt.render.VkBridge.reopen();
-                    PhotoCheck.start(mc); // photo mode: stills added up from many samples
-                    status = "Alpha test: photo mode";
-                    stage = 7;
+                    // the Vulkan tracer restarts with these settings and gets the chunks again: let it, before any still
+                    // (stills taken during the restart differed by chance: the noise and depth of field checks flaked)
+                    status = "Alpha test: tracer restarting for photo mode";
+                    stage = 9; wait = 480;
                 }
             }
+            case 9 -> { PhotoCheck.start(mc); status = "Alpha test: photo mode"; stage = 7; } // photo mode: stills added up from many samples
             case 7 -> { if (PhotoCheck.frame(mc)) { TimeLapseCheck.start(mc); status = "Alpha test: time-lapse"; stage = 8; } }
             case 8 -> { if (TimeLapseCheck.frame(mc)) stage = 5; }
             case 5 -> finish(mc);
@@ -162,7 +179,8 @@ public final class AlphaTest {
     }
 
     static final String[] RTX_NAMES = {"DLSS", "DLSS + Ray Reconstruction", "DLSS + Frame Generation"};
-    private static int rtx, settleFrom;
+    private static int rtx, settleFrom, ownFrom;
+    private static boolean ownSettled, traceWaited;
     private static void rtxStart() {
         PathTracer pt = PathTracer.INSTANCE;
         pt.enabled = true; pt.hardwareRt = true;

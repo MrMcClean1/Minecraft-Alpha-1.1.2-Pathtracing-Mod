@@ -96,6 +96,14 @@ public final class VoxelWorld {
     private static final Set<Long> DIRTY_AT = Collections.synchronizedSet(new java.util.HashSet<>());
     private static long key(int cx, int cz) { return (long) cx << 32 | (cz & 0xFFFFFFFFL); }
 
+    /** Changed chunks within r chunks of chunk (pcx, pcz) not yet sent to the tracer (the tests wait for none). */
+    public static int pendingNear(int pcx, int pcz, int r) {
+        int n = 0;
+        synchronized (DIRTY) { for (WorldChunk c : DIRTY) if (Math.abs(c.chunkX - pcx) <= r && Math.abs(c.chunkZ - pcz) <= r) n++; }
+        synchronized (DIRTY_AT) { for (long k : DIRTY_AT) if (Math.abs((int) (k >> 32) - pcx) <= r && Math.abs((int) k - pcz) <= r) n++; }
+        return n;
+    }
+
     /** One whole chunk by position (StationAPI's chunk-section packets). */
     public static void markDirtyChunk(int cx, int cz) { if (DEBUG_DIRTY) DIRTY_COUNTS[1]++; DIRTY_AT.add(key(cx, cz)); }
 

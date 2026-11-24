@@ -138,7 +138,7 @@ public final class BlockCapture {
         int quads = count / 4;
         if (quads == 0) return null;
         int[] tile = {-1, -1, -1, -1, -1, -1}, orient = new int[6];
-        float[] best = new float[6];
+        float[] best = new float[6], bestOut = {-9, -9, -9, -9, -9, -9};
         // axis-aligned quads by axis and direction: plane position and rectangle on the other two axes
         List<float[]> faces = new ArrayList<>(); // {axis, dir(+1/-1), plane, a0, b0, a1, b1}
         for (int q = 0; q < quads; q++) {
@@ -166,7 +166,12 @@ public final class BlockCapture {
             float area = (hi0 - lo0) * (hi1 - lo1);
             int tl = StationCompat.tileAtUV(u, v);
             if (DEBUG_UV && q < 3) BetaPT.LOGGER.info("capture uv {} {} -> tile {}", u, v, tl);
-            if (tl >= 0 && area > best[side]) { best[side] = area; tile[side] = tl; orient[side] = orientation(side, o); }
+            // the biggest quad on the side gives its texture; between equal ones, the outermost (the one you see). BuildCraft's
+            // assembly table stacks three slabs whose tops are all a full square: the base plate's (its bottom texture) came
+            // first and the table's red-centred top was lost. Overlays drawn a hair outside their base (against z-fighting)
+            // are much closer than 1/32 and keep the base's texture
+            boolean bigger = area > best[side] + 1e-4f, outer = area > best[side] - 1e-4f && plane * dir > bestOut[side] + 1 / 32f;
+            if (tl >= 0 && (bigger || outer)) { best[side] = area; bestOut[side] = plane * dir; tile[side] = tl; orient[side] = orientation(side, o); }
             faces.add(new float[]{axis, dir, plane, lo0, lo1, hi0, hi1, tl});
         }
         return new Result(tile, boxes(faces), quads, orient);

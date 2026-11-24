@@ -92,8 +92,13 @@ public final class EntityCapture {
     private static boolean berDebug;
     private static int berLogged;
 
+    /** Signs whose board and post were recorded this frame (for the tests). */
+    public static int signsTraced, lastSignsTraced;
+
     public static void renderBlockEntities(net.minecraft.client.Minecraft mc, float tickDelta) {
         if (!active || mc.world == null || com.mrmcclean.betapt.render.BlockTable.BER_IDS.isEmpty()) return;
+        lastSignsTraced = signsTraced;
+        signsTraced = 0;
         net.minecraft.client.render.block.entity.BlockEntityRenderDispatcher d = net.minecraft.client.render.block.entity.BlockEntityRenderDispatcher.INSTANCE;
         net.minecraft.entity.mob.player.PlayerEntity cam = mc.player;
         d.prepare(mc.world, mc.textureManager, mc.textRenderer, cam, tickDelta);
@@ -110,7 +115,9 @@ public final class EntityCapture {
             beginEntity(dx + 0.5, dy + 0.5, dz + 0.5);
             berDebug = DEBUG_BER && be.getClass().getSimpleName().startsWith("Redstone") && (berLogged++ % 60) == 0;
             if (berDebug) com.mrmcclean.betapt.BetaPT.LOGGER.info("ber {} at {} {} {}", be.getClass().getSimpleName(), be.x, be.y, be.z);
+            int before = boxCount;
             try { d.render(be, dx, dy, dz, tickDelta); } catch (Throwable ignored) {}
+            if (com.mrmcclean.betapt.render.BlockTable.SIGN_IDS.contains(mc.world.getBlock(be.x, be.y, be.z)) && boxCount > before) signsTraced++;
             berDebug = false;
             endEntity();
         }
