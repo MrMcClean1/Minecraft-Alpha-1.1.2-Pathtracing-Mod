@@ -438,6 +438,7 @@ Hit trace(vec3 o, vec3 d, float maxT, bool primary) {
                     if ((uint(a.w + 0.5) & 16u) != 0u || (flags & FLAG_BOX_UV) != 0u) { // texture centred on the stick
                         vec3 cc = (lo3 + hi3) * 0.5;
                         hp = vec3(hp.x - cc.x + 0.5, hp.y - lo3.y, hp.z - cc.z + 0.5);
+                        if (face == 1 && (id == 50u || id == 75u || id == 76u)) hp.z -= 0.0625;
                     }
                     uv = faceUV(face, hp);
                     tileOverride = c.w > 0.5 ? int(c.w + 0.5) - 1 : -1;

@@ -370,7 +370,10 @@ final class ChunkMesher {
                                     float ly = CORNER[f][c][1] == 0 ? lo[1] : hi[1];
                                     float lz = CORNER[f][c][2] == 0 ? lo[2] : hi[2];
                                     float hx = lx, hy = ly, hz = lz;
-                                    if (stick) { hx = lx - ccx + 0.5f; hy = ly - lo[1]; hz = lz - ccz + 0.5f; }
+                                    if (stick) {
+                                        hx = lx - ccx + 0.5f; hy = ly - lo[1]; hz = lz - ccz + 0.5f;
+                                        if (f == 1 && (id == 50 || id == 75 || id == 76)) hz -= 1f / 16f;
+                                    }
                                     uv[c] = orient(faceUV(f, hx, hy, hz), turn);
                                     if (tilted) { // block space = M^-1 * local + pivot
                                         float wx = (float) (inv[0] * lx + inv[1] * ly + inv[2] * lz) + m0[3];
