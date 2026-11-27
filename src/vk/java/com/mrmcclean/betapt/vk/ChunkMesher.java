@@ -77,24 +77,28 @@ final class ChunkMesher {
     private final short[][] nIds;
     private final byte[][] nMeta;
 
-    /** Which neighbour holds x, z (just over an edge: -1 or 16), or -1 inside this chunk or past a corner. */
+    /** Which neighbour holds x, z (just over an edge or corner: -1 or 16), or -1 inside this chunk. */
     private static int side(int x, int z) {
         boolean xin = x >= 0 && x <= 15, zin = z >= 0 && z <= 15;
         if (xin && zin) return -1;
         if (zin) return x < 0 ? 0 : 1;
         if (xin) return z < 0 ? 2 : 3;
-        return -2;
+        return z < 0 ? (x < 0 ? 4 : 5) : (x < 0 ? 6 : 7);
+    }
+    private boolean hasBlock(int x, int z) {
+        int k = side(x, z);
+        return k == -1 || (k >= 0 && nIds != null && k < nIds.length && nIds[k] != null);
     }
     private int id(int x, int y, int z) {
         if (y < 0 || y > 127) return 0;
         int k = side(x, z);
         if (k == -1) return ids[x << 11 | z << 7 | y] & 0xFFFF;
-        if (k < 0 || nIds == null || nIds[k] == null) return 0;
+        if (k < 0 || nIds == null || k >= nIds.length || nIds[k] == null) return 0;
         return nIds[k][(x & 15) << 11 | (z & 15) << 7 | y] & 0xFFFF;
     }
     private int meta(int x, int y, int z) {
         int k = side(x, z);
-        byte[] arr = k == -1 ? meta : k >= 0 && nMeta != null ? nMeta[k] : null;
+        byte[] arr = k == -1 ? meta : k >= 0 && nMeta != null && k < nMeta.length ? nMeta[k] : null;
         if (arr == null || y < 0 || y > 127) return 0;
         int i = (x & 15) << 11 | (z & 15) << 7 | y;
         return (i & 1) == 0 ? arr[i >> 1] & 15 : (arr[i >> 1] >> 4) & 15;
@@ -132,11 +136,26 @@ final class ChunkMesher {
         return Math.abs(n - id) <= 1 && n != 0 && (info[(n * 16 + meta(x, y, z)) * 9] & 15) == LIQUID;
     }
 
-    /** Height of the liquid's surface in the block at x, y, z (1 under more of it). */
-    private float liquidTop(int x, int y, int z) {
-        int n = id(x, y, z);
-        float top = boxes[(info[(n * 16 + meta(x, y, z)) * 9 + 7] >>> 4) * 20 + 5];
-        return sameLiquid(n, x, y + 1, z) ? 1f : top;
+    /** Smooth corner height of liquid at corner (cx, y, cz), averaging the 4 sharing columns as Minecraft does. */
+    private float fluidCorner(int id, int cx, int y, int cz) {
+        float sum = 0f, total = 0f;
+        for (int dx = -1; dx <= 0; dx++) {
+            for (int dz = -1; dz <= 0; dz++) {
+                int bx = cx + dx, bz = cz + dz;
+                if (!hasBlock(bx, bz)) continue;
+                if (sameLiquid(id, bx, y + 1, bz)) return 1f;
+                if (sameLiquid(id, bx, y, bz)) {
+                    int n = id(bx, y, bz), m = meta(bx, y, bz);
+                    float h = boxes[(info[(n * 16 + m) * 9 + 7] >>> 4) * 20 + 5];
+                    float w = (m == 0 || m >= 8) ? 10f : 1f;
+                    sum += h * w;
+                    total += w;
+                } else if (!solidCube(bx, y, bz)) {
+                    total += 1f;
+                }
+            }
+        }
+        return total > 0f ? Math.max(0.05f, Math.min(1f, sum / total)) : 0.875f;
     }
 
     private boolean solidCube(int x, int y, int z) {
@@ -253,30 +272,56 @@ final class ChunkMesher {
                     } else if (shape == LIQUID) {
                         boolean water = id == 8 || id == 9;
                         Group g = water ? clear : opaque;
-                        int b = (info[entry * 9 + 7] >>> 4) * 20;
-                        float top = blockBoxes[b + 5];
                         boolean sameAbove = sameLiquid(id, x, y + 1, z);
-                        if (sameAbove) top = 1f;
+                        float h00 = sameAbove ? 1f : fluidCorner(id, x, y, z);
+                        float h01 = sameAbove ? 1f : fluidCorner(id, x, y, z + 1);
+                        float h11 = sameAbove ? 1f : fluidCorner(id, x + 1, y, z + 1);
+                        float h10 = sameAbove ? 1f : fluidCorner(id, x + 1, y, z);
+                        float maxH = Math.max(Math.max(h00, h01), Math.max(h11, h10));
                         for (int f = 0; f < 6; f++) {
                             int nx = x + (int) N[f][0], ny = y + (int) N[f][1], nz = z + (int) N[f][2];
                             if (ny < 0) continue;
-                            boolean sameLiquid = sameLiquid(id, nx, ny, nz);
-                            // beside the same liquid at a lower level (flowing water steps down): only the strip above
-                            // its surface, or a ray looks through the step into the water with no face to tint it
-                            // (lighter seams along a stream, and a dark wall when looking out from under water)
-                            float bottom = 0f;
-                            if (sameLiquid && f >= 2) {
-                                bottom = liquidTop(nx, ny, nz);
-                                if (bottom >= top - 1e-4f) continue;
-                            } else if (sameLiquid && !(f == 1 && top < 1f)) continue; // inside the lake: no face (a lowered top always shows)
-                            if (solidCube(nx, ny, nz) && !(f == 1 && top < 1f)) continue;
-                            int tile = info[entry * 9 + 1 + f] & 0xFFFF;
-                            for (int c = 0; c < 4; c++) {
-                                float cy = f == 1 ? top : f == 0 ? 0f : bottom + CORNER[f][c][1] * (top - bottom);
-                                p[c][0] = x + CORNER[f][c][0]; p[c][1] = y + cy; p[c][2] = z + CORNER[f][c][2];
-                                uv[c] = faceUV(f, CORNER[f][c][0], cy, CORNER[f][c][2]);
+                            boolean sameAdj = sameLiquid(id, nx, ny, nz);
+                            if (f == 1) {
+                                if (sameAbove) continue;
+                                if (solidCube(nx, ny, nz) && h00 > 0.999f && h01 > 0.999f && h11 > 0.999f && h10 > 0.999f) continue;
+                            } else if (f == 0) {
+                                if (sameAdj || solidCube(nx, ny, nz)) continue;
+                            } else {
+                                if (sameAdj || solidCube(nx, ny, nz)) continue;
                             }
-                            g.quad(p, uv, id, tile, KIND_FACE, tint(word, f, x, z, grass, foliage, entry), N[f][0], N[f][1], N[f][2]);
+                            int tile = info[entry * 9 + 1 + f] & 0xFFFF;
+                            float qnx = N[f][0], qny = N[f][1], qnz = N[f][2];
+                            if (f == 1) {
+                                float[] ch = {h00, h01, h11, h10};
+                                for (int c = 0; c < 4; c++) {
+                                    p[c][0] = x + CORNER[1][c][0]; p[c][1] = y + ch[c]; p[c][2] = z + CORNER[1][c][2];
+                                    uv[c] = faceUV(1, CORNER[1][c][0], ch[c], CORNER[1][c][2]);
+                                }
+                                float ax = p[1][0] - p[0][0], ay = p[1][1] - p[0][1], az = p[1][2] - p[0][2];
+                                float bx = p[3][0] - p[0][0], by = p[3][1] - p[0][1], bz = p[3][2] - p[0][2];
+                                float sx = ay * bz - az * by, sy = az * bx - ax * bz, sz = ax * by - ay * bx;
+                                float sl = (float) Math.sqrt(sx * sx + sy * sy + sz * sz);
+                                if (sl > 1e-6f) {
+                                    if (sy < 0f) { sx = -sx; sy = -sy; sz = -sz; }
+                                    qnx = sx / sl; qny = sy / sl; qnz = sz / sl;
+                                }
+                            } else if (f == 0) {
+                                for (int c = 0; c < 4; c++) {
+                                    p[c][0] = x + CORNER[0][c][0]; p[c][1] = y; p[c][2] = z + CORNER[0][c][2];
+                                    uv[c] = faceUV(0, CORNER[0][c][0], 0f, CORNER[0][c][2]);
+                                }
+                            } else {
+                                if (maxH < 1e-4f) continue;
+                                for (int c = 0; c < 4; c++) {
+                                    int cx = CORNER[f][c][0], cz = CORNER[f][c][2];
+                                    float topC = cx == 0 ? (cz == 0 ? h00 : h01) : (cz == 0 ? h10 : h11);
+                                    float cy = CORNER[f][c][1] == 0 ? 0f : topC;
+                                    p[c][0] = x + cx; p[c][1] = y + cy; p[c][2] = z + cz;
+                                    uv[c] = faceUV(f, cx, cy, cz);
+                                }
+                            }
+                            g.quad(p, uv, id, tile, KIND_FACE, tint(word, f, x, z, grass, foliage, entry), qnx, qny, qnz);
                         }
                     } else if (shape == CROSS) {
                         int tile = info[entry * 9 + 3] & 0xFFFF;

@@ -314,7 +314,7 @@ Hit trace(vec3 o, vec3 d, float maxT, bool primary) {
     uint insideTranslucent = 0u;
     // Water swallows red light quickly and blue slowly, so the deeper the water, the bluer
     // and darker what's under it (Beta gets a similar look by dropping light levels in water).
-    const vec3 WATER_ABSORB = vec3(0.55, 0.32, 0.10); // per block travelled
+    const vec3 WATER_ABSORB = vec3(0.30, 0.13, 0.045); // per block travelled
     float waterEnter = -1.0;
     float firstClearT = 1e30; // where the ray first entered water/ice (for mobs in front of it, see the end)
 
@@ -486,12 +486,20 @@ Hit trace(vec3 o, vec3 d, float maxT, bool primary) {
                     if (translucent) {
                         if (insideTranslucent != liquidKind(id)) { // still and flowing water are one body of water
                             firstClearT = min(firstClearT, tHit);
-                            float a = clamp(tex.a, 0.35, 0.9);
-                            if ((id == 8u || id == 9u) && waterEnter < 0.0) waterEnter = tHit;
-                            if (primary && !h.water) {
-                                h.water = true; h.waterColor = albedo; h.waterN = n; h.waterAlpha = a; h.waterT = tHit;
+                            bool isWater = id == 8u || id == 9u;
+                            float surfA;
+                            if (isWater) {
+                                if (waterEnter < 0.0) waterEnter = tHit;
+                                h.transmit *= mix(vec3(1.0), min(albedo * 1.5, vec3(1.0)), 0.25);
+                                surfA = 0.24 + 0.10 * tex.a;
+                            } else {
+                                float a = clamp(tex.a, 0.35, 0.85);
+                                h.transmit *= mix(vec3(1.0), albedo * 1.4, a);
+                                surfA = a * 0.78;
                             }
-                            h.transmit *= mix(vec3(1.0), albedo * 1.4, a); // tint what's behind
+                            if (primary && !h.water) {
+                                h.water = true; h.waterColor = albedo; h.waterN = n; h.waterAlpha = surfA; h.waterT = tHit;
+                            }
                         }
                         insideTranslucent = liquidKind(id);
                     } else {

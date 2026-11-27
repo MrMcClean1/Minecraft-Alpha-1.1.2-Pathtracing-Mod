@@ -585,7 +585,7 @@ public final class VkLive extends VkBase {
     private final long[] slotKey = new long[SLOTS];
     private final boolean[] slotKnown = new boolean[SLOTS];
     private static long chunkKey(int cx, int cz) { return (long) cx << 32 ^ (cz & 0xFFFFFFFFL); }
-    private static final int[][] SIDES = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}}; // ChunkMesher's neighbour order: west, east, north, south
+    private static final int[][] SIDES = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}, {-1, -1}, {1, -1}, {-1, 1}, {1, 1}}; // ChunkMesher's neighbour order: W, E, N, S, NW, NE, SW, SE
 
     public void setChunk(int s, int cx, int cz, short[] ids, byte[] meta, int[] grass, int[] foliage) {
         // copies: the game keeps changing its own arrays while the worker reads these
@@ -631,9 +631,9 @@ public final class VkLive extends VkBase {
         boolean fast = fastLeaves;
         mesher.submit(() -> {
             try {
-                short[][] nIds = new short[4][];
-                byte[][] nMeta = new byte[4][];
-                for (int k = 0; k < 4; k++) {
+                short[][] nIds = new short[8][];
+                byte[][] nMeta = new byte[8][];
+                for (int k = 0; k < 8; k++) {
                     Object[] nb = known.get(chunkKey(cx + SIDES[k][0], cz + SIDES[k][1]));
                     if (nb != null) { nIds[k] = (short[]) nb[1]; nMeta[k] = (byte[]) nb[2]; }
                 }

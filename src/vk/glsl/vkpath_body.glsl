@@ -160,7 +160,7 @@ bool counts(Tri t, vec3 d) { uint k = kindOf(t); return k == KIND_CROSS || k == 
 // a two-sided square faces whichever way the ray came from
 vec3 faceNormal(Tri t, vec3 d) { vec3 n = unpackNormal(t.a.z); return kindOf(t) == KIND_FACE2 && dot(d, n) > 0.0 ? -n : n; }
 
-const vec3 WATER_ABSORB = vec3(0.55, 0.32, 0.10); // per block travelled, as pathtrace.comp
+const vec3 WATER_ABSORB = vec3(0.30, 0.13, 0.045); // per block travelled, clear shallow water, deep blue at depth
 
 Hit trace(vec3 o, vec3 d, float maxT, bool anyHit, bool primary) {
     Hit h;
@@ -249,10 +249,17 @@ Hit trace(vec3 o, vec3 d, float maxT, bool anyHit, bool primary) {
         if (dot(d, unpackNormal(t.a.z)) < 0.0) {             // going in
             vec4 tex = texel(t, rayQueryGetIntersectionBarycentricsEXT(q, false), o + d * (tc + 1e-3));
             vec3 alb = srgbToLinear(tex.rgb);
-            float a = clamp(tex.a, 0.35, 0.9);
-            h.transmit *= mix(vec3(1.0), alb * 1.4, a);
-            if (isWater) { enterSum += tc; enters++; }
-            if (primary && (!h.water || tc < h.waterT)) { h.water = true; h.waterColor = alb; h.waterN = unpackNormal(t.a.z); h.waterAlpha = a; h.waterT = tc; }
+            float surfA;
+            if (isWater) {
+                if (enters == exits) h.transmit *= mix(vec3(1.0), min(alb * 1.5, vec3(1.0)), 0.25);
+                surfA = 0.24 + 0.10 * tex.a;
+                enterSum += tc; enters++;
+            } else {
+                float a = clamp(tex.a, 0.35, 0.85);
+                h.transmit *= mix(vec3(1.0), alb * 1.4, a);
+                surfA = a * 0.78;
+            }
+            if (primary && (!h.water || tc < h.waterT)) { h.water = true; h.waterColor = alb; h.waterN = unpackNormal(t.a.z); h.waterAlpha = surfA; h.waterT = tc; }
         } else if (isWater) {                                  // coming out
             exitSum += tc; exits++;
         }

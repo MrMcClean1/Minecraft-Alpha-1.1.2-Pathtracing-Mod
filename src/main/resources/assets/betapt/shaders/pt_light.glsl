@@ -366,7 +366,7 @@ void main() {
     float wTorchT = 0.0;
     if (h.water) {
         wsn = dot(h.waterN, d) > 0.0 ? -h.waterN : h.waterN;
-        wsp = camO + d * h.waterT + wsn * 1e-3;
+        wsp = camO + d * h.waterT + wsn * 0.02;
         hz = normalize(vec2(d.x, d.z) + vec2(1e-5));
         iWSky = fxN; fxN += 3;
         if (uSunDir.y > 0.0 && dot(wsn, uSunDir) > 0.0) { iWSun = fxN; fxN++; }
@@ -456,8 +456,10 @@ void main() {
     vec3 sR = vec3(0.0), wp = vec3(0.0), wn = vec3(0.0, 1.0, 0.0), wR = vec3(0.0, 1.0, 0.0), gp = vec3(0.0), gnm = vec3(0.0, 1.0, 0.0);
     if (h.hit && m.x < 0.9 && float(uReflections) >= m.w) { sR = glossy(reflect(d, n), n, m.x); rS = nRef++; }
     if (h.water && uReflections >= 1 && d.y < -0.01) {
-        wp = camO + d * h.waterT + wn * 1e-3;
+        wn = wsn.y > 0.2 ? wsn : vec3(0.0, 1.0, 0.0);
+        wp = camO + d * h.waterT + wn * 0.01;
         wR = reflect(d, wn);
+        if (wR.y < 0.02) { wn = vec3(0.0, 1.0, 0.0); wR = reflect(d, wn); }
         if (fxOn(FX_WAVES)) { // Effects: water waves tilt the surface; a ray bent below it keeps the flat one
             vec3 ww = waveNormal(wp.xz + vec2(uCamBlock.xz));
             vec3 r2 = reflect(d, ww);
@@ -544,11 +546,10 @@ void main() {
 
     // water surface: its own colour lit by sky and sun, laid over what's beneath
     if (h.water) {
-        float a = h.waterAlpha * 0.85;
-        // lit by the face it was seen through, with Beta's face shading (top 1, sides 0.8 / 0.6, bottom 0.5), so a
-        // block of ice or a modded see-through block (an Aether cloud) shows its edges; a water top is lit as before
+        float a = h.waterAlpha;
+        // lit by the face it was seen through, with smooth shading on sloped water tops and face shading on vertical walls
         vec3 sn = wsn;
-        float faceShade = sn.y > 0.5 ? 1.0 : sn.y < -0.5 ? 0.5 : abs(sn.z) > 0.5 ? 0.8 : 0.6;
+        float faceShade = sn.y > 0.2 ? 0.78 + 0.22 * sn.y : sn.y < -0.5 ? 0.5 : abs(sn.z) > 0.5 ? 0.8 : 0.6;
         // sky light only where the sky is open above it (water in a cave used to glow with it), the sun only where
         // it reaches, and the nearest bright light block (its ray from the batch above)
         float open = iWSky < 0 ? 3.0 : 3.0 - float(bitCount((fxHits >> uint(iWSky)) & 7u));

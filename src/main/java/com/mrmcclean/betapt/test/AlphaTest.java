@@ -126,8 +126,8 @@ public final class AlphaTest {
         switch (stage) {
             case 1 -> { checks(mc); stage = 2; view = 0; pt.enabled = true; wait = settle(); settleFrom = frames; }
             case 2 -> {
-                // the Vulkan tracer gets changed chunks a few a frame: wait (up to 10 s) until it has them all
-                if (pt.vkActive && com.mrmcclean.betapt.render.VkBridge.chunksSent > 0 && frames - settleFrom < 1200) { wait = 10; return; }
+                // the Vulkan tracer gets changed chunks a few a frame and meshes on a worker: wait until both finish
+                if (pt.vkActive && (com.mrmcclean.betapt.render.VkBridge.chunksSent > 0 || com.mrmcclean.betapt.render.VkBridge.chunksMeshed > 0) && frames - settleFrom < 1200) { wait = 10; traceWaited = true; return; }
                 // the tracer takes changed chunks in a few a frame: wait (up to 10 s) until the ones around the camera are in,
                 // then let the picture settle (the south view, the first, came out with the platform's old ground)
                 if (com.mrmcclean.betapt.render.VoxelWorld.pendingNear((int) Math.floor(mc.player.x) >> 4, (int) Math.floor(mc.player.z) >> 4, 3) > 0

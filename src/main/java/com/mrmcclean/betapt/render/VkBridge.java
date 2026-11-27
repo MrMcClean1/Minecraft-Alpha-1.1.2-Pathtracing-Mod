@@ -174,9 +174,10 @@ public final class VkBridge {
                                   float[] params, int[] iparams, float[] lights, float[] mobBoxes, int mobCount, int[] mobEntity) {
         if (liveFailed || simulated) return null;
         long t0 = System.nanoTime();
-        // new mob skins are read from OpenGL here (LWJGL 2), outside the Vulkan side
+        // new mob skins are read from OpenGL here (LWJGL 2), outside the Vulkan side; also read on open/resize
         int skins = EntityCapture.skinVersion();
-        int[] skinPx = live != null && skins != sentSkins ? EntityCapture.skinPixels() : null;
+        boolean needReopen = live == null || w != liveW || h != liveH;
+        int[] skinPx = (needReopen || skins != sentSkins) && skins > 0 ? EntityCapture.skinPixels() : null;
         try {
             return withLwjgl3(() -> {
                 if (live == null || w != liveW || h != liveH) {
