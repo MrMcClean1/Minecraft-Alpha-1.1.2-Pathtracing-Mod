@@ -193,10 +193,11 @@ public class Brain {
         }
         equipWeapon();
         double d = b.distanceTo(enemy);
-        if (d > 2.3) b.walkTo(enemy.x, enemy.y, enemy.z, 1.8);
-        else b.stopMoving();
+        if (d > 2.3) {
+            if (b.walkTo(enemy.x, enemy.y, enemy.z, 1.8)) b.walkTo(enemy.x, enemy.y, enemy.z, 0.5);
+        } else b.stopMoving();
         b.face(enemy.x, enemy.y + Names.eye(enemy), enemy.z);
-        if (d < 2.8 && attackCooldown == 0) {
+        if (d < 3.0 && attackCooldown == 0) {
             ItemStack w = held();
             int dmg = w != null ? w.getAttackDamage(enemy) : 1;
             b.swing();
@@ -558,11 +559,12 @@ public class Brain {
             return;
         }
         equipWeapon();
-        if (b.distanceTo(prey) > 2.2) b.walkTo(prey.x, prey.y, prey.z, 1.8);
-        else {
-            b.face(prey.x, prey.y + 0.5, prey.z);
-            if (attackCooldown == 0) { ItemStack w = held(); b.swing(); prey.takeDamage(b, w != null ? w.getAttackDamage(prey) : 1); attackCooldown = 12; }
-        }
+        double d = b.distanceTo(prey);
+        if (d > 2.2) {
+            if (b.walkTo(prey.x, prey.y, prey.z, 1.8)) b.walkTo(prey.x, prey.y, prey.z, 0.5);
+        } else b.stopMoving();
+        b.face(prey.x, prey.y + 0.5, prey.z);
+        if (d < 3.0 && attackCooldown == 0) { ItemStack w = held(); b.swing(); prey.takeDamage(b, w != null ? w.getAttackDamage(prey) : 1); attackCooldown = 12; }
     }
 
     /** What kind of animal (Minecraft's classes carry obfuscated names at runtime, so the vanilla ones are checked by type). */

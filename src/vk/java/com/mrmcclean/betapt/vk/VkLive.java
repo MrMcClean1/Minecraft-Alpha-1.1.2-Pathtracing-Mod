@@ -157,8 +157,14 @@ public final class VkLive extends VkBase {
         if (keepDevice()) opt.add(EXT_SWAPCHAIN); // VkPresent (Frame Generation)
         optionalExtensions = opt.toArray(new String[0]);
         createDevice(uuid, windows ? KHRExternalMemoryWin32.VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME : KHRExternalMemoryFd.VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+        try (MemoryStack stack = MemoryStack.stackPush()) {
+            VkPhysicalDeviceAccelerationStructurePropertiesKHR props = VkPhysicalDeviceAccelerationStructurePropertiesKHR.calloc(stack).sType$Default();
+            vkGetPhysicalDeviceProperties2(physical, VkPhysicalDeviceProperties2.calloc(stack).sType$Default().pNext(props.address()));
+            scratchAlignment = Math.max(1, props.minAccelerationStructureScratchOffsetAlignment());
+        }
         serOn &= wantSer;
-        ommOn &= wantOmm;
+        boolean combinedDeviceLoss = serOn && wantOmm && String.valueOf(out.get("device")).contains("RTX 5070 Ti");
+        ommOn &= wantOmm && !combinedDeviceLoss;
         System.out.println("[BetaPT] Vulkan tracer on " + out.get("device") + ", " + out.get("vram") + " video memory; extra ray tracing hardware: " + out.get("rtExtras"));
         out.put("glRenderer", GL11C.glGetString(GL11C.GL_RENDERER));
         nv = new NvFeatures();
@@ -173,7 +179,7 @@ public final class VkLive extends VkBase {
         }
         if (nvPending && !nv.dlssReady() && !nv.dvcReady()) { NvFeatures.markStarted(); nvPending = false; } // DLSS or DVC clears it after its first frame
         serStatus = !wantSer ? "off" : serOn ? "starting" : "not on this GPU/driver (needs VK_NV_ray_tracing_invocation_reorder)";
-        ommStatus = !wantOmm ? "off" : ommOn ? "on" : "not on this GPU/driver (needs VK_EXT_opacity_micromap)";
+        ommStatus = combinedDeviceLoss ? "disabled with SER on RTX 5070 Ti" : !wantOmm ? "off" : ommOn ? "on" : "not on this GPU/driver (needs VK_EXT_opacity_micromap)";
         out.put("nvidia", nvStatus());
         if (glSem && optionalEnabled.contains(semExt)) {
             try { createSemaphores(); }
@@ -1279,9 +1285,11 @@ public final class VkLive extends VkBase {
         }
         byte[] bytes = data.toByteArray();
         long triOff = (bytes.length + 255L) / 256 * 256, idxOff = (triOff + entries * 8L + 255) / 256 * 256, size = idxOff + tris * 4L;
-        p.ommIn = chunkMem().buffer(size, EXTOpacityMicromap.VK_BUFFER_USAGE_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
+        p.ommIn = chunkMem().buffer(size + 255, EXTOpacityMicromap.VK_BUFFER_USAGE_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT
                 | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, ChunkMemory.KIND_HOST);
-        long ptr = p.ommIn[2];
+        long raw = address(p.ommIn[0]);
+        long base = (raw + 255) / 256 * 256;
+        long ptr = p.ommIn[2] + (base - raw);
         MemoryUtil.memByteBuffer(ptr, bytes.length).put(bytes);
         for (int i = 0; i < entries; i++) { // VkMicromapTriangleEXT: data offset, level, format
             MemoryUtil.memPutInt(ptr + triOff + i * 8L, i * OMM_BYTES);
@@ -1289,7 +1297,6 @@ public final class VkLive extends VkBase {
             MemoryUtil.memPutShort(ptr + triOff + i * 8L + 6, (short) EXTOpacityMicromap.VK_OPACITY_MICROMAP_FORMAT_4_STATE_EXT);
         }
         MemoryUtil.memIntBuffer(ptr + idxOff, tris).put(index);
-        long base = address(p.ommIn[0]);
         p.ommDataAddr = base; p.ommTriAddr = base + triOff; p.ommIndexAddr = base + idxOff;
         p.ommEntries = entries; p.ommUsed = used;
         try (MemoryStack stack = MemoryStack.stackPush()) {
@@ -1298,7 +1305,7 @@ public final class VkLive extends VkBase {
             EXTOpacityMicromap.vkGetMicromapBuildSizesEXT(device, VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, info, sizes);
             p.ommSt = chunkMem().buffer(sizes.micromapSize(), EXTOpacityMicromap.VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                     ChunkMemory.KIND_DEVICE);
-            p.ommScr = chunkMem().buffer(sizes.buildScratchSize() + 256, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
+            p.ommScr = chunkMem().buffer(sizes.buildScratchSize() + scratchAlignment, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
                     ChunkMemory.KIND_DEVICE);
             LongBuffer lp = stack.mallocLong(1);
             check(EXTOpacityMicromap.vkCreateMicromapEXT(device, VkMicromapCreateInfoEXT.calloc(stack).sType$Default().buffer(p.ommSt[0])
@@ -1324,12 +1331,14 @@ public final class VkLive extends VkBase {
     }
 
     /** Game thread: the micromap build, before the part's tree build that uses it. */
+    private long scratchAlignment;
+
     private void recordOmm(VkCommandBuffer cb, Part p) {
         try (MemoryStack stack = MemoryStack.stackPush()) {
             VkMicromapBuildInfoEXT.Buffer info = VkMicromapBuildInfoEXT.calloc(1, stack);
             info.put(0, ommInfo(stack, p));
             info.get(0).dstMicromap(p.micromap)
-                    .scratchData(VkDeviceOrHostAddressKHR.calloc(stack).deviceAddress((address(p.ommScr[0]) + 255) / 256 * 256));
+                    .scratchData(VkDeviceOrHostAddressKHR.calloc(stack).deviceAddress((address(p.ommScr[0]) + scratchAlignment - 1) / scratchAlignment * scratchAlignment));
             EXTOpacityMicromap.vkCmdBuildMicromapsEXT(cb, info);
             VkMemoryBarrier2.Buffer mb = VkMemoryBarrier2.calloc(1, stack);
             mb.get(0).sType$Default().srcStageMask(EXTOpacityMicromap.VK_PIPELINE_STAGE_2_MICROMAP_BUILD_BIT_EXT)

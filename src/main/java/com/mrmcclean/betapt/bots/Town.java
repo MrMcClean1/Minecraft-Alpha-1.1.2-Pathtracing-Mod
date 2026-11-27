@@ -290,9 +290,11 @@ public final class Town {
         return true;
     }
 
-    /** Night: into the nearest finished building and stay. */
+    /** Night: into the nearest finished building and stay (well underground counts as sheltered already). */
     private static void indoors(Brain br, Member m) {
         BotEntity b = br.b; World w = Names.world(b);
+        int bx = (int) Math.floor(b.x), by = (int) Math.floor(b.y - 1.6), bz = (int) Math.floor(b.z);
+        if (by < w.getHeight(bx, bz) - 6) { b.stopMoving(); return; }
         int best = -1; double bd = 1e9;
         for (int i = 0; i < plots(w, m); i++) {
             if (!built(w, m, i)) continue;
