@@ -177,6 +177,7 @@ struct Hit {
     bool  glass;    // M9: a camera ray went through a clear glass pixel (first one): where, and its face
     float glassT;
     vec3  glassN;
+    bool  plant;    // CROSS plant whose normal is synthetic (0, 1, 0): must not flip at d.y == 0
 };
 
 uint liquidKind(uint id) { return id == 8u ? 9u : id == 10u ? 11u : id; } // water's two ids are one water, lava's one lava
@@ -301,7 +302,7 @@ bool traceEntities(vec3 o, vec3 d, inout float maxT, out vec3 n, out vec3 albedo
 Hit trace(vec3 o, vec3 d, float maxT, bool primary) {
     Hit h;
     h.hit = false; h.t = maxT; h.n = vec3(0, 1, 0); h.albedo = vec3(0); h.glow = 0.0; h.id = 0u; h.cell = ivec3(0); h.ent = 0u; h.tile = 65535u; h.uv = vec2(0.0);
-    h.glass = false; h.glassT = 0.0; h.glassN = vec3(0, 1, 0);
+    h.glass = false; h.glassT = 0.0; h.glassN = vec3(0, 1, 0); h.plant = false;
     h.transmit = vec3(1.0); h.water = false; h.waterColor = vec3(0); h.waterN = vec3(0, 1, 0); h.waterAlpha = 0.0; h.waterT = 0.0;
 
     d += vec3(equal(d, vec3(0.0))) * 1e-7;
@@ -505,7 +506,7 @@ Hit trace(vec3 o, vec3 d, float maxT, bool primary) {
                         insideTranslucent = liquidKind(id);
                     } else {
                         if (waterEnter >= 0.0) h.transmit *= exp(-WATER_ABSORB * max(tHit - waterEnter, 0.0));
-                        h.hit = true; h.t = tHit; h.n = (shape == CROSS) ? vec3(0, 1, 0) : n;
+                        h.hit = true; h.t = tHit; h.plant = (shape == CROSS); h.n = h.plant ? vec3(0, 1, 0) : n;
                         h.albedo = albedo; h.id = id; h.cell = cell; h.tile = tile; h.uv = uv;
                         bool flame = id == 50u || id == 51u || id == 76u;
                         h.glow = flame ? smoothstep(0.55, 0.85, max(tex.r, max(tex.g, tex.b))) : 1.0;
@@ -529,7 +530,7 @@ Hit trace(vec3 o, vec3 d, float maxT, bool primary) {
         vec3 en, ea;
         uint eh;
         if (traceEntities(o, d, tm, en, ea, eh)) {
-            h.hit = true; h.t = tm; h.n = en; h.albedo = ea; h.id = 0u; h.glow = 0.0; h.ent = eh;
+            h.hit = true; h.t = tm; h.n = en; h.albedo = ea; h.id = 0u; h.glow = 0.0; h.ent = eh; h.plant = false;
             // The block walk ran first and may have passed through water or ice *behind* the mob;
             // that surface isn't in front of the mob, so it mustn't tint it.
             if (firstClearT > tm) { h.water = false; h.transmit = vec3(1.0); }
@@ -544,7 +545,7 @@ Hit trace(vec3 o, vec3 d, float maxT, bool primary) {
         uint hh;
         if (traceEntitiesIn(o, d, uHandEnt - 1, uHandEnt, th, hn, ha, hh) && th > tw) {
             h.hit = true; h.t = max(tw - 0.02, 1e-3); h.n = hn; h.albedo = ha; h.id = 0u; h.glow = 0.0; h.ent = hh;
-            h.water = false; h.transmit = vec3(1.0); h.glass = false;
+            h.water = false; h.transmit = vec3(1.0); h.glass = false; h.plant = false;
         }
     }
     return h;

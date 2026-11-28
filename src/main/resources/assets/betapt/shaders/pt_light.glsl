@@ -199,7 +199,7 @@ vec3 bounceLight(vec3 p, vec3 n) {
             break;
         }
         vec3 bp = p + n * 1e-3 + dir * b.t, bn = b.n;
-        if (dot(bn, dir) > 0.0) bn = -bn;
+        if (!b.plant && dot(bn, dir) > 0.0) bn = -bn;
         vec3 sun = lvl > 0 || (uDebugMask & 8) == 0 ? sunAt(bp, bn, 128.0, lvl == 0) : vec3(0.0);
         total += through * (emission(b.id) * b.albedo * 1.5 * b.glow + b.albedo * sun) * b.transmit;
         through *= b.albedo * b.transmit;
@@ -247,7 +247,7 @@ vec3 reflectedLight(vec3 p, vec3 r) {
     Hit b = traceRay(p, r, 192.0, false);
     if (!b.hit) return skyView(r) * b.transmit;
     vec3 bp = p + r * b.t, bn = b.n;
-    if (dot(bn, r) > 0.0) bn = -bn;
+    if (!b.plant && dot(bn, r) > 0.0) bn = -bn;
     vec3 sky = skyRadiance(vec3(0, 1, 0)) * (0.25 + 0.75 * uDaylight) * mix(1.0, uSkyFill, uDaylight) * 0.6;
     vec3 L = sunSteady(bp, bn) + lightsSteady(bp, bn) + sky + vec3(uAmbient);
     vec3 glow = emission(b.id) * b.albedo * 1.5 * b.glow;
@@ -335,7 +335,7 @@ void main() {
     // 7900 XT). Each ray is worked out inside the loop from a few values, and the answers are bits in fxHits.
     int fxN = 0, iWet = -1, iSpark = -1, iGod = -1, godN = 0;
     float sparkle = 0.0, godEnd = 0.0, jit = 0.0;
-    vec3 hp = camO + d * h.t, hn = dot(h.n, d) > 0.0 ? -h.n : h.n;
+    vec3 hp = camO + d * h.t, hn = !h.plant && dot(h.n, d) > 0.0 ? -h.n : h.n;
     if (h.hit && fxOn(FX_WET) && uWet > 0.01 && h.ent == 0u && wettable(h.id)) { iWet = fxN; fxN++; }
     if (h.hit && fxOn(FX_SPARKLE) && (h.id == 78u || h.id == 79u || h.id == 80u) && hn.y > 0.5 && uSunDir.y > 0.02) {
         // a few texels of snow and ice, each its own slightly tilted mirror
@@ -406,7 +406,7 @@ void main() {
 
     // the surface the camera ray hit: where, which way it faces, what it's made of (and so whether it mirrors)
     vec3 p = camO + d * h.t;
-    vec3 gn = dot(h.n, d) > 0.0 ? -h.n : h.n; // plants: face the camera
+    vec3 gn = !h.plant && dot(h.n, d) > 0.0 ? -h.n : h.n; // cross plants keep their upward normal across the horizon
     vec3 n = gn;                    // the normal light sees (bumped by a LabPBR normal map); gn goes to the denoiser
     vec4 m = material(h.id);
     vec3 pbrGlow = vec3(0.0);
@@ -432,7 +432,7 @@ void main() {
         if (iWet >= 0) {
             if ((fxHits & (1u << uint(iWet))) == 0u) {
                 wet = uWet * (gn.y > 0.7 ? 1.0 : 0.45);
-                if (gn.y > 0.9) {
+                if (gn.y > 0.9 && !h.plant) {
                     vec2 wxz = p.xz + vec2(uCamBlock.xz);
                     float nz = valueNoise(wxz * 0.15) * 0.7 + valueNoise(wxz * 0.6) * 0.3;
                     puddle = smoothstep(0.58, 0.70, nz) * smoothstep(0.35, 0.9, uWet);
@@ -441,7 +441,7 @@ void main() {
         }
         // the wet sheen and puddles reflect like water (Reflect: Water or All); a shiny block keeps its own
         float wetR = max(wet * 0.6, puddle);
-        if (!(m.x < 0.9 && float(uReflections) >= m.w) && wetR > 0.0 && uReflections >= 1) {
+        if (!h.plant && !(m.x < 0.9 && float(uReflections) >= m.w) && wetR > 0.0 && uReflections >= 1) {
             m = vec4(mix(0.3, 0.0, puddle), 0.02, 0.0, 1.0);
             refScale = wetR;
             if (puddle > 0.5) n = gn; // puddles are flat
@@ -454,7 +454,7 @@ void main() {
     // the OpenGL shader too big for NVIDIA's compiler.
     int nRef = 0, rS = -1, rW = -1, rG = -1;
     vec3 sR = vec3(0.0), wp = vec3(0.0), wn = vec3(0.0, 1.0, 0.0), wR = vec3(0.0, 1.0, 0.0), gp = vec3(0.0), gnm = vec3(0.0, 1.0, 0.0);
-    if (h.hit && m.x < 0.9 && float(uReflections) >= m.w) { sR = glossy(reflect(d, n), n, m.x); rS = nRef++; }
+    if (h.hit && !h.plant && m.x < 0.9 && float(uReflections) >= m.w) { sR = glossy(reflect(d, n), n, m.x); rS = nRef++; }
     if (h.water && uReflections >= 1 && d.y < -0.01) {
         wn = wsn.y > 0.2 ? wsn : vec3(0.0, 1.0, 0.0);
         wp = camO + d * h.waterT + wn * 0.01;

@@ -103,6 +103,7 @@ struct Hit {
     uint ent;                                             // 0 = the world, else 1 + index of the mob hit (motion)
     uint tile; vec2 uv;                                   // M9: atlas tile and position at the hit (tile >= 256: none)
     bool glass; float glassT; vec3 glassN;                // M9: nearest clear glass pixel a camera ray went through
+    bool plant;                                           // KIND_CROSS plant with synthetic (0, 1, 0) normal
 };
 
 Tri triAt(uint index, uint geometry, uint prim) {
@@ -166,7 +167,7 @@ Hit trace(vec3 o, vec3 d, float maxT, bool anyHit, bool primary) {
     Hit h;
     h.hit = false; h.t = maxT; h.n = vec3(0, 1, 0); h.albedo = vec3(0.0); h.id = 0u; h.glow = 1.0;
     h.transmit = vec3(1.0); h.water = false; h.waterColor = vec3(0.0); h.waterN = vec3(0.0, 1.0, 0.0); h.waterAlpha = 0.0; h.waterT = 0.0; h.ent = 0u; h.tile = 65535u; h.uv = vec2(0.0);
-    h.glass = false; h.glassT = 1e30; h.glassN = vec3(0, 1, 0);
+    h.glass = false; h.glassT = 1e30; h.glassN = vec3(0, 1, 0); h.plant = false;
 
     rayQueryEXT q;
     rayQueryInitializeEXT(q, uScene, anyHit ? gl_RayFlagsTerminateOnFirstHitEXT : gl_RayFlagsNoneEXT, MASK_SOLID, o, 0.0, d, maxT);
@@ -191,7 +192,7 @@ Hit trace(vec3 o, vec3 d, float maxT, bool anyHit, bool primary) {
                           rayQueryGetIntersectionPrimitiveIndexEXT(q, true));
             vec4 tex = solidLeafTri(t) ? solidLeafTexel(t, rayQueryGetIntersectionBarycentricsEXT(q, true))
                                        : texel(t, rayQueryGetIntersectionBarycentricsEXT(q, true), o + d * (h.t + 1e-3));
-            h.n = faceNormal(t, d);
+            h.n = faceNormal(t, d); h.plant = kindOf(t) == KIND_CROSS;
             h.albedo = srgbToLinear(tex.rgb);
             h.id = kindOf(t) == KIND_MOB ? 0u : t.a.x & 4095u;
             h.ent = kindOf(t) == KIND_MOB ? uint(t.pad.x + 0.5) : 0u;
@@ -228,7 +229,7 @@ Hit trace(vec3 o, vec3 d, float maxT, bool anyHit, bool primary) {
             vec4 tex = texel(t, rayQueryGetIntersectionBarycentricsEXT(qh, true), o + d * (rayQueryGetIntersectionTEXT(qh, true) + 1e-3));
             h.hit = true; h.t = max(tw - 0.02, 1e-3); h.n = faceNormal(t, d); h.albedo = srgbToLinear(tex.rgb);
             h.id = 0u; h.ent = uint(uHandEnt); h.glow = 1.0; h.tile = 65535u; h.uv = vec2(0.0);
-            h.glass = false;
+            h.glass = false; h.plant = false;
             return h; // in front of everything, as Beta draws it: no water or ice tint
         }
     }
