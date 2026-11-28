@@ -64,9 +64,10 @@ void volumetricClouds(vec3 roW, vec3 d, inout vec3 skyCol) {
     if (t0 > 1800.0) return;
     t1 = min(t1, t0 + 420.0);
 
-    const int STEPS = 7;
+    const int STEPS = 10;
     float dt = (t1 - t0) / float(STEPS);
-    float t = t0 + dt * rnd();
+    // Deterministic midpoint march: outSkyFog is not temporally denoised, so never use per-frame rnd() here
+    float t = t0 + dt * 0.5;
 
     float sunH = clamp(uSunDir.y, -0.2, 1.0);
     float day = smoothstep(-0.08, 0.22, sunH);
@@ -478,12 +479,10 @@ void main() {
         }
     }
     if (fxOn(FX_GODRAYS) && uSunDir.y > 0.02) {
-        // two points along every ray. (It used to be 4 toward the sun, 2 across, 1 away: fewer points are noisier, the
-        // denoiser's outlier clamp darkens noisy pixels more, so where the count changed a straight line crossed the
-        // screen, the plane square to the sun: the "shadow line" through the leaves.)
+        // two points along every ray. Sky pixels bypass the temporal denoiser, so use deterministic spatial noise there
         godN = 2;
         godEnd = min(h.hit ? h.t : uMaxDist, 40.0);
-        jit = rnd();
+        jit = h.hit ? rnd() : fract(52.9829189 * fract(dot(vec2(px), vec2(0.06711056, 0.00583715))));
         iGod = fxN; fxN += godN;
     }
     // the first see-through surface the camera ray went through (water, ice, an Aether cloud): is it under open sky
@@ -556,16 +555,17 @@ void main() {
             // red: perceptual smoothness; green: F0 (0..229), 230+ = metal; alpha: glow (255 = none)
             if (sp.r > 0.0 || g > 0.5) m = vec4(pow(1.0 - sp.r, 2.0), g >= 229.5 ? 1.0 : sp.g, g >= 229.5 ? 1.0 : 0.0, 1.0);
             if (sp.a < 0.999) pbrGlow = h.albedo * sp.a * 3.0;
-        } else if (fxOn(FX_CINEMATIC) && h.ent == 0u && !h.plant && h.id != 18u && h.id != 161u && h.id != 20u && h.id != 79u) {
-            // Subtle procedural surface micro-relief when no LabPBR normal map is loaded
+        } else if (fxOn(FX_CINEMATIC) && h.ent == 0u && !h.plant && h.id != 18u && h.id != 161u && h.id != 20u && h.id != 79u && h.t < 22.0) {
+            // Subtle close-range procedural surface micro-relief (fades out cleanly before distant aliasing can occur)
             vec3 T, B;
             if (faceFrame(gn, T, B)) {
+                float relief = (1.0 - smoothstep(6.0, 22.0, h.t)) * 0.14;
                 vec3 wp = p + vec3(uCamBlock);
-                vec2 uvW = vec2(dot(wp, T), dot(wp, B)) * 7.5;
+                vec2 uvW = vec2(dot(wp, T), dot(wp, B)) * 4.5;
                 float n0 = valueNoise(uvW);
                 float nx = valueNoise(uvW + vec2(0.35, 0.0)) - n0;
                 float ny = valueNoise(uvW + vec2(0.0, 0.35)) - n0;
-                vec3 bn = normalize(gn + (T * nx + B * ny) * 0.22);
+                vec3 bn = normalize(gn + (T * nx + B * ny) * relief);
                 if (dot(bn, -d) > 0.0) n = bn;
             }
         }
@@ -662,6 +662,13 @@ void main() {
         // Beta-faithful floor: a little light everywhere so caves and nights stay playable
         vec3 ambient = vec3(uAmbient);
         light = direct + indirect + ambient;
+        // Subtle direct sun specular sheen added into denoised light (never un-denoised extra, preventing shadow-edge jitter)
+        if (fxOn(FX_CINEMATIC) && !h.plant && h.id != 18u && h.id != 161u && h.id != 10u && h.id != 11u && dot(directSun, vec3(1.0)) > 0.02) {
+            vec3 hv = normalize(uSunDir - d);
+            float shin = mix(22.0, 64.0, max(wet, 1.0 - m.x));
+            float spec = pow(max(dot(n, hv), 0.0), shin) * mix(0.05, 0.24, max(wet, clamp(1.0 - m.x, 0.0, 1.0)));
+            light += directSun * spec / max(h.albedo, vec3(0.22));
+        }
         // Rare, extremely bright samples ("fireflies", e.g. a bounce ray that happens to hit
         // lava) would take the denoiser many frames to average away. Cap them.
         float lum = dot(light, vec3(0.2126, 0.7152, 0.0722));
@@ -676,14 +683,6 @@ void main() {
             emit *= warmTint * 2.35;
         }
         extra = (emit + pbrGlow) * h.transmit;
-
-        // Subtle direct sun specular sheen on non-plant surfaces in Cinematic mode (zero extra rays)
-        if (fxOn(FX_CINEMATIC) && !h.plant && h.id != 18u && h.id != 161u && h.id != 10u && h.id != 11u && dot(directSun, vec3(1.0)) > 0.02) {
-            vec3 hv = normalize(uSunDir - d);
-            float shin = mix(28.0, 96.0, max(wet, 1.0 - m.x));
-            float spec = pow(max(dot(n, hv), 0.0), shin) * mix(0.06, 0.35, max(wet, clamp(1.0 - m.x, 0.0, 1.0)));
-            extra += directSun * spec * h.transmit;
-        }
 
         // Effects: snow sparkle: a glinting texel that sees the sun, drawn sharp on top
         if (iSpark >= 0 && (fxHits & (1u << uint(iSpark))) == 0u) extra += sunLight() * sparkle * 8.0 * h.transmit;
@@ -757,7 +756,7 @@ void main() {
             vec3 R = RW;
             if (fxOn(FX_CINEMATIC) && dot(sunW, vec3(1.0)) > 0.02) {
                 vec3 hv = normalize(uSunDir - d);
-                R += sunLight() * pow(max(dot(wn, hv), 0.0), 220.0) * 3.2;
+                R += sunLight() * pow(max(dot(wn, hv), 0.0), 90.0) * 1.6;
             }
             albedo *= 1.0 - F;
             extra = extra * (1.0 - F) + F * R;

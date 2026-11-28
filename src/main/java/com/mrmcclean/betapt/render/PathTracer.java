@@ -235,7 +235,8 @@ public final class PathTracer {
         FAITHFUL("Faithful", DEFAULT_REALISM, 1f, DEFAULT_CLOUD_SHADOWS, true, HELD_EVERYONE, HAND_BETA, true, DENOISER_ADVANCED, REFLECT_WATER, 1,
                 FX_WET | FX_GODRAYS),
         REALISTIC("Realistic", 1f, 1f, 0.85f, true, HELD_EVERYONE, HAND_TRACED, true, DENOISER_ADVANCED, REFLECT_ALL, 2, 63),
-        CINEMATIC("Cinematic", 0.85f, 1f, 0.75f, true, HELD_EVERYONE, HAND_BETA, true, DENOISER_ADVANCED, REFLECT_ALL, 2, 63 | FX_CINEMATIC);
+        CINEMATIC("Cinematic", 0.85f, 1f, 0.75f, true, HELD_EVERYONE, HAND_BETA, true, DENOISER_ADVANCED, REFLECT_WATER, 1,
+                FX_WET | FX_HAZE | FX_GODRAYS | FX_WAVING | FX_WAVES | FX_CINEMATIC);
         public final String label;
         final float realism, brightness, clouds;
         final boolean tracedMobs;

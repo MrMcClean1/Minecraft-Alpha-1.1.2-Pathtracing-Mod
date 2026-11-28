@@ -45,7 +45,7 @@ void main() {
             float skyScale = mix(1.0, clamp(exposure, 0.45, 2.2), 0.35) * uBrightness;
             c = mix(c, max(sf.rgb, vec3(0.0)) * skyScale, sf.a);
         }
-        c += max(textureLod(uBloom, uv, 0.0).rgb, vec3(0.0)) * 0.28;
+        c += max(textureLod(uBloom, uv, 0.0).rgb, vec3(0.0)) * 0.24;
         c = acesFilmic(c);
         vec2 q = uv * 2.0 - 1.0;
         c *= 1.0 - 0.09 * dot(q, q);

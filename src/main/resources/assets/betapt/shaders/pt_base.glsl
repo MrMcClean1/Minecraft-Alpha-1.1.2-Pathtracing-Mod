@@ -138,7 +138,7 @@ float waterCaustics(vec2 xz) {
     return clamp(ridge, 0.0, 1.0);
 }
 
-// Water waves: three travelling ripples summed; Cinematic mode adds fine capillary ripples.
+// Water waves: three travelling ripples summed; Cinematic mode adds a smooth fine ripple band without sub-pixel aliasing.
 vec3 waveNormal(vec2 xz) {
     vec2 g = vec2(0.0);
     const vec2 D0 = vec2(0.8, 0.6), D1 = vec2(-0.5, 0.86), D2 = vec2(0.2, -0.98);
@@ -146,10 +146,9 @@ vec3 waveNormal(vec2 xz) {
     g += D1 * 0.035 * cos(dot(D1, xz) * 3.1 + uTime * 2.2);
     g += D2 * 0.020 * cos(dot(D2, xz) * 5.3 + uTime * 3.1);
     if (fxOn(FX_CINEMATIC)) {
-        const vec2 D3 = vec2(-0.92, -0.39), D4 = vec2(0.45, -0.89);
-        g += D3 * 0.018 * cos(dot(D3, xz) * 9.4 + uTime * 4.3);
-        g += D4 * 0.014 * cos(dot(D4, xz) * 15.1 + uTime * 5.6);
-        g *= 1.15;
+        const vec2 D3 = vec2(-0.92, -0.39);
+        g += D3 * 0.012 * cos(dot(D3, xz) * 7.6 + uTime * 3.8);
+        g *= 0.85;
     }
     g *= 0.7 + uWind;
     return normalize(vec3(-g.x, 1.0, -g.y));

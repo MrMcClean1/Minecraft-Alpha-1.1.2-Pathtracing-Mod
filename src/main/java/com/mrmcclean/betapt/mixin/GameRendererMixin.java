@@ -29,6 +29,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(GameRenderer.class)
 public class GameRendererMixin {
     @Shadow private Minecraft minecraft;
+    @Shadow private void applyHurtCam(float tickDelta) {}
+    @Shadow private void applyViewBobbing(float tickDelta) {}
     @Unique private static boolean betapt$toggleHeld;
     @Unique private static int betapt$compileFrame;
     @Unique private static long betapt$compileLast;
@@ -80,11 +82,13 @@ public class GameRendererMixin {
             if (mobs) this.minecraft.worldRenderer.renderEntities(this.minecraft.player.getPosition(tickDelta), betapt$ALL, tickDelta);
             com.mrmcclean.betapt.render.EntityCapture.renderBlockEntities(this.minecraft, tickDelta);
             if (mobs && PathTracer.INSTANCE.tracesHand(this.minecraft)) {
-                // your hand and held item, recorded the same way (eye space: modelview from identity, as Beta draws them)
+                // your hand and held item, recorded the same way (eye space + view bobbing + hurt tilt, as Alpha draws them)
                 com.mrmcclean.betapt.render.EntityCapture.beginHand();
                 GL11.glMatrixMode(GL11.GL_MODELVIEW);
                 GL11.glPushMatrix();
                 GL11.glLoadIdentity();
+                this.applyHurtCam(tickDelta);
+                if (this.minecraft.options.viewBobbing) this.applyViewBobbing(tickDelta);
                 try {
                     ((net.minecraft.client.render.GameRenderer) (Object) this).itemInHandRenderer.renderHand(tickDelta);
                 } finally {
