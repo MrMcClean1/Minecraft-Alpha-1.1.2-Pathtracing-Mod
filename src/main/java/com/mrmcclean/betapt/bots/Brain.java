@@ -1233,10 +1233,10 @@ public class Brain {
         return did.isEmpty() ? "" : " Put in " + String.join(", ", did) + ".";
     }
 
-    /** Air with something solid under it. */
+    /** Air with solid non-leaf ground under it (never puts chests, torches or beds floating on grass or leaves). */
     private boolean free(int[] p) {
         int below = Names.world(b).getBlock(p[0], p[1] - 1, p[2]);
-        return Names.world(b).getBlock(p[0], p[1], p[2]) == 0 && below != 0 && !(below >= 8 && below <= 11);
+        return Names.world(b).getBlock(p[0], p[1], p[2]) == 0 && solid(p[0], p[1] - 1, p[2]) && below != 18;
     }
 
     private int[] openDoor;

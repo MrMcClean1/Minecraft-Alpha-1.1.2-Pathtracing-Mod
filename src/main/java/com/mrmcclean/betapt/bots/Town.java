@@ -49,6 +49,42 @@ public final class Town {
     static boolean night(World w) { long t = w.ticks % 24000; return t > 13000 && t < 23000; }
     static long day(World w) { return w.ticks / 24000; }
 
+    /** Real solid ground block (not air, water/lava, plants, snow layers, leaves, or tree logs). */
+    static boolean solidGround(World w, int x, int y, int z) {
+        if (y < 1 || y > 125) return false;
+        int id = w.getBlock(x, y, z);
+        if (id == 0 || (id >= 8 && id <= 11) || id == 17 || id == 18 || id == 50 || id == 54 || id == 64 || id == 78 || id == 85) return false;
+        net.minecraft.block.Block blk = Bots.block(id);
+        return blk != null && blk.material.blocksMovement();
+    }
+
+    /** True if a block at (x, y, z) can be replaced by a chest or building (air, grass, flowers, snow layer). */
+    static boolean clearSpot(World w, int x, int y, int z) {
+        int id = w.getBlock(x, y, z);
+        return id == 0 || id == 31 || id == 32 || id == 37 || id == 38 || id == 78;
+    }
+
+    /** Surface Y standing on real terrain under trees (never perched on leaves or floating in air). */
+    static int groundY(World w, int x, int z) {
+        int y = Math.min(125, Math.max(2, w.getHeight(x, z)));
+        while (y > 2) {
+            int below = w.getBlock(x, y - 1, z);
+            if (below >= 8 && below <= 11) return y; // water/lava surface so flat() rejects liquids
+            if (solidGround(w, x, y - 1, z)) return y;
+            y--;
+        }
+        return y;
+    }
+
+    /** Ground Y nearest to hintY (scans around hintY first so overhangs or tree canopies never lift a chest into the sky). */
+    static int groundYNear(World w, int x, int hintY, int z) {
+        int hi = Math.min(124, hintY + 3), lo = Math.max(2, hintY - 5);
+        for (int y = hi; y >= lo; y--) {
+            if (clearSpot(w, x, y, z) && solidGround(w, x, y - 1, z)) return y;
+        }
+        return groundY(w, x, z);
+    }
+
     /** Founds a town at the player's feet with these bots. */
     static String found(PlayerEntity p, List<BotEntity> bots) {
         return found(Names.world(p), (int) Math.floor(p.x), (int) Math.floor(p.y - p.eyeHeight + 0.01), (int) Math.floor(p.z), bots);
@@ -56,6 +92,7 @@ public final class Town {
 
     /** Founds a town at x y z with these bots (their own, when three or more are on their own: Bots.autoTown). */
     static String found(World w, int x, int y, int z, List<BotEntity> bots) {
+        y = groundYNear(w, x, y, z);
         Job[] order = Job.values();
         int i = 0;
         StringBuilder s = new StringBuilder("Town founded at " + x + " " + y + " " + z + ":");
@@ -113,7 +150,7 @@ public final class Town {
         int rowZ = d.z - 6 - (i / 2) * 10;
         boolean east = i % 2 == 0;
         int doorX = east ? d.x + 3 : d.x - 3;
-        int y = w.getHeight(doorX, rowZ);
+        int y = groundY(w, doorX, rowZ);
         return east ? new int[]{doorX, y, rowZ - half, 3, doorX, rowZ, i} : new int[]{doorX, y, rowZ + half, 1, doorX, rowZ, i};
     }
 
@@ -122,7 +159,7 @@ public final class Town {
         for (int[] pb : Blueprint.of(hut ? "hut" : "house", 0).blocks) {
             if (pb[1] != 0) continue;
             int[] q = Blueprint.place(pb, o[0], o[1], o[2], o[3]);
-            int top = w.getHeight(q[0], q[2]), below = w.getBlock(q[0], top - 1, q[2]);
+            int top = groundY(w, q[0], q[2]), below = w.getBlock(q[0], top - 1, q[2]);
             if (Math.abs(top - o[1]) > maxDiff || below >= 8 && below <= 11) return false;
         }
         return true;
@@ -162,7 +199,7 @@ public final class Town {
     }
 
     static boolean pathDone(World w, Member m, int i) {
-        for (int[] c : path(w, m, i)) { int top = w.getHeight(c[0], c[1]) - 1; int id = w.getBlock(c[0], top, c[1]); if (id == 2 || id == 3) return false; }
+        for (int[] c : path(w, m, i)) { int top = groundY(w, c[0], c[1]) - 1; int id = w.getBlock(c[0], top, c[1]); if (id == 2 || id == 3) return false; }
         return true;
     }
 
@@ -199,15 +236,14 @@ public final class Town {
             m.d.quarryX = m.x + 32; m.d.quarryZ = m.z;
             for (int[] dir : dirs) {
                 int qx = m.x + dir[0], qz = m.z + dir[1];
-                int qy = w.getHeight(qx, qz);
-                int below = w.getBlock(qx, qy - 1, qz), at = w.getBlock(qx, qy, qz);
-                if (qy > 2 && !(below >= 8 && below <= 11) && !(at >= 8 && at <= 11) && below != 0) {
+                int qy = groundY(w, qx, qz);
+                if (solidGround(w, qx, qy - 1, qz) && !(w.getBlock(qx, qy, qz) >= 8 && w.getBlock(qx, qy, qz) <= 11)) {
                     m.d.quarryX = qx; m.d.quarryZ = qz; break;
                 }
             }
         }
         int qx = m.d.quarryX, qz = m.d.quarryZ;
-        if (flat(b, qx + 0.5, qz + 0.5) > 6) { b.walkTo(qx + 0.5, w.getHeight(qx, qz), qz + 0.5, 4); return true; }
+        if (flat(b, qx + 0.5, qz + 0.5) > 6) { b.walkTo(qx + 0.5, groundY(w, qx, qz), qz + 0.5, 4); return true; }
         br.want = Want.of("cobblestone"); br.wantCount = b.count(4) + n; br.deliverToHome = market(br, m);
         if (!br.deliverToHome) br.after = Brain.Job.GO_HOME; // no market yet: back to the town with it (not off to the player)
         br.startJob(Brain.Job.GATHER);
@@ -231,12 +267,10 @@ public final class Town {
             if (flat(b, m.x + 0.5, m.z + 0.5) > 4) { b.walkTo(m.x + 0.5, m.y, m.z + 2.5, 1.5); return true; }
             int[][] spots = {{0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}};
             for (int[] sp : spots) {
-                int cx = m.x + sp[0], cz = m.z + sp[1], cy = w.getHeight(cx, cz);
-                int at = w.getBlock(cx, cy, cz), below = w.getBlock(cx, cy - 1, cz);
-                if (below >= 8 && below <= 11) continue;
-                if (at == 0 || at == 31 || at == 32 || at == 37 || at == 38 || at == 78) {
+                int cx = m.x + sp[0], cz = m.z + sp[1], cy = groundYNear(w, cx, m.y, cz);
+                if (clearSpot(w, cx, cy, cz) && solidGround(w, cx, cy - 1, cz)) {
                     w.setBlock(cx, cy, cz, 54);
-                    if (w.getBlock(cx, cy, cz) == 54) { b.take(54, 1); br.say("The market chest is down."); return true; }
+                    if (w.getBlock(cx, cy, cz) == 54) { b.take(54, 1); m.y = cy; m.d.y = cy; br.say("The market chest is down."); return true; }
                 }
             }
             return true;
@@ -258,7 +292,7 @@ public final class Town {
                 return quarry(br, m, 24);
             }
             for (int[] c : path(w, m, i)) {
-                int top = w.getHeight(c[0], c[1]) - 1, id = w.getBlock(c[0], top, c[1]);
+                int top = groundY(w, c[0], c[1]) - 1, id = w.getBlock(c[0], top, c[1]);
                 if (id != 2 && id != 3) continue;
                 if (flat(b, c[0] + 0.5, c[1] + 0.5) > 3.5) { if (++m.walk > 400) { w.setBlock(c[0], top, c[1], 4); m.walk = 0; } else b.walkTo(c[0] + 0.5, top + 1, c[1] + 0.5, 2.5); return true; }
                 m.walk = 0;
@@ -318,7 +352,7 @@ public final class Town {
             br.tx = m.x + RND.nextInt(7) - 3; br.tz = m.z + 8 - RND.nextInt(rows * 10 + 12); m.walk = 400;
         }
         m.walk--;
-        b.walkTo(br.tx + 0.5, w.getHeight(br.tx, br.tz), br.tz + 0.5, 1.5);
+        b.walkTo(br.tx + 0.5, groundY(w, br.tx, br.tz), br.tz + 0.5, 1.5);
         return true;
     }
 
