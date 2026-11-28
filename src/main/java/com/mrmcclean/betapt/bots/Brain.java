@@ -745,8 +745,113 @@ public class Brain {
             if (ok) blk.dropItems(Names.world(b), x, y, z, meta);
             blk.onBroken(Names.world(b), x, y, z, meta);
             if (h != null && toolKind(h) >= 0) { h.takeDamageAndBreak(1); tidyBroken(); }
+            if (isTimberLog(id)) fellTree(x, y, z, id);
         }
         return true;
+    }
+
+    // ------------------------------------------------------------------ verified bot timber
+
+    private boolean isTimberLog(int id) {
+        if (id == 17) return true;
+        if (id == 5 || id <= 0) return false;
+        String k = Bots.key(id);
+        return (k.contains("log") || k.contains("trunk")) && !k.contains("plank");
+    }
+
+    private boolean isTimberLeaves(int id) {
+        return id == 18 || Bots.key(id).contains("leaves");
+    }
+
+    private boolean isTreeSoil(int id) {
+        if (id == 2 || id == 3 || id == 12 || id == 13 || id == 60) return true;
+        String k = Bots.key(id);
+        return k.contains("dirt") || k.contains("grass") || k.contains("soil") || k.contains("moss");
+    }
+
+    /**
+     * Fells the rest of a verified natural tree after its bottom log was chopped. Verifies natural soil under
+     * the trunk base, zero adjacent built blocks, a real leaf canopy on top, and reasonable tree size so
+     * cabins, town houses, bridges, and log walls are never touched.
+     */
+    private void fellTree(int x, int y, int z, int id) {
+        if (!BotConfig.timber) return;
+        Block blk = Bots.block(id);
+        if (blk == null) return;
+        // 1. Trunk base must rest on natural soil (not cobblestone, planks, or built foundations)
+        int baseY = y;
+        for (int i = 0; i < 4 && baseY > 2 && Names.world(b).getBlock(x, baseY - 1, z) == id; i++) baseY--;
+        if (!isTreeSoil(Names.world(b).getBlock(x, baseY - 1, z))) return;
+
+        // 2. BFS connected logs of the same kind upward, checking bounds, protection, built neighbours, and leaves
+        List<int[]> logs = new ArrayList<>();
+        Set<Long> seen = new HashSet<>();
+        ArrayDeque<int[]> q = new ArrayDeque<>();
+        q.add(new int[]{x, y, z});
+        seen.add(key(x, y, z));
+        int leaves = 0, maxLogY = y, maxLeafY = Integer.MIN_VALUE;
+        int[][] dirs = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};
+        while (!q.isEmpty()) {
+            int[] c = q.poll();
+            for (int[] d : dirs) {
+                int nid = Names.world(b).getBlock(c[0] + d[0], c[1] + d[1], c[2] + d[2]);
+                if (nid != 0 && nid != id && (BUILT.contains(nid) || Names.world(b).getBlockEntity(c[0] + d[0], c[1] + d[1], c[2] + d[2]) != null)) return;
+            }
+            for (int dx = -1; dx <= 1; dx++)
+                for (int dy = 0; dy <= 1; dy++)
+                    for (int dz = -1; dz <= 1; dz++) {
+                        int nx = c[0] + dx, ny = c[1] + dy, nz = c[2] + dz;
+                        if (ny < y || ny > y + 32 || ny > 126 || Math.abs(nx - x) > 8 || Math.abs(nz - z) > 8) continue;
+                        if (!seen.add(key(nx, ny, nz))) continue;
+                        int nid = Names.world(b).getBlock(nx, ny, nz);
+                        if (nid == id) {
+                            if (logs.size() >= 128 || !mayBreak(nx, ny, nz, nid)) return;
+                            logs.add(new int[]{nx, ny, nz});
+                            q.add(new int[]{nx, ny, nz});
+                            if (ny > maxLogY) maxLogY = ny;
+                        } else if (isTimberLeaves(nid)) {
+                            leaves++;
+                            if (ny > maxLeafY) maxLeafY = ny;
+                        }
+                    }
+        }
+        // 3. Require a real leaf canopy (>= 6 leaves and at least one at or above the top log)
+        if (logs.isEmpty() || leaves < 6 || maxLeafY < maxLogY) return;
+
+        int done = 0;
+        for (int[] l : logs) {
+            if (Names.world(b).getBlock(l[0], l[1], l[2]) != id || !mayBreak(l[0], l[1], l[2], id)) continue;
+            int m = Names.world(b).getBlockMetadata(l[0], l[1], l[2]);
+            if (done < 10) Names.breakEffect(Names.world(b), l[0], l[1], l[2], id, m);
+            if (Names.world(b).setBlock(l[0], l[1], l[2], 0)) {
+                blk.dropItems(Names.world(b), l[0], l[1], l[2], m);
+                blk.onBroken(Names.world(b), l[0], l[1], l[2], m);
+                ItemStack h = held();
+                if (h != null && toolKind(h) >= 0) { h.takeDamageAndBreak(1); tidyBroken(); }
+                done++;
+            }
+        }
+        // 4. Drop orphaned leaves around the felled trunk (keep any leaves supported by a neighbouring tree)
+        Set<Long> checked = new HashSet<>();
+        for (int[] l : logs)
+            for (int dx = -4; dx <= 4; dx++) for (int dy = -2; dy <= 4; dy++) for (int dz = -4; dz <= 4; dz++) {
+                int lx = l[0] + dx, ly = l[1] + dy, lz = l[2] + dz;
+                if (ly < 1 || ly > 126 || !checked.add(key(lx, ly, lz))) continue;
+                int lid = Names.world(b).getBlock(lx, ly, lz);
+                if (!isTimberLeaves(lid) || logNear(lx, ly, lz)) continue;
+                int lm = Names.world(b).getBlockMetadata(lx, ly, lz);
+                Names.world(b).setBlock(lx, ly, lz, 0);
+                Block lb = Bots.block(lid);
+                if (lb != null) lb.dropItems(Names.world(b), lx, ly, lz, lm);
+            }
+    }
+
+    private boolean logNear(int x, int y, int z) {
+        for (int dx = -4; dx <= 4; dx++) for (int dy = -4; dy <= 4; dy++) for (int dz = -4; dz <= 4; dz++) {
+            int nid = Names.world(b).getBlock(x + dx, y + dy, z + dz);
+            if (nid != 0 && isTimberLog(nid)) return true;
+        }
+        return false;
     }
 
     private static final Set<Integer> BUILT = new HashSet<>(Arrays.asList(4, 5, 20, 22, 23, 24, 25, 26, 27, 28, 29, 33, 34, 35, 41, 42, 43, 44, 45, 47, 50, 53, 54, 55, 57, 58, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 75, 76, 77, 85, 89, 91, 92, 93, 94, 96));

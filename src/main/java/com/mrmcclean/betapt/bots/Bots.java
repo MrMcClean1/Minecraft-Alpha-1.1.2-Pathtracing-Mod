@@ -304,8 +304,9 @@ public final class Bots {
             case "chests": BotConfig.othersChests = flag(a, BotConfig.othersChests); BotConfig.save(); tell(p, "Bots may use chests away from home: " + BotConfig.othersChests); return;
             case "anyone": BotConfig.anyoneCommands = flag(a, BotConfig.anyoneCommands); BotConfig.save(); tell(p, "Anyone may give bots orders: " + BotConfig.anyoneCommands); return;
             case "map": BotConfig.showOnMap = flag(a, BotConfig.showOnMap); BotConfig.save(); tell(p, "Bots on the minimap: " + BotConfig.showOnMap); return;
+            case "timber": BotConfig.timber = flag(a, BotConfig.timber); BotConfig.save(); tell(p, "Bot timber (verified trees): " + (BotConfig.timber ? "on" : "off") + "."); return;
             default:
-                tell(p, "/bot on|off, spawn [name], list, remove <name>, tp <name>, model [name] [url] | model off|on, grief|chests|anyone|map on|off, town [on|off|start|stop], doctor [on|off], voice [on|off], next, guide [on|off], nametags [on|off], chat [all|replies|off], invulnerable [on|off]");
+                tell(p, "/bot on|off, spawn [name], list, remove <name>, tp <name>, model [name] [url] | model off|on, grief|chests|anyone|map|timber on|off, town [on|off|start|stop], doctor [on|off], voice [on|off], next, guide [on|off], nametags [on|off], chat [all|replies|off], invulnerable [on|off]");
                 tell(p, "Talk to a bot by name: \"Ezra follow me\", \"Ezra bring me 16 iron\", \"Ezra set up a base here\",");
                 tell(p, "\"Ezra keep me stocked with 32 coal\", \"Ezra put things away\", \"bots guard\". Right-click a bot to give it what you hold.");
         }

@@ -13,7 +13,7 @@ public class BotsScreen extends Screen {
 
     public BotsScreen(Screen parent) { this.parent = parent; }
 
-    private static final int COUNT = 14, ROW = 22;
+    private static final int COUNT = 15, ROW = 22;
 
     /** The first row: the block (toggles, a gap, Done) centred, with room for the title above when there is. */
     private static int top(int h) { int block = (COUNT + 1) / 2 * ROW + 4 + 20; return Math.max(14, Math.min(h / 6, (h - block) / 2)); }
@@ -50,6 +50,7 @@ public class BotsScreen extends Screen {
             case 12 -> "Bots (all of it): " + onOff(BotConfig.enabled);
             case 13 -> "Bot chat: " + BotConfig.botChat;
             case 14 -> "Player invulnerable: " + onOff(BotConfig.invulnerable);
+            case 15 -> "Bot timber: " + onOff(BotConfig.timber);
             default -> "";
         };
     }
@@ -70,6 +71,7 @@ public class BotsScreen extends Screen {
             case 11 -> BotConfig.nametags = !BotConfig.nametags;
             case 12 -> BotConfig.enabled = !BotConfig.enabled;
             case 14 -> BotConfig.invulnerable = !BotConfig.invulnerable;
+            case 15 -> BotConfig.timber = !BotConfig.timber;
             case 13 -> BotConfig.botChat = BotConfig.botChat.equals("all") ? "replies" : BotConfig.botChat.equals("replies") ? "off" : "all";
             case 200 -> { this.minecraft.openScreen(this.parent); return; }
             default -> { return; }

@@ -40,6 +40,8 @@ public final class BotConfig {
     public static String botChat = "replies"; // quiet unless spoken to (or working on your order); all: updates and small talk too
     public static boolean towns = true;
     public static int townDaysPerHouse = 1;
+    /** Bots fell whole verified trees when Timber is enabled (off via /bot timber off, Bots menu, or classicbots.properties). */
+    public static boolean timber = true;
     /** Optional: "why isn't my furnace working?" answered by the bot (/bot doctor on). */
     public static boolean machineDoctor = false;
     /** Optional: voice chat (hold the voice key to talk to the bot you look at; bots' lines are spoken). Files in .minecraft/classicbots-voice. */
@@ -78,6 +80,7 @@ public final class BotConfig {
         if (!botChat.equals("all") && !botChat.equals("replies") && !botChat.equals("off")) botChat = "replies";
         towns = b(p, "towns", towns);
         townDaysPerHouse = i(p, "townDaysPerHouse", townDaysPerHouse);
+        timber = b(p, "timber", timber);
         machineDoctor = b(p, "machineDoctor", machineDoctor);
         voiceChat = b(p, "voiceChat", voiceChat);
         voiceKey = p.getProperty("voice.key", voiceKey).trim(); voiceStt = p.getProperty("voice.stt", voiceStt).trim(); voiceTts = p.getProperty("voice.tts", voiceTts).trim();
@@ -111,6 +114,7 @@ public final class BotConfig {
         p.setProperty("botChat", botChat);
         p.setProperty("towns", "" + towns);
         p.setProperty("townDaysPerHouse", "" + townDaysPerHouse);
+        p.setProperty("timber", "" + timber);
         p.setProperty("machineDoctor", "" + machineDoctor);
         p.setProperty("voiceChat", "" + voiceChat);
         p.setProperty("voice.key", voiceKey); p.setProperty("voice.stt", voiceStt); p.setProperty("voice.tts", voiceTts);
