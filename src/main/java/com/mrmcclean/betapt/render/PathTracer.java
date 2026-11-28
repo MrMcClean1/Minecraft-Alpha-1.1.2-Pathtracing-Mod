@@ -117,7 +117,8 @@ public final class PathTracer {
     private final BlockTable blocks = new BlockTable();
     private int program;      // debug map
     private int traceProgram; // primary rays only, flat lighting (M3)
-    private int pathProgram, exposureProgram, tonemapProgram; // M4
+    private int pathProgram, exposureProgram, tonemapProgram, bloomProgram; // M4 + Cinematic bloom
+    private int bloomA, bloomB, bloomW, bloomH;
     private int hdr;          // linear light, 16-bit float per channel
     private int depthTex;     // M6: exact ray distance per pixel, turned into the depth buffer by present.frag
     private int presentProgram, presentVao;
@@ -233,7 +234,8 @@ public final class PathTracer {
         BETA("Beta", 0f, 1f, 0f, false, HELD_OFF, HAND_BETA, false, DENOISER_STANDARD, REFLECT_OFF, 1, 0),
         FAITHFUL("Faithful", DEFAULT_REALISM, 1f, DEFAULT_CLOUD_SHADOWS, true, HELD_EVERYONE, HAND_BETA, true, DENOISER_ADVANCED, REFLECT_WATER, 1,
                 FX_WET | FX_GODRAYS),
-        REALISTIC("Realistic", 1f, 1f, 0.85f, true, HELD_EVERYONE, HAND_TRACED, true, DENOISER_ADVANCED, REFLECT_ALL, 2, 63);
+        REALISTIC("Realistic", 1f, 1f, 0.85f, true, HELD_EVERYONE, HAND_TRACED, true, DENOISER_ADVANCED, REFLECT_ALL, 2, 63),
+        CINEMATIC("Cinematic", 0.85f, 1f, 0.75f, true, HELD_EVERYONE, HAND_TRACED, true, DENOISER_ADVANCED, REFLECT_ALL, 2, 63 | FX_CINEMATIC);
         public final String label;
         final float realism, brightness, clouds;
         final boolean tracedMobs;
@@ -271,6 +273,7 @@ public final class PathTracer {
     public void setEffects(int fx) {
         fxWet = (fx & FX_WET) != 0; fxHaze = (fx & FX_HAZE) != 0; fxSparkle = (fx & FX_SPARKLE) != 0;
         fxGodRays = (fx & FX_GODRAYS) != 0; fxWaving = (fx & FX_WAVING) != 0; fxWaves = (fx & FX_WAVES) != 0;
+        fxCinematic = (fx & FX_CINEMATIC) != 0;
     }
 
     /** The preset the current settings match, or null ("Custom"). */
@@ -309,6 +312,7 @@ public final class PathTracer {
     public boolean fxGodRays = true;  // sun shafts through leaves and gaps
     public boolean fxWaving = false;  // leaves, grass, flowers and crops sway
     public boolean fxWaves = false;
+    public boolean fxCinematic = false; // volumetric clouds, valley mist, HDR bloom, ACES grading, caustics
     /** Effects > Nights: Dark: the picture is dimmed at night (up to 40% at midnight) for Beta's darker nights. */
     public boolean darkNights = false;
     /**
@@ -316,12 +320,18 @@ public final class PathTracer {
      * against a wall, the hand reaches into it), as Beta draws them on top of everything; true = blocks hide them.
      */
     public boolean handCollide = false;   // water ripples (reflections shimmer)
-    public static final int FX_WET = 1, FX_HAZE = 2, FX_SPARKLE = 4, FX_GODRAYS = 8, FX_WAVING = 16, FX_WAVES = 32;
+    public static final int FX_WET = 1, FX_HAZE = 2, FX_SPARKLE = 4, FX_GODRAYS = 8, FX_WAVING = 16, FX_WAVES = 32, FX_CINEMATIC = 64, FX_CINEMATIC_SKY = 128;
 
     /** The effects that are on, as pt_base.glsl's FX_* bits. */
     public int effects() {
         return (fxWet ? FX_WET : 0) | (fxHaze ? FX_HAZE : 0) | (fxSparkle ? FX_SPARKLE : 0) | (fxGodRays ? FX_GODRAYS : 0)
-                | (fxWaving ? FX_WAVING : 0) | (fxWaves ? FX_WAVES : 0);
+                | (fxWaving ? FX_WAVING : 0) | (fxWaves ? FX_WAVES : 0) | (fxCinematic ? FX_CINEMATIC : 0);
+    }
+
+    private int shaderEffects(Minecraft mc) {
+        int fx = effects();
+        if (Dim.nether(mc.world)) return fx & ~(FX_WET | FX_GODRAYS | FX_HAZE);
+        return fxCinematic ? (fx | FX_CINEMATIC_SKY) : fx;
     }
     /** This frame's effect values: seconds of game time, wind, rain wetness at the camera. */
     private float fxTime, fxWind, fxWetness;
@@ -408,6 +418,7 @@ public final class PathTracer {
         pathProgram = ShaderUtil.loadCompute("pathtrace.comp");
         exposureProgram = ShaderUtil.loadCompute("exposure.comp");
         tonemapProgram = ShaderUtil.loadCompute("tonemap.comp");
+        bloomProgram = ShaderUtil.loadCompute("bloom.comp");
         presentProgram = ShaderUtil.loadGraphics("present.vert", "present.frag");
         upscaleProgram = ShaderUtil.loadCompute("upscale.comp");
         rcasProgram = ShaderUtil.loadCompute("rcas.comp");
@@ -629,21 +640,71 @@ public final class PathTracer {
         int t = VkBridge.dlssRR(hdr, fsrDepth, fsrMotion, albedoTex, rrSpecular, rrNormal, width, height, outW, outH, dlssMode(), c, reset);
         if (t == 0) return false;
         // exposure (measured on this frame's noisy picture) and the tone map, at the window's size
+        boolean doBloom = fxCinematic && bloomProgram != 0;
+        if (doBloom) computeBloom(t, outW, outH);
         GL20.glUseProgram(tonemapProgram);
         uni2i(tonemapProgram, "uResolution", outW, outH);
         uni1f(tonemapProgram, "uBrightness", brightness);
+        uni1i(tonemapProgram, "uCinematic", doBloom ? 1 : 0);
         bindTexture(1, GL11.GL_TEXTURE_2D, t);
         bindSkyFog();
+        if (doBloom) bindTexture(3, GL11.GL_TEXTURE_2D, bloomA);
         GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 6, exposureBuffer);
         GL42.glBindImageTexture(0, rrOut, 0, false, 0, GL15.GL_WRITE_ONLY, GL11.GL_RGBA8);
         GL43.glDispatchCompute((outW + 7) / 8, (outH + 7) / 8, 1);
         GL42.glMemoryBarrier(GL42.GL_FRAMEBUFFER_BARRIER_BIT | GL42.GL_TEXTURE_FETCH_BARRIER_BIT);
         GL42.glBindImageTexture(0, 0, 0, false, 0, GL15.GL_READ_ONLY, GL11.GL_RGBA8);
+        if (doBloom) bindTexture(3, GL11.GL_TEXTURE_2D, 0);
         bindTexture(2, GL11.GL_TEXTURE_2D, 0);
         bindTexture(1, GL11.GL_TEXTURE_2D, 0);
         GL13.glActiveTexture(GL13.GL_TEXTURE0);
         presentTex = rrOut;
         return true;
+    }
+
+    /** Quarter-res separable HDR bloom for Cinematic mode (downsample + H blur + V blur -> bloomA). */
+    private void computeBloom(int hdrTex, int srcW, int srcH) {
+        int bw = Math.max(8, srcW / 4), bh = Math.max(8, srcH / 4);
+        if (bw != bloomW || bh != bloomH || bloomA == 0) {
+            if (bloomA != 0) { GL11.glDeleteTextures(bloomA); GL11.glDeleteTextures(bloomB); }
+            bloomA = newLinearImage(bw, bh);
+            bloomB = newLinearImage(bw, bh);
+            bloomW = bw; bloomH = bh;
+        }
+        int bx = (bw + 7) / 8, by = (bh + 7) / 8;
+        GL20.glUseProgram(bloomProgram);
+        uni2i(bloomProgram, "uDstSize", bw, bh);
+        uni1f(bloomProgram, "uBrightness", brightness);
+        GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 6, exposureBuffer);
+        uni1i(bloomProgram, "uMode", 0);
+        bindTexture(1, GL11.GL_TEXTURE_2D, hdrTex);
+        bindSkyFog();
+        bindImage(0, bloomA, GL15.GL_WRITE_ONLY);
+        GL43.glDispatchCompute(bx, by, 1);
+        GL42.glMemoryBarrier(GL42.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL42.GL_TEXTURE_FETCH_BARRIER_BIT);
+        uni1i(bloomProgram, "uMode", 1);
+        bindTexture(1, GL11.GL_TEXTURE_2D, bloomA);
+        bindImage(0, bloomB, GL15.GL_WRITE_ONLY);
+        GL43.glDispatchCompute(bx, by, 1);
+        GL42.glMemoryBarrier(GL42.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL42.GL_TEXTURE_FETCH_BARRIER_BIT);
+        uni1i(bloomProgram, "uMode", 2);
+        bindTexture(1, GL11.GL_TEXTURE_2D, bloomB);
+        bindImage(0, bloomA, GL15.GL_WRITE_ONLY);
+        GL43.glDispatchCompute(bx, by, 1);
+        GL42.glMemoryBarrier(GL42.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT | GL42.GL_TEXTURE_FETCH_BARRIER_BIT);
+        GL42.glBindImageTexture(0, 0, 0, false, 0, GL15.GL_READ_ONLY, GL11.GL_RGBA8);
+    }
+
+    private static int newLinearImage(int w, int h) {
+        int t = GL11.glGenTextures();
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, t);
+        GL42.glTexStorage2D(GL11.GL_TEXTURE_2D, 1, GL30.GL_RGBA16F, w, h);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER, GL11.GL_LINEAR);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER, GL11.GL_LINEAR);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S, GL12.GL_CLAMP_TO_EDGE);
+        GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T, GL12.GL_CLAMP_TO_EDGE);
+        GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
+        return t;
     }
 
     /** RTX Dynamic Vibrance on the finished picture, when it is window sized (it is after every upscaler) and 8 or 16 bit. */
@@ -965,13 +1026,19 @@ public final class PathTracer {
             copyExposureForReadback();
 
             // 3. tone map into the 8-bit image that gets shown
+            boolean doBloom = fxCinematic && bloomProgram != 0;
+            if (doBloom) computeBloom(hdr, width, height);
             GL20.glUseProgram(tonemapProgram);
             uni2i(tonemapProgram, "uResolution", width, height);
             uni1f(tonemapProgram, "uBrightness", brightness);
+            uni1i(tonemapProgram, "uCinematic", doBloom ? 1 : 0);
+            bindTexture(1, GL11.GL_TEXTURE_2D, hdr);
             GL42.glBindImageTexture(0, image, 0, false, 0, GL15.GL_WRITE_ONLY, GL11.GL_RGBA8);
             bindSkyFog();
+            if (doBloom) bindTexture(3, GL11.GL_TEXTURE_2D, bloomA);
             GL43.glDispatchCompute(groupsX, groupsY, 1);
             GL42.glMemoryBarrier(GL42.GL_FRAMEBUFFER_BARRIER_BIT);
+            if (doBloom) bindTexture(3, GL11.GL_TEXTURE_2D, 0);
             bindTexture(2, GL11.GL_TEXTURE_2D, 0);
             GL13.glActiveTexture(GL13.GL_TEXTURE0);
             stages.stamp(); // end of exposure + tone map
@@ -1054,7 +1121,16 @@ public final class PathTracer {
         // far terrain from the saved chunks, over the sky past the tracer's range (off unless switched on)
         if (FarTerrain.enabled && pathView()) {
             float day = Math.max(0f, Math.min(1f, sunDir[1] * 2f + 0.5f));
-            try { FarTerrain.draw(lastCam, width, height, outW, outH, tanHalfFov * aspect, tanHalfFov, maxDist * 0.95f, sunDir, lastFog, day, 128); } catch (Throwable ignored) {}
+            float[] fogUse = lastFog;
+            if (fxCinematic) {
+                float rain = Math.max(0f, Math.min(1f, fxWind > 0.35f ? (fxWind - 0.35f) / 0.65f : 0f));
+                float r = 0.72f * day + 0.14f * (1f - day);
+                float g = 0.82f * day + 0.17f * (1f - day);
+                float b = 0.93f * day + 0.24f * (1f - day);
+                float ov = 0.76f * day + 0.16f * (1f - day);
+                fogUse = new float[]{r + (ov - r) * rain, g + (ov - g) * rain, b + (ov - b) * rain};
+            }
+            try { FarTerrain.draw(lastCam, width, height, outW, outH, tanHalfFov * aspect, tanHalfFov, maxDist * 0.95f, sunDir, fogUse, day, 128); } catch (Throwable ignored) {}
         }
         GL30.glBindVertexArray(0);
         GL42.glBindImageTexture(0, 0, 0, false, 0, GL15.GL_READ_ONLY, GL11.GL_RGBA8);
@@ -1187,7 +1263,7 @@ public final class PathTracer {
         fxWind = 0.35f + 0.65f * rain;
         float wetHere = 0f;
         fxWetness = rain * wetHere;
-        uni1i(p, "uEffects", Dim.nether(mc.world) ? effects() & ~(FX_WET | FX_GODRAYS | FX_HAZE) : effects());
+        uni1i(p, "uEffects", shaderEffects(mc));
         uni1f(p, "uTime", fxTime);
         uni1f(p, "uWind", fxWind);
         uni1f(p, "uWet", fxWetness);
@@ -1427,7 +1503,7 @@ public final class PathTracer {
         // effects (vkpath.comp Params.fx, Params.ifx)
         f[44] = fxTime; f[45] = fxWind; f[46] = fxWetness;
         f[48] = photoFrame && !focusFrame ? PhotoMode.aperture : 0f; f[49] = PhotoMode.focus; // vkpath.comp Params.dof
-        iv[12] = Dim.nether(mc.world) ? effects() & ~(FX_WET | FX_GODRAYS | FX_HAZE) : effects();
+        iv[12] = shaderEffects(mc);
         iv[13] = handEntity(); // vkpath.comp Params.ifx.y
         iv[14] = grassOverlay; // Params.ifx.z
         iv[15] = camInWater ? 1 : 0; // Params.ifx.w

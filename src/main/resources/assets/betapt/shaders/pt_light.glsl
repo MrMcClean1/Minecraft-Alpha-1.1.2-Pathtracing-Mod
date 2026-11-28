@@ -15,7 +15,105 @@ vec3 sunLight() {
 }
 vec3 moonLight() { return vec3(0.55, 0.65, 1.0) * uMoon * moonUp() * (1.0 - 0.8 * uRain); }
 
+// Physical Rayleigh + Mie atmospheric sky dome for Cinematic mode (linear HDR).
+vec3 cinematicSkyBase(vec3 d) {
+    float up = clamp(d.y, 0.0, 1.0);
+    float sunH = clamp(uSunDir.y, -0.35, 1.0);
+    float day = smoothstep(-0.10, 0.25, sunH);
+    float sunset = smoothstep(-0.12, 0.06, sunH) * (1.0 - smoothstep(0.06, 0.34, sunH));
+
+    // Clear daylight: deep azure zenith fading to misty powder-blue horizon
+    vec3 dayZenith  = vec3(0.065, 0.215, 0.58);
+    vec3 dayHorizon = vec3(0.50, 0.68, 0.88);
+    vec3 sunZenith  = vec3(0.045, 0.095, 0.28);
+    vec3 sunHorizon = vec3(0.95, 0.42, 0.18);
+    vec3 nightZen   = vec3(0.004, 0.009, 0.026);
+    vec3 nightHor   = vec3(0.015, 0.025, 0.052);
+
+    vec3 zenith  = mix(nightZen, mix(dayZenith, sunZenith, sunset * 0.85), day);
+    vec3 horizon = mix(nightHor, mix(dayHorizon, sunHorizon, sunset * 0.90), day);
+
+    float hFade = pow(1.0 - up, 3.2);
+    vec3 col = mix(zenith, horizon, hFade);
+
+    // Mie forward scattering glow around the sun
+    float ds = max(dot(d, uSunDir), 0.0);
+    vec3 mieTint = mix(vec3(1.0, 0.42, 0.14), vec3(1.0, 0.94, 0.84), smoothstep(-0.02, 0.32, sunH));
+    float mie = (pow(ds, 6.0) * 0.28 + pow(ds, 48.0) * 0.55) * smoothstep(-0.12, 0.08, sunH) * (1.0 - 0.78 * uRain);
+    col += mieTint * mie * (0.45 + 0.55 * hFade);
+
+    // Overcast / rain dome: bright pale silvery-grey sky matching Derivative's rainy atmosphere
+    vec3 overcastZen = mix(vec3(0.012, 0.015, 0.024), vec3(0.36, 0.40, 0.45), day);
+    vec3 overcastHor = mix(vec3(0.022, 0.026, 0.036), vec3(0.56, 0.60, 0.65), day);
+    vec3 overcast = mix(overcastZen, overcastHor, pow(1.0 - up, 1.8));
+    col = mix(col, overcast, clamp(uRain * 0.92, 0.0, 0.92));
+
+    if (d.y < 0.0) col = mix(col, horizon * (1.0 - 0.35 * uRain), clamp(-d.y * 4.0, 0.0, 1.0));
+    return col;
+}
+
+// 3D volumetric cumulus cloud slab with Beer-Lambert self-shadowing and silver-lining scatter (zero scene rays).
+void volumetricClouds(vec3 roW, vec3 d, inout vec3 skyCol) {
+    if (d.y < 0.015) return;
+    float y0 = max(uCloud.x + 12.0, 136.0);
+    float y1 = y0 + 44.0;
+    float t0 = (y0 - roW.y) / d.y;
+    float t1 = (y1 - roW.y) / d.y;
+    if (t1 < 0.0) return;
+    t0 = max(t0, 0.0);
+    if (t0 > 1800.0) return;
+    t1 = min(t1, t0 + 420.0);
+
+    const int STEPS = 7;
+    float dt = (t1 - t0) / float(STEPS);
+    float t = t0 + dt * rnd();
+
+    float sunH = clamp(uSunDir.y, -0.2, 1.0);
+    float day = smoothstep(-0.08, 0.22, sunH);
+    vec3 lDir = sunH > -0.05 ? uSunDir : -uSunDir;
+    float cosTheta = dot(d, lDir);
+    // Henyey-Greenstein forward scattering for bright silver-white sunlit rims
+    const float g = 0.62;
+    float hg = (1.0 - g * g) / (4.0 * PI * pow(1.0 + g * g - 2.0 * g * cosTheta, 1.5));
+    float phase = mix(0.28, 1.0, clamp(hg * 0.85, 0.0, 2.2));
+
+    vec3 sunCol = mix(vec3(0.08, 0.12, 0.22), mix(vec3(1.15, 0.52, 0.22), vec3(1.15, 1.10, 1.02), smoothstep(0.0, 0.32, sunH)), day);
+    sunCol = mix(sunCol, vec3(0.58, 0.62, 0.66) * max(day, 0.08), uRain * 0.85);
+    vec3 ambTop = mix(vec3(0.014, 0.022, 0.045), vec3(0.55, 0.66, 0.82), day);
+    vec3 ambBot = mix(vec3(0.008, 0.012, 0.024), vec3(0.24, 0.30, 0.38), day);
+    ambTop = mix(ambTop, vec3(0.45, 0.49, 0.54) * max(day, 0.08), uRain * 0.8);
+    ambBot = mix(ambBot, vec3(0.22, 0.25, 0.29) * max(day, 0.08), uRain * 0.8);
+
+    vec3 accum = vec3(0.0);
+    float trans = 1.0;
+    for (int i = 0; i < STEPS; i++) {
+        vec3 pos = roW + d * t;
+        float den = cloudDensity(pos, y0, y1, uRain);
+        if (den > 0.004) {
+            float hFrac = clamp((pos.y - y0) / (y1 - y0), 0.0, 1.0);
+            float denSun = cloudDensity(pos + lDir * 14.0, y0, y1, uRain) + 0.5 * cloudDensity(pos + lDir * 30.0, y0, y1, uRain);
+            float beer = exp(-denSun * 2.5);
+            float powder = 1.0 - 0.65 * exp(-den * 4.5);
+            vec3 directC = sunCol * (beer * powder * (0.45 + 0.95 * phase));
+            vec3 ambC = mix(ambBot, ambTop, smoothstep(0.0, 0.85, hFrac));
+            vec3 sampleCol = directC + ambC;
+            float alpha = 1.0 - exp(-den * dt * 0.048);
+            accum += trans * sampleCol * alpha;
+            trans *= 1.0 - alpha;
+            if (trans < 0.03) break;
+        }
+        t += dt;
+    }
+    float distFade = exp(-t0 / 1300.0);
+    float cloudAlpha = (1.0 - trans) * distFade;
+    if (cloudAlpha > 1e-4) {
+        vec3 cloudCol = accum / max(1.0 - trans, 1e-4);
+        skyCol = mix(skyCol, cloudCol, cloudAlpha);
+    }
+}
+
 vec3 skyRadiance(vec3 d) {
+    if (fxOn(FX_CINEMATIC_SKY)) return cinematicSkyBase(d);
     float up = clamp(d.y, 0.0, 1.0);
     vec3 col = mix(uFogColor, uSkyColor, pow(up, 0.5));
     // Beta's sunrise/sunset glow: strongest on the horizon toward the sun
@@ -25,8 +123,33 @@ vec3 skyRadiance(vec3 d) {
     return srgbToLinear(col);
 }
 
-// What a camera ray sees when it misses everything: sky, Beta-sized sun, moon, stars.
+// What a camera ray sees when it misses everything: sky, sun, moon, stars, and volumetric clouds in Cinematic mode.
 vec3 skyView(vec3 d) {
+    if (fxOn(FX_CINEMATIC_SKY)) {
+        vec3 col = cinematicSkyBase(d);
+        float ds = dot(d, uSunDir);
+        float vis = smoothstep(-0.08, 0.05, uSunDir.y) * (1.0 - uRain * 0.92);
+        if (ds > 0.0 && vis > 0.0) {
+            // Soft round atmospheric sun disc + glowing glare (feeds HDR bloom)
+            float disc = smoothstep(0.9988, 0.9996, ds);
+            float glare = pow(ds, 180.0) * 1.4 + pow(ds, 24.0) * 0.25;
+            vec3 sunTint = mix(vec3(1.0, 0.48, 0.18), vec3(1.0, 0.96, 0.88), smoothstep(0.0, 0.30, uSunDir.y));
+            col += sunTint * (disc * 7.0 + glare) * vis;
+        }
+        float mVis = smoothstep(-0.08, 0.05, -uSunDir.y) * (1.0 - uRain * 0.9);
+        if (ds < 0.0 && mVis > 0.0) {
+            float mDisc = smoothstep(0.9992, 0.9997, -ds);
+            float mHalo = pow(-ds, 90.0) * 0.18;
+            col += vec3(0.75, 0.84, 1.0) * (mDisc * 2.2 + mHalo) * mVis;
+        }
+        if (d.y > 0.02) {
+            vec3 g = floor(d * 340.0);
+            uint hsh = pcg(uint(int(g.x) * 73856093) ^ uint(int(g.y) * 19349663) ^ uint(int(g.z) * 83492791));
+            if ((hsh & 1023u) < 2u) col += vec3(0.55, 0.68, 0.95) * (1.0 - uDaylight) * (1.0 - uRain) * smoothstep(0.02, 0.25, d.y);
+        }
+        volumetricClouds(vec3(uCamBlock) + uCamFrac, d, col);
+        return col;
+    }
     vec3 col = skyRadiance(d);
     // Beta draws the sun as a square 30 units wide at 100 units away
     vec3 s = uSunDir;
@@ -76,6 +199,13 @@ vec3 cosineSample(vec3 n) {
 float cloudCover(vec3 p, vec3 l) {
     if (uCloudShadow <= 0.0 || l.y < 0.02) return 0.0;
     vec3 w = p + vec3(uCamBlock);
+    if (fxOn(FX_CINEMATIC_SKY)) {
+        float y0 = max(uCloud.x + 12.0, 136.0);
+        float yMid = y0 + 14.0;
+        if (w.y >= yMid) return 0.0;
+        vec3 c = w + l * ((yMid - w.y) / l.y);
+        return clamp(cloudDensity(c, y0, y0 + 44.0, uRain) * 1.5, 0.0, 1.0);
+    }
     if (w.y >= uCloud.x) return 0.0;               // above the clouds
     vec3 c = w + l * ((uCloud.x - w.y) / l.y);     // where the ray crosses the cloud sheet
     vec2 texel = (vec2(c.x + uCloud.y, c.z)) * uCloud.z + vec2(0.0, uCloud.w);
@@ -426,6 +556,18 @@ void main() {
             // red: perceptual smoothness; green: F0 (0..229), 230+ = metal; alpha: glow (255 = none)
             if (sp.r > 0.0 || g > 0.5) m = vec4(pow(1.0 - sp.r, 2.0), g >= 229.5 ? 1.0 : sp.g, g >= 229.5 ? 1.0 : 0.0, 1.0);
             if (sp.a < 0.999) pbrGlow = h.albedo * sp.a * 3.0;
+        } else if (fxOn(FX_CINEMATIC) && h.ent == 0u && !h.plant && h.id != 18u && h.id != 161u && h.id != 20u && h.id != 79u) {
+            // Subtle procedural surface micro-relief when no LabPBR normal map is loaded
+            vec3 T, B;
+            if (faceFrame(gn, T, B)) {
+                vec3 wp = p + vec3(uCamBlock);
+                vec2 uvW = vec2(dot(wp, T), dot(wp, B)) * 7.5;
+                float n0 = valueNoise(uvW);
+                float nx = valueNoise(uvW + vec2(0.35, 0.0)) - n0;
+                float ny = valueNoise(uvW + vec2(0.0, 0.35)) - n0;
+                vec3 bn = normalize(gn + (T * nx + B * ny) * 0.22);
+                if (dot(bn, -d) > 0.0) n = bn;
+            }
         }
         // Effects: wet surfaces. While it rains here, whatever is open to the sky darkens and turns glossy, and
         // flat ground gathers puddles (smooth noise over the world) that reflect like still water.
@@ -498,10 +640,24 @@ void main() {
             float k = max(e0.r, max(e0.g, e0.b));
             if (k > 0.0) { glowAmt = clamp(k / 1.5, 0.0, 1.0); emit = h.albedo * uLavaGlow * glowAmt; }
         }
-        vec3 direct = ((uDebugMask & 1) == 0 ? sunAndMoon(p, n, 256.0) : vec3(0.0))
-                    + ((uDebugMask & 2) == 0 ? blockLights(p, n) : vec3(0.0));
+        vec3 directSun = (uDebugMask & 1) == 0 ? sunAndMoon(p, n, 256.0) : vec3(0.0);
+        if (fxOn(FX_CINEMATIC) && h.water && uSunDir.y > 0.05) {
+            // Animated underwater sunlight caustics on submerged sand/stone beds
+            vec3 wp = p + vec3(uCamBlock);
+            float depth = max(h.t - h.waterT, 0.0);
+            float caust = waterCaustics(wp.xz - uSunDir.xz * (depth * 0.35 / max(uSunDir.y, 0.25)));
+            directSun *= 0.72 + 0.95 * caust * exp(-depth * 0.10);
+        }
+        vec3 direct = directSun + ((uDebugMask & 2) == 0 ? blockLights(p, n) : vec3(0.0));
 
         vec3 indirect = bounceLight(p, n);
+
+        // Foliage subsurface translucency (sunlit backlit leaves & grass glow warm green)
+        if (fxOn(FX_CINEMATIC) && (h.plant || h.id == 18u || h.id == 161u) && uSunDir.y > 0.02) {
+            float skyOpen = smoothstep(0.02, 0.32, dot(indirect, vec3(0.3, 0.6, 0.1)));
+            float back = pow(max(dot(d, uSunDir), 0.0), 3.0) * 0.42 + max(0.0, -dot(n, uSunDir)) * 0.14;
+            direct += sunLight() * vec3(0.88, 1.08, 0.48) * back * skyOpen * (1.0 - uCloudShadow * cloudCover(p, uSunDir));
+        }
 
         // Beta-faithful floor: a little light everywhere so caves and nights stay playable
         vec3 ambient = vec3(uAmbient);
@@ -514,7 +670,20 @@ void main() {
         if (h.id == 10u || h.id == 11u) light = vec3(0.0);
         light *= 1.0 - glowAmt;
         albedo = h.albedo * h.transmit * (1.0 - 0.45 * wet); // wet things are darker
+        if (fxOn(FX_CINEMATIC) && max(emit.r, max(emit.g, emit.b)) > 0.01) {
+            // Boost HDR emissives so lanterns, torches, lava, and jack o'lanterns bloom cleanly
+            vec3 warmTint = (h.id == 50u || h.id == 51u || h.id == 91u || h.id == 62u) ? vec3(1.15, 0.88, 0.56) : vec3(1.0);
+            emit *= warmTint * 2.35;
+        }
         extra = (emit + pbrGlow) * h.transmit;
+
+        // Subtle direct sun specular sheen on non-plant surfaces in Cinematic mode (zero extra rays)
+        if (fxOn(FX_CINEMATIC) && !h.plant && h.id != 18u && h.id != 161u && h.id != 10u && h.id != 11u && dot(directSun, vec3(1.0)) > 0.02) {
+            vec3 hv = normalize(uSunDir - d);
+            float shin = mix(28.0, 96.0, max(wet, 1.0 - m.x));
+            float spec = pow(max(dot(n, hv), 0.0), shin) * mix(0.06, 0.35, max(wet, clamp(1.0 - m.x, 0.0, 1.0)));
+            extra += directSun * spec * h.transmit;
+        }
 
         // Effects: snow sparkle: a glinting texel that sees the sun, drawn sharp on top
         if (iSpark >= 0 && (fxHits & (1u << uint(iSpark))) == 0u) extra += sunLight() * sparkle * 8.0 * h.transmit;
@@ -541,7 +710,21 @@ void main() {
         geom = vec4(octEncode(gn), h.t, 1.0 + float(h.ent)); // w: 0 sky, 1 world, 2+ a mob (which one: its motion)
 
         float fog = clamp((h.t - uFogStart) / (uFogEnd - uFogStart), 0.0, 1.0);
-        skyFog = vec4(skyRadiance(d), fog);
+        if (fxOn(FX_CINEMATIC_SKY)) {
+            // Height-based valley mist & aerial perspective veiling distant peaks
+            float wy = p.y + float(uCamBlock.y);
+            float valley = exp(-max(wy - 62.0, 0.0) / 36.0);
+            float mistDensity = (0.0038 + 0.0052 * valley) * (1.0 + 1.35 * uRain);
+            float mist = 1.0 - exp(-h.t * mistDensity);
+            float fogMix = max(fog, mist * 0.78);
+            vec3 fogCol = cinematicSkyBase(normalize(vec3(d.x, max(d.y, 0.03), d.z)));
+            float sunH = clamp(uSunDir.y, -0.2, 1.0);
+            vec3 sunMie = mix(vec3(1.0, 0.48, 0.18), vec3(1.0, 0.94, 0.82), smoothstep(0.0, 0.30, sunH));
+            fogCol += sunMie * pow(max(dot(d, uSunDir), 0.0), 6.0) * 0.22 * smoothstep(-0.08, 0.12, sunH) * (1.0 - 0.8 * uRain);
+            skyFog = vec4(fogCol, clamp(fogMix, 0.0, 1.0));
+        } else {
+            skyFog = vec4(skyRadiance(d), fog);
+        }
     }
 
     // water surface: its own colour lit by sky and sun, laid over what's beneath
@@ -556,8 +739,9 @@ void main() {
         float skyVis = open < 0.5 ? 0.03 : mix(0.15, 1.0, open * open / 9.0);
         vec3 sunW = iWSun >= 0 && (fxHits & (1u << uint(iWSun))) == 0u ? sunLight() * dot(sn, uSunDir) : vec3(0.0);
         vec3 torch = iWTorch >= 0 && (fxHits & (1u << uint(iWTorch))) == 0u ? wTorch : vec3(0.0);
-        vec3 surf = h.waterColor * (skyRadiance(vec3(0, 1, 0)) * (0.25 + 0.75 * uDaylight) * faceShade * skyVis
-                                    + sunW + torch) * 0.26;
+        vec3 wCol = fxOn(FX_CINEMATIC) ? mix(h.waterColor, vec3(0.04, 0.14, 0.17), 0.58) : h.waterColor;
+        vec3 surf = wCol * (skyRadiance(vec3(0, 1, 0)) * (0.25 + 0.75 * uDaylight) * faceShade * skyVis
+                                    + sunW + torch) * (fxOn(FX_CINEMATIC) ? 0.34 : 0.26);
         // (Beta's water texture is nearly pure blue; any brighter and the blue channel
         //  overflows, the tone mapper blends it toward white, and it turns lilac.)
         albedo *= 1.0 - a;
@@ -568,8 +752,13 @@ void main() {
             // the light on the water sets how well it mirrors: bright (open sky, sun, a torch beside it) it is a clear
             // mirror, in a dark cave it is a dull black pool; lava is opaque and glows, so it never mirrors
             float wLit = clamp(max(skyVis * (0.25 + 0.75 * uDaylight), dot(sunW, vec3(0.3, 0.6, 0.1)) + 2.0 * dot(torch, vec3(0.3, 0.6, 0.1))), 0.0, 1.0);
-            float F = fresnel(0.02, dot(-d, wn)) * mix(0.3, 1.0, sqrt(wLit));
+            float f0 = fxOn(FX_CINEMATIC) ? 0.035 : 0.02;
+            float F = fresnel(f0, dot(-d, wn)) * mix(0.3, 1.0, sqrt(wLit));
             vec3 R = RW;
+            if (fxOn(FX_CINEMATIC) && dot(sunW, vec3(1.0)) > 0.02) {
+                vec3 hv = normalize(uSunDir - d);
+                R += sunLight() * pow(max(dot(wn, hv), 0.0), 220.0) * 3.2;
+            }
             albedo *= 1.0 - F;
             extra = extra * (1.0 - F) + F * R;
             if (!h.hit) skyFog.rgb = skyFog.rgb * (1.0 - F) + F * R;

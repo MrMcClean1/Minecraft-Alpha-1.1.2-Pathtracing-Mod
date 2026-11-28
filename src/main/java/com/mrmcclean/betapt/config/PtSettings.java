@@ -106,6 +106,7 @@ public final class PtSettings {
             pt.fxGodRays = Boolean.parseBoolean(p.getProperty("fx.godRays", Boolean.toString(pt.fxGodRays)));
             pt.fxWaving = Boolean.parseBoolean(p.getProperty("fx.wavingPlants", Boolean.toString(pt.fxWaving)));
             pt.fxWaves = Boolean.parseBoolean(p.getProperty("fx.waterWaves", Boolean.toString(pt.fxWaves)));
+            pt.fxCinematic = Boolean.parseBoolean(p.getProperty("fx.cinematic", Boolean.toString(pt.fxCinematic)));
             pt.darkNights = Boolean.parseBoolean(p.getProperty("nights.dark", Boolean.toString(pt.darkNights)));
             pt.handCollide = Boolean.parseBoolean(p.getProperty("hand.collide", Boolean.toString(pt.handCollide)));
             // photo mode (Effects > Photo, time-lapse...)
@@ -159,6 +160,7 @@ public final class PtSettings {
         p.setProperty("fx.godRays", Boolean.toString(pt.fxGodRays));
         p.setProperty("fx.wavingPlants", Boolean.toString(pt.fxWaving));
         p.setProperty("fx.waterWaves", Boolean.toString(pt.fxWaves));
+        p.setProperty("fx.cinematic", Boolean.toString(pt.fxCinematic));
         p.setProperty("nights.dark", Boolean.toString(pt.darkNights));
         p.setProperty("hand.collide", Boolean.toString(pt.handCollide));
         p.setProperty("photo.enabled", Boolean.toString(com.mrmcclean.betapt.render.PhotoMode.enabled));

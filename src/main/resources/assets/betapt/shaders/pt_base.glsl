@@ -83,22 +83,22 @@ bool gSolidLeaves = false;
 // pixels sit between 0.1 and 0.5 and used to be holes.
 const float ALPHA_CUT = 0.1;
 
-const int FX_WET = 1, FX_HAZE = 2, FX_SPARKLE = 4, FX_GODRAYS = 8, FX_WAVING = 16, FX_WAVES = 32;
+const int FX_WET = 1, FX_HAZE = 2, FX_SPARKLE = 4, FX_GODRAYS = 8, FX_WAVING = 16, FX_WAVES = 32, FX_CINEMATIC = 64, FX_CINEMATIC_SKY = 128;
 bool fxOn(int bit) { return (uEffects & bit) != 0; }
 
 // Waving plants: the texture slides a little inside its square, so the cut-out shape sways while the block
 // stays where it is (rays, shadows and the denoiser all see the same moving shape). Leaves drift as a whole;
 // grass, flowers, saplings, crops and reeds bend from the bottom (height 0) to the top (height 1).
-bool sways(uint id) { return id == 18u || id == 31u || id == 32u || id == 37u || id == 38u || id == 6u || id == 59u || id == 83u; }
+bool sways(uint id) { return id == 18u || id == 31u || id == 32u || id == 37u || id == 38u || id == 6u || id == 59u || id == 83u || id == 161u || id == 175u; }
 vec2 swayUV(uint id, ivec3 worldCell, float height) {
     if (!fxOn(FX_WAVING) || !sways(id)) return vec2(0.0);
     float ph = float(worldCell.x) * 0.71 + float(worldCell.z) * 0.93 + float(worldCell.y) * 0.37;
     float s = sin(uTime * 1.6 + ph) * 0.65 + sin(uTime * 2.7 + ph * 1.9) * 0.35;
-    float amp = (0.6 + uWind) * (id == 18u ? 0.03 : 0.07 * clamp(height, 0.0, 1.0));
-    return vec2(s * amp, id == 18u ? cos(uTime * 1.2 + ph) * amp * 0.6 : 0.0);
+    float amp = (0.6 + uWind) * ((id == 18u || id == 161u) ? 0.03 : 0.07 * clamp(height, 0.0, 1.0));
+    return vec2(s * amp, (id == 18u || id == 161u) ? cos(uTime * 1.2 + ph) * amp * 0.6 : 0.0);
 }
 
-// Smooth 2D noise in 0..1 (puddles).
+// Smooth 2D noise in 0..1 (puddles, volumetric clouds, micro-relief).
 float hash21(vec2 c) { return float(pcg(uint(int(c.x)) * 1597334677u ^ uint(int(c.y)) * 3812015801u)) * (1.0 / 4294967296.0); }
 float valueNoise(vec2 x) {
     vec2 i = floor(x), f = fract(x);
@@ -106,13 +106,51 @@ float valueNoise(vec2 x) {
     return mix(mix(hash21(i), hash21(i + vec2(1, 0)), u.x), mix(hash21(i + vec2(0, 1)), hash21(i + vec2(1, 1)), u.x), u.y);
 }
 
-// Water waves: three travelling ripples summed; returns the tilted surface normal at world x, z.
+float cloudFbm(vec2 p) {
+    float v = valueNoise(p) * 0.56;
+    p = mat2(0.80, -0.60, 0.60, 0.80) * p * 2.08 + vec2(13.7, 29.1);
+    v += valueNoise(p) * 0.29;
+    p = mat2(0.80, -0.60, 0.60, 0.80) * p * 2.15 + vec2(7.3, 19.4);
+    v += valueNoise(p) * 0.15;
+    return v;
+}
+
+// 3D cumulus density in a slab [y0, y1]: flat bases, billowy domed tops, denser in rain.
+float cloudDensity(vec3 wp, float y0, float y1, float rain) {
+    float h = (wp.y - y0) / max(y1 - y0, 1.0);
+    if (h <= 0.0 || h >= 1.0) return 0.0;
+    vec2 drift = vec2(uTime * 1.4, uTime * 0.35);
+    vec2 p = (wp.xz + drift) * 0.0052;
+    float base = cloudFbm(p + vec2(h * 0.14, -h * 0.08));
+    float profile = smoothstep(0.0, 0.22, h) * smoothstep(1.0, 0.32, h);
+    float coverage = mix(0.50, 0.34, rain);
+    float d = smoothstep(coverage, coverage + 0.26, base * (0.72 + 0.48 * profile)) * profile;
+    return d;
+}
+
+// Animated underwater sunlight caustics (dual interfering wave ridges).
+float waterCaustics(vec2 xz) {
+    vec2 p = xz * 1.35 + vec2(uTime * 0.42, uTime * 0.27);
+    vec2 q = mat2(0.75, -0.66, 0.66, 0.75) * xz * 1.65 - vec2(uTime * 0.31, -uTime * 0.46);
+    float a = abs(sin(p.x + sin(p.y * 1.3 + uTime * 0.6)) * cos(p.y + cos(p.x * 1.1 - uTime * 0.5)));
+    float b = abs(sin(q.x + cos(q.y * 1.2 - uTime * 0.7)) * cos(q.y + sin(q.x * 1.4 + uTime * 0.4)));
+    float ridge = pow(1.0 - min(a, b), 3.0);
+    return clamp(ridge, 0.0, 1.0);
+}
+
+// Water waves: three travelling ripples summed; Cinematic mode adds fine capillary ripples.
 vec3 waveNormal(vec2 xz) {
     vec2 g = vec2(0.0);
     const vec2 D0 = vec2(0.8, 0.6), D1 = vec2(-0.5, 0.86), D2 = vec2(0.2, -0.98);
     g += D0 * 0.045 * cos(dot(D0, xz) * 1.9 + uTime * 1.5);
     g += D1 * 0.035 * cos(dot(D1, xz) * 3.1 + uTime * 2.2);
     g += D2 * 0.020 * cos(dot(D2, xz) * 5.3 + uTime * 3.1);
+    if (fxOn(FX_CINEMATIC)) {
+        const vec2 D3 = vec2(-0.92, -0.39), D4 = vec2(0.45, -0.89);
+        g += D3 * 0.018 * cos(dot(D3, xz) * 9.4 + uTime * 4.3);
+        g += D4 * 0.014 * cos(dot(D4, xz) * 15.1 + uTime * 5.6);
+        g *= 1.15;
+    }
     g *= 0.7 + uWind;
     return normalize(vec3(-g.x, 1.0, -g.y));
 }

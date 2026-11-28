@@ -8,8 +8,10 @@ layout(std430, binding = 6) readonly buffer Exposure { float exposure; float avg
 // Beta-coloured sky/fog, a = coverage. Sampled, not loaded: with Ray Reconstruction the picture is tone mapped at the
 // window's size while the sky/fog picture is at the render size
 layout(binding = 2) uniform sampler2D uSkyFog;
+layout(binding = 3) uniform sampler2D uBloom;
 uniform ivec2 uResolution;
 uniform float uBrightness; // the in-game Brightness slider, on top of auto exposure
+uniform int uCinematic;    // 1: ACES filmic grading + HDR bloom
 
 // Extended Reinhard on luminance: linear in the darks, rolls off toward white at W.
 vec3 tonemap(vec3 c) {
@@ -24,13 +26,35 @@ vec3 tonemap(vec3 c) {
     return clamp(outc, 0.0, 1.0);
 }
 
+vec3 acesFilmic(vec3 x) {
+    x *= 0.90;
+    vec3 y = (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14);
+    y = clamp(y, 0.0, 1.0);
+    float l = dot(y, vec3(0.2126, 0.7152, 0.0722));
+    return clamp(mix(vec3(l), y, 1.08), 0.0, 1.0);
+}
+
 void main() {
     ivec2 px = ivec2(gl_GlobalInvocationID.xy);
     if (px.x >= uResolution.x || px.y >= uResolution.y) return;
+    vec2 uv = (vec2(px) + 0.5) / vec2(uResolution);
     vec3 c = max(texelFetch(uHdr, px, 0).rgb, vec3(0.0)) * exposure * uBrightness;
+    vec4 sf = textureLod(uSkyFog, uv, 0.0);
+    if (uCinematic != 0) {
+        if (sf.a > 0.0) {
+            float skyScale = mix(1.0, clamp(exposure, 0.45, 2.2), 0.35) * uBrightness;
+            c = mix(c, max(sf.rgb, vec3(0.0)) * skyScale, sf.a);
+        }
+        c += max(textureLod(uBloom, uv, 0.0).rgb, vec3(0.0)) * 0.28;
+        c = acesFilmic(c);
+        vec2 q = uv * 2.0 - 1.0;
+        c *= 1.0 - 0.09 * dot(q, q);
+        c = pow(clamp(c, 0.0, 1.0), vec3(1.0 / 2.2));
+        imageStore(outImage, px, vec4(c, 1.0));
+        return;
+    }
     c = pow(tonemap(c), vec3(1.0 / 2.2));
     // Sky and fog at Beta's own colours, blended on screen like Beta's GL fog.
-    vec4 sf = textureLod(uSkyFog, (vec2(px) + 0.5) / vec2(uResolution), 0.0);
     if (sf.a > 0.0) {
         vec3 s = sf.rgb;
         float m = max(max(s.r, s.g), s.b);

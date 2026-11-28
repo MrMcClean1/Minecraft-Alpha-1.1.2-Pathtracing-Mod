@@ -27,8 +27,9 @@ public class EffectsScreen extends Screen {
         this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(6, right, top + 48, 150, 20, text(6)));
         this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(8, left, top + 72, 150, 20, text(8)));
         this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(9, right, top + 72, 150, 20, text(9)));
-        // the test switch: what runs at the next title screen (then it switches itself off)
-        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(7, this.width / 2 - 100, top + 96, 200, 20, testText()));
+        // cinematic shader mode and the test switch share this row
+        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(15, left, top + 96, 150, 20, text(15)));
+        this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(7, right, top + 96, 150, 20, testText()));
         // particles and rain (moved here from the main page, which has the Quality button now)
         this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(10, this.width / 2 - 155, top + 120, 150, 20, text(10)));
         this.buttons.add(new com.mrmcclean.betapt.gui.PtButton(11, this.width / 2 + 5, top + 120, 150, 20, text(11)));
@@ -57,6 +58,7 @@ public class EffectsScreen extends Screen {
             case 9 -> "Hand collision: " + onOff(pt.handCollide);
             case 10 -> "Particles, rain: " + (pt.particleLight ? "Traced light" : "Beta");
             case 11 -> "Far terrain: " + onOff(com.mrmcclean.betapt.render.FarTerrain.enabled) + "...";
+            case 15 -> "Cinematic shader: " + onOff(pt.fxCinematic);
             default -> "";
         };
     }
@@ -75,6 +77,9 @@ public class EffectsScreen extends Screen {
             "Traced light: smoke, bits and rain lit by the path tracer.",
             "Land past the tracer's range: distance, shadows, water...",
             "NVIDIA RTX: DLSS, Ray Reconstruction, Frame Generation...",
+            "Photo mode and time-lapse recording.",
+            "",
+            "Volumetric clouds, valley mist, HDR bloom, ACES grading, caustics.",
     };
     private int hovered;
 
@@ -91,6 +96,7 @@ public class EffectsScreen extends Screen {
             case 8 -> pt.darkNights = !pt.darkNights;
             case 9 -> pt.handCollide = !pt.handCollide;
             case 10 -> pt.particleLight = !pt.particleLight;
+            case 15 -> pt.fxCinematic = !pt.fxCinematic;
             case 11 -> { this.minecraft.openScreen(new FarScreen(this)); return; }
             case 7 -> { // Off -> Quick -> Full -> Multiplayer (if a server is known) -> Benchmark -> Off
                 var all = com.mrmcclean.betapt.config.BetaPTConfig.TestMode.values();
@@ -117,8 +123,7 @@ public class EffectsScreen extends Screen {
         hovered = 0;
         for (Object o : this.buttons) {
             ButtonWidget w = (ButtonWidget) o;
-            int bw = w.id == 7 ? 200 : 150;
-            if (w.id >= 1 && w.id <= 12 && mouseX >= w.x && mouseY >= w.y && mouseX < w.x + bw && mouseY < w.y + 20) hovered = w.id;
+            if (w.id >= 1 && w.id <= 15 && mouseX >= w.x && mouseY >= w.y && mouseX < w.x + 150 && mouseY < w.y + 20) hovered = w.id;
         }
         String help = hovered > 0 ? HELP[hovered] : "Presets set these too. Done on the main page saves.";
         this.drawCenteredString(this.textRenderer, help, this.width / 2, Math.min(this.height - 10, top + 194), 0xA0A0A0); // under Done
