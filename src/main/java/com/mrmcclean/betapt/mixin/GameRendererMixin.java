@@ -32,8 +32,9 @@ public class GameRendererMixin {
     @Unique private static boolean betapt$toggleHeld;
     @Unique private static int betapt$compileFrame;
     @Unique private static long betapt$compileLast;
-    /** Frames slower than this skip Beta's mesh building while tracing (-Dbetapt.meshTrickleMs, default 25; 0 = never build). */
-    @Unique private static final long betapt$TRICKLE_NS = Long.getLong("betapt.meshTrickleMs", 25L) * 1_000_000L;
+    @Unique private static double betapt$compileX, betapt$compileY, betapt$compileZ;
+    /** Frames slower than this skip Alpha's mesh building while tracing (-Dbetapt.meshTrickleMs, default 12; 0 = never build). */
+    @Unique private static final long betapt$TRICKLE_NS = Long.getLong("betapt.meshTrickleMs", 12L) * 1_000_000L;
     @Unique private static boolean betapt$cutawayHeld;
     @Unique private static boolean betapt$denoiseHeld;
     @Unique private static boolean betapt$lookHeld;
@@ -59,10 +60,13 @@ public class GameRendererMixin {
         if (!PathTracer.INSTANCE.active()) GL11.glClear(mask);
     }
 
-    /** Camera matrices are set: trace the world now, with exactly Beta's camera (bobbing, F5 view and all). */
+    /** Camera matrices are set: trace the world now, with exactly Alpha's camera (bobbing, F5 view and all). */
     @Inject(method = "renderWorld", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/render/GameRenderer;setupCamera(FI)V", shift = At.Shift.AFTER))
     private void betapt$traceWorld(float tickDelta, CallbackInfo ci) {
         if (!PathTracer.INSTANCE.active()) return;
+        // Read this frame's camera matrices BEFORE the dry entity pass so EntityCapture.setView() uses THIS frame's pose,
+        // not last frame's (which shifted every traced mob, bot, sign and hand by 1 frame of camera movement).
+        com.mrmcclean.betapt.render.Camera cam = com.mrmcclean.betapt.render.Camera.fromGl(this.minecraft.player, tickDelta);
         boolean mobs = PathTracer.INSTANCE.tracesMobs();
         {
             // M6: run Beta's entity pass once "dry" (nothing reaches the screen) to record every mob's
@@ -91,7 +95,7 @@ public class GameRendererMixin {
             GL11.glPopAttrib();
             com.mrmcclean.betapt.render.EntityCapture.end();
         }
-        PathTracer.INSTANCE.renderFrame(this.minecraft, tickDelta);
+        PathTracer.INSTANCE.renderFrame(this.minecraft, tickDelta, cam);
     }
 
     /** A "culler" that keeps everything: the dry pass wants off-screen mobs too. */
@@ -136,8 +140,10 @@ public class GameRendererMixin {
         long now = System.nanoTime(), frame = now - betapt$compileLast;
         betapt$compileLast = now;
         if (!PathTracer.INSTANCE.active()) return wr.compileChunks(camera, all);
-        if (frame < betapt$TRICKLE_NS && ++betapt$compileFrame % 2 == 0) wr.compileChunks(camera, false);
-        return true; // ends Beta's loop: one call at most
+        boolean still = camera != null && Math.abs(camera.x - betapt$compileX) + Math.abs(camera.y - betapt$compileY) + Math.abs(camera.z - betapt$compileZ) < 0.01;
+        if (camera != null) { betapt$compileX = camera.x; betapt$compileY = camera.y; betapt$compileZ = camera.z; }
+        if (still && frame < betapt$TRICKLE_NS && ++betapt$compileFrame % 8 == 0) wr.compileChunks(camera, false);
+        return true; // ends Alpha's loop: never stutter while moving
     }
 
     @Inject(

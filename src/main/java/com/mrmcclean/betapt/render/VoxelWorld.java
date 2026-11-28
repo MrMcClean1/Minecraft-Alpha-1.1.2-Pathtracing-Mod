@@ -195,8 +195,10 @@ public final class VoxelWorld {
         if (!keep && !reads.isEmpty()) reads.clear();
         int pcx = (int) Math.floor(camX) >> 4;
         int pcz = (int) Math.floor(camZ) >> 4;
-        int budget = UPLOADS_PER_FRAME;
-        int changeBudget = 8; // changed chunks more than 2 away (snow settling, leaf decay...): a few a frame, the rest later
+        boolean initialLoad = loadedSlots < 64;
+        int budget = initialLoad ? 48 : 8; // keep moving frame times smooth; initial load fills in faster
+        int changeBudget = 4; // changed chunks more than 2 away (snow settling, leaf decay...): a few a frame, the rest later
+        long timeBudgetNs = initialLoad ? 8_000_000L : 2_000_000L;
         long frameStart = System.nanoTime();
         uploadsLastFrame = 0;
         loadedSlots = 0;
@@ -228,8 +230,8 @@ public final class VoxelWorld {
                         if (changeBudget <= 0) stale = false;
                         else changeBudget--;
                     }
-                    // StationAPI chunks are read block by block: cap the time spent per frame instead of the count
-                    if (stale && budget > 0 && !StationCompat.legacy(chunk) && System.nanoTime() - frameStart > 4_000_000L) budget = 0;
+                    // Cap chunk upload CPU/GL time per frame (always allow at least 1 upload so chunks never starve)
+                    if (stale && budget > 0 && uploadsLastFrame > 0 && System.nanoTime() - frameStart > timeBudgetNs) budget = 0;
                     if (stale && budget > 0) {
                         boolean wasNull = slotChunk[slot] == null, wasOther = !wasNull && slotChunk[slot] != chunk;
                         DIRTY.remove(chunk);

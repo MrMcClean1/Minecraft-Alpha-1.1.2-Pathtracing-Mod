@@ -75,8 +75,16 @@ public final class PathTracer {
     /** Colour Beta should draw the first-person hand and held item with (display units, 0..1), from the traced light there. */
     public final float[] handLight = {1f, 1f, 1f};
     public boolean handLightValid;
-    private int probeBuffer;
+    private final int[] probeBuffers = new int[2];
+    private final int[] exposureReadBuffers = new int[2];
+    private final org.lwjgl.opengl.GLSync[] probeFences = new org.lwjgl.opengl.GLSync[2];
+    private final boolean[] probePendingGrid = new boolean[2];
+    private final int[][] probePendingOrigin = new int[2][3];
+    private int probeSlot;
+    private final float[] cachedExposure = new float[2];
+    private boolean cachedExposureValid;
     private final java.nio.FloatBuffer probeRead = org.lwjgl.BufferUtils.createFloatBuffer(4 * (1 + 16 * 8 * 16));
+    private final java.nio.FloatBuffer expReadBuf = org.lwjgl.BufferUtils.createFloatBuffer(2);
     public boolean broken; // set if the shader failed to load; we then fall back to vanilla
 
     /** The view key (Home) cycles: path traced, flat (M3 look), debug map (surface), debug map (cutaway at eye level). */
@@ -812,6 +820,10 @@ public final class PathTracer {
 
     /** Called from GameRendererMixin in place of Beta's world rendering. */
     public void renderFrame(Minecraft mc, float tickDelta) {
+        renderFrame(mc, tickDelta, null);
+    }
+
+    public void renderFrame(Minecraft mc, float tickDelta, Camera prebuiltCam) {
         PhotoMode.applyTime(mc); // photo mode's own time of day, held every frame
         if (program == 0 && !broken) {
             try { init(mc); }
@@ -848,8 +860,8 @@ public final class PathTracer {
         }
         lastFrameNanos = now;
 
-        // Beta has just set its camera up: use exactly that (the legacy order runs before Beta's camera exists)
-        Camera cam = legacyFrame ? Camera.from(mc.player, tickDelta) : Camera.fromGl(mc.player, tickDelta);
+        // Alpha has just set its camera up: use the camera captured before EntityCapture (or build it now for legacyFrame)
+        Camera cam = prebuiltCam != null ? prebuiltCam : (legacyFrame ? Camera.from(mc.player, tickDelta) : Camera.fromGl(mc.player, tickDelta));
         try { net.minecraft.world.World w = mc.world; FarTerrain.tick(w, !Dim.nether(w), cam.x, cam.z, FarGen.key(w), FarGen.seed(w), s -> FarGen.create(w, s)); } catch (Throwable ignored) {}
         voxels.update(mc.world, cam.x, cam.z);
         lastCam = cam;
@@ -949,7 +961,8 @@ public final class PathTracer {
             uni1f(exposureProgram, "uMinExposure", 0.1f * dim);
             uni1f(exposureProgram, "uMaxExposure", look(1.0f, 1.25f, 2.5f) * dim); // how far darkness gets brightened
             GL43.glDispatchCompute(1, 1, 1);
-            GL42.glMemoryBarrier(GL43.GL_SHADER_STORAGE_BARRIER_BIT);
+            GL42.glMemoryBarrier(GL43.GL_SHADER_STORAGE_BARRIER_BIT | GL42.GL_BUFFER_UPDATE_BARRIER_BIT);
+            copyExposureForReadback();
 
             // 3. tone map into the 8-bit image that gets shown
             GL20.glUseProgram(tonemapProgram);
@@ -1265,36 +1278,75 @@ public final class PathTracer {
     /** How many held or dropped light sources last frame's light list had (for the tests). */
     public int lastHeldLights;
 
-    /** Last frame's probe result -> the colour Beta draws the hand with: as the tone mapper would show
-     *  a mid-grey surface lit like that, relative to the same surface fully lit. */
+    /** Non-blocking readback of the oldest completed probe + exposure slot (never stalls the GPU pipeline). */
     private void readHandProbe() {
-        if (probeBuffer == 0) return;
+        int slot = probeSlot ^ 1;
+        if (probeBuffers[slot] == 0 || probeFences[slot] == null) return;
+        int status = org.lwjgl.opengl.GL32.glClientWaitSync(probeFences[slot], 0, 0L);
+        if (status != org.lwjgl.opengl.GL32.GL_ALREADY_SIGNALED && status != org.lwjgl.opengl.GL32.GL_CONDITION_SATISFIED) return;
+        org.lwjgl.opengl.GL32.glDeleteSync(probeFences[slot]);
+        probeFences[slot] = null;
+
+        if (exposureReadBuffers[slot] != 0) {
+            expReadBuf.clear();
+            GL15.glBindBuffer(org.lwjgl.opengl.GL31.GL_COPY_WRITE_BUFFER, exposureReadBuffers[slot]);
+            GL15.glGetBufferSubData(org.lwjgl.opengl.GL31.GL_COPY_WRITE_BUFFER, 0, expReadBuf);
+            GL15.glBindBuffer(org.lwjgl.opengl.GL31.GL_COPY_WRITE_BUFFER, 0);
+            float e0 = expReadBuf.get(0);
+            if (e0 > 0f && !Float.isNaN(e0)) {
+                cachedExposure[0] = e0;
+                cachedExposure[1] = expReadBuf.get(1);
+                cachedExposureValid = true;
+            }
+        }
+        float exposure = (cachedExposureValid ? cachedExposure[0] : 1f) * brightness;
+        if (!(exposure > 0)) return;
+        lavaGlow = Math.max(0.05f, Math.min(1.5f, 0.9f / exposure));
+
+        boolean withGrid = probePendingGrid[slot];
         probeRead.clear();
-        if (!pendingGrid) probeRead.limit(4); // only the hand probe was run
-        GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER, probeBuffer);
+        if (!withGrid) probeRead.limit(4);
+        GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER, probeBuffers[slot]);
         GL15.glGetBufferSubData(GL43.GL_SHADER_STORAGE_BUFFER, 0, probeRead);
         GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER, 0);
         if (probeRead.get(3) < 0.5f) return; // not written yet
-        float exposure = exposureState()[0] * brightness;
-        if (!(exposure > 0)) return;
-        // lava as seen: shown at about 90% of its texture colours whatever the exposure (see pt_light.glsl)
-        lavaGlow = Math.max(0.05f, Math.min(1.5f, 0.9f / exposure));
         float[] t = new float[3];
         toDisplay(probeRead.get(0), probeRead.get(1), probeRead.get(2), exposure, t);
         for (int i = 0; i < 3; i++) handLight[i] = handLightValid ? handLight[i] + (t[i] - handLight[i]) * 0.2f : t[i]; // smooth the noise
         handLightValid = true;
-        if (pendingGrid) {
+        if (withGrid) {
+            int[] org = probePendingOrigin[slot];
             for (int g = 0; g < GRID; g++) {
                 int o = 4 * (g + 1);
                 toDisplay(probeRead.get(o), probeRead.get(o + 1), probeRead.get(o + 2), exposure, t);
                 float b = 0.2126f * t[0] + 0.7152f * t[1] + 0.0722f * t[2];
-                boolean same = gridValid && java.util.Arrays.equals(gridOrigin, pendingOrigin);
+                boolean same = gridValid && java.util.Arrays.equals(gridOrigin, org);
                 gridBright[g] = same ? gridBright[g] + (b - gridBright[g]) * 0.3f : b;
                 gridOpen[g] = probeRead.get(o + 3);
             }
-            System.arraycopy(pendingOrigin, 0, gridOrigin, 0, 3);
+            System.arraycopy(org, 0, gridOrigin, 0, 3);
             gridValid = true;
         }
+    }
+
+    /** Copies the 8-byte exposure state into the active readback buffer and drops the slot fence (non-blocking). */
+    private void copyExposureForReadback() {
+        int slot = probeSlot;
+        if (probeBuffers[slot] == 0) return;
+        if (exposureReadBuffers[slot] == 0) {
+            exposureReadBuffers[slot] = GL15.glGenBuffers();
+            GL15.glBindBuffer(org.lwjgl.opengl.GL31.GL_COPY_WRITE_BUFFER, exposureReadBuffers[slot]);
+            GL15.glBufferData(org.lwjgl.opengl.GL31.GL_COPY_WRITE_BUFFER, 8L, GL15.GL_STREAM_READ);
+            GL15.glBindBuffer(org.lwjgl.opengl.GL31.GL_COPY_WRITE_BUFFER, 0);
+        }
+        GL15.glBindBuffer(org.lwjgl.opengl.GL31.GL_COPY_READ_BUFFER, exposureBuffer);
+        GL15.glBindBuffer(org.lwjgl.opengl.GL31.GL_COPY_WRITE_BUFFER, exposureReadBuffers[slot]);
+        org.lwjgl.opengl.GL31.glCopyBufferSubData(org.lwjgl.opengl.GL31.GL_COPY_READ_BUFFER, org.lwjgl.opengl.GL31.GL_COPY_WRITE_BUFFER, 0, 0, 8L);
+        GL15.glBindBuffer(org.lwjgl.opengl.GL31.GL_COPY_READ_BUFFER, 0);
+        GL15.glBindBuffer(org.lwjgl.opengl.GL31.GL_COPY_WRITE_BUFFER, 0);
+        if (probeFences[slot] != null) org.lwjgl.opengl.GL32.glDeleteSync(probeFences[slot]);
+        probeFences[slot] = org.lwjgl.opengl.GL32.glFenceSync(org.lwjgl.opengl.GL32.GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        probeSlot ^= 1;
     }
 
     /** Traced light -> how bright Beta should draw a surface there: as the tone mapper would show a mid-grey
@@ -1309,10 +1361,11 @@ public final class PathTracer {
 
     private void dispatchHandProbe(Minecraft mc, Camera cam, float tickDelta) {
         if (mc.player == null) return;
-        if (probeBuffer == 0) {
-            probeBuffer = GL15.glGenBuffers();
-            GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER, probeBuffer);
-            GL15.glBufferData(GL43.GL_SHADER_STORAGE_BUFFER, 16L * (1 + GRID), GL15.GL_DYNAMIC_READ);
+        int slot = probeSlot;
+        if (probeBuffers[slot] == 0) {
+            probeBuffers[slot] = GL15.glGenBuffers();
+            GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER, probeBuffers[slot]);
+            GL15.glBufferData(GL43.GL_SHADER_STORAGE_BUFFER, 16L * (1 + GRID), GL15.GL_STREAM_READ);
             GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER, 0);
         }
         GL20.glUseProgram(pathProgram);
@@ -1324,12 +1377,15 @@ public final class PathTracer {
         uni3f(pathProgram, "uProbeNormal", nx / nl, ny / nl, nz / nl);
         // the particle/rain grid: 32 x 16 x 32 blocks around the camera, lined up with the world every 2 blocks
         int bx = (int) Math.floor(cam.x), by = (int) Math.floor(cam.y), bz = (int) Math.floor(cam.z);
-        pendingOrigin[0] = Math.floorDiv(bx, 2) * 2 - 16; pendingOrigin[1] = Math.floorDiv(by, 2) * 2 - 8; pendingOrigin[2] = Math.floorDiv(bz, 2) * 2 - 16;
-        uni3f(pathProgram, "uGridOrigin", pendingOrigin[0] - bx, pendingOrigin[1] - by, pendingOrigin[2] - bz);
-        pendingGrid = particleLight && (frameIndex & 1) == 0; // the grid every other frame: half the cost, smoothed anyway
+        probePendingOrigin[slot][0] = Math.floorDiv(bx, 2) * 2 - 16;
+        probePendingOrigin[slot][1] = Math.floorDiv(by, 2) * 2 - 8;
+        probePendingOrigin[slot][2] = Math.floorDiv(bz, 2) * 2 - 16;
+        uni3f(pathProgram, "uGridOrigin", probePendingOrigin[slot][0] - bx, probePendingOrigin[slot][1] - by, probePendingOrigin[slot][2] - bz);
+        boolean runGrid = particleLight && (frameIndex & 1) == 0; // the grid every other frame: half the cost, smoothed anyway
+        probePendingGrid[slot] = runGrid;
         uni1i(pathProgram, "uProbeOnly", 1);
-        GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 9, probeBuffer);
-        GL43.glDispatchCompute(pendingGrid ? 1 + GRID : 1, 1, 1);
+        GL30.glBindBufferBase(GL43.GL_SHADER_STORAGE_BUFFER, 9, probeBuffers[slot]);
+        GL43.glDispatchCompute(runGrid ? 1 + GRID : 1, 1, 1);
         uni1i(pathProgram, "uProbeOnly", 0);
     }
 
@@ -1417,35 +1473,39 @@ public final class PathTracer {
     }
 
     // ---- Frame pacing ------------------------------------------------------------
-    // With nothing holding it back, the CPU can queue several frames for the GPU before
-    // the first one is shown. The mouse movement for a frame is read when the CPU starts
-    // it, so every queued frame adds delay between moving the mouse and seeing it.
-    // Fix: drop a fence after each frame, and before reading input for the next one,
-    // wait until the GPU has finished the previous frame. At most one frame in flight.
-    private org.lwjgl.opengl.GLSync lastFrameFence;
+    // Keep a 2-slot fence ring so the GPU can overlap frame N-1 while the CPU prepares frame N
+    // (capping latency to 1 queued frame instead of serializing CPU and GPU into bubbles).
+    // When lowLatency >= 1, wait on frame N-1 directly for minimum mouse-to-photon latency.
+    private final org.lwjgl.opengl.GLSync[] frameFences = new org.lwjgl.opengl.GLSync[2];
+    private int frameFenceIdx;
     public double fenceWaitMs;
 
-    /** Start of a frame, before Beta reads the mouse. */
+    /** Start of a frame, before Alpha reads the mouse. */
     public void beginFrame() {
         // off (F6, the Off preset): the time away isn't a frame, and the history from before it is stale
         // (the tests switch it off for Beta's shot of a still scene, where that history is still right)
         if (!active()) { lastFrameNanos = 0; resumed = !com.mrmcclean.betapt.test.ModTest.running() && !com.mrmcclean.betapt.test.AutoTest.running(); }
-        if (lastFrameFence == null) return;
+        int waitSlot = lowLatency >= 1 ? (frameFenceIdx ^ 1) : frameFenceIdx;
+        org.lwjgl.opengl.GLSync fence = frameFences[waitSlot];
+        if (fence == null) return;
         long t0 = System.nanoTime();
-        org.lwjgl.opengl.GL32.glClientWaitSync(lastFrameFence, org.lwjgl.opengl.GL32.GL_SYNC_FLUSH_COMMANDS_BIT, 100_000_000L);
-        org.lwjgl.opengl.GL32.glDeleteSync(lastFrameFence);
-        lastFrameFence = null;
+        org.lwjgl.opengl.GL32.glClientWaitSync(fence, org.lwjgl.opengl.GL32.GL_SYNC_FLUSH_COMMANDS_BIT, 100_000_000L);
+        org.lwjgl.opengl.GL32.glDeleteSync(fence);
+        frameFences[waitSlot] = null;
         fenceWaitMs = fenceWaitMs * 0.95 + (System.nanoTime() - t0) / 1.0e6 * 0.05;
     }
 
     /** End of a frame, after the HUD is drawn. */
     public void endFrame() {
         if (!active() || program == 0) return;
-        lastFrameFence = org.lwjgl.opengl.GL32.glFenceSync(org.lwjgl.opengl.GL32.GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        if (frameFences[frameFenceIdx] != null) org.lwjgl.opengl.GL32.glDeleteSync(frameFences[frameFenceIdx]);
+        frameFences[frameFenceIdx] = org.lwjgl.opengl.GL32.glFenceSync(org.lwjgl.opengl.GL32.GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+        frameFenceIdx ^= 1;
     }
 
-    /** Current auto exposure and average scene brightness (reads back from the GPU; debug use). */
+    /** Current auto exposure and average scene brightness (cached async; synchronous fallback for debug/tests). */
     public float[] exposureState() {
+        if (cachedExposureValid && !snapExposure) return new float[]{cachedExposure[0], cachedExposure[1]};
         if (exposureBuffer == 0) return new float[]{0, 0};
         java.nio.FloatBuffer b = org.lwjgl.BufferUtils.createFloatBuffer(2);
         GL15.glBindBuffer(GL43.GL_SHADER_STORAGE_BUFFER, exposureBuffer);

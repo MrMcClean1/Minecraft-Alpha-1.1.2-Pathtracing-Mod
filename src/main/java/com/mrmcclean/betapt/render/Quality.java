@@ -97,7 +97,9 @@ public enum Quality {
         }
         trying = null;
         last = q.label + ", " + Math.round(fps) + " fps";
-        com.mrmcclean.betapt.config.PtSettings.save();
+        if (!com.mrmcclean.betapt.test.AutoTest.running() && !com.mrmcclean.betapt.test.ModTest.running()
+                && !com.mrmcclean.betapt.test.AlphaTest.running())
+            com.mrmcclean.betapt.config.PtSettings.save();
         if (mc.gui != null)
             mc.gui.addChatMessage("Path tracer quality: " + q.label + " (" + Math.round(fps) + " fps" + (good ? "" : ", below " + TARGET_FPS + " even at the lowest") + ")");
     }
