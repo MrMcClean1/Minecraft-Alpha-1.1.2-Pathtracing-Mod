@@ -337,6 +337,40 @@ public class Brain {
                 if (job == Job.FARM) endJob(null);
                 ack(who, text, "I'll leave the farm be.");
                 return true;
+            case UNSTUCK:
+                b.unstickNow();
+                ack(who, text, "Working my way out.");
+                return true;
+            case TOWN_STATUS:
+                if (!BotConfig.towns) { say("Bot towns are off. Say \"/bot town on\" first."); return true; }
+                say(Town.status(Names.world(b), Bots.bots(Names.world(b))));
+                return true;
+            case TOWN_START: {
+                if (!BotConfig.towns) { say("Bot towns are off. Say \"/bot town on\" first."); return true; }
+                if (from == null) return false;
+                List<BotEntity> mine = new ArrayList<>();
+                for (BotEntity be : Bots.bots(Names.world(b))) if (be.owner.equals(from.name) || BotConfig.anyoneCommands) mine.add(be);
+                if (mine.isEmpty()) { say("No bots of yours here."); return true; }
+                say(Town.found(from, mine));
+                return true;
+            }
+            case TOWN_STOP:
+                for (BotEntity be : Bots.bots(Names.world(b))) if (from == null || be.owner.equals(from.name) || BotConfig.anyoneCommands) { Town.leave(be); be.brain.townLeft = true; }
+                ack(who, text, "Okay, we'll stop working on the town (its buildings stay).");
+                return true;
+            case TOWN_JOB: {
+                if (!BotConfig.towns) { say("Bot towns are off. Say \"/bot town on\" first."); return true; }
+                if (town == null) { say("I'm not in a town yet. Say \"start a town\" or \"/bot town start\"."); return true; }
+                try {
+                    Town.Job tj = Town.Job.valueOf(o.what.toUpperCase(Locale.ROOT));
+                    town.job = tj;
+                    job = Job.NONE; after = Job.NONE; plan = null;
+                    ack(who, text, "Got it, I'm the town's " + o.what + " now.");
+                } catch (Exception e) {
+                    say("Town jobs are builder, farmer, miner, trader or guard.");
+                }
+                return true;
+            }
             default: return false;
         }
     }
@@ -763,10 +797,15 @@ public class Brain {
         }
         double dx = gx - b.x, dz = gz - b.z;
         int sx = Math.abs(dx) > Math.abs(dz) ? (dx > 0 ? 1 : -1) : 0, sz = sx == 0 ? (dz > 0 ? 1 : -1) : 0;
+        openNearbyDoor();
+        // boxed in on all 4 sides in a 1x1 pit: pillar straight up if we have blocks and headroom
+        if (!Nav.water(Names.world(b).getBlock(x, y, z)) && solid(x + 1, y, z) && solid(x - 1, y, z) && solid(x, y, z + 1) && solid(x, y, z - 1)) {
+            if (pillar(x, y, z)) return;
+        }
         int[][] cand = gy < y - 1 ? new int[][]{{x + sx, y + 1, z + sz}, {x + sx, y, z + sz}, {x + sx, y - 1, z + sz}} : new int[][]{{x + sx, y + 1, z + sz}, {x + sx, y, z + sz}};
         if (gy > y + 2 && Math.abs(dx) < 2 && Math.abs(dz) < 2) { pillar(x, y, z); return; }
-        if (gy > y && Bots.block(Names.world(b).getBlock(x, y + 2, z)) != null && Bots.block(Names.world(b).getBlock(x, y + 2, z)).material.blocksMovement() && !liquidNext(x, y + 2, z))
-            for (int i = 0; i < 400 && !dig(x, y + 2, z); i++) { } // a step up with no room over its head to jump
+        if ((gy > y || Names.world(b).getBlock(x, y + 2, z) == 18) && Bots.block(Names.world(b).getBlock(x, y + 2, z)) != null && Bots.block(Names.world(b).getBlock(x, y + 2, z)).material.blocksMovement() && !liquidNext(x, y + 2, z))
+            for (int i = 0; i < 400 && !dig(x, y + 2, z); i++) { } // a step up with no room over its head to jump, or low leaves overhead
         if (BotEntity.DEBUG) Bots.log("debug stuck " + b.botName() + " at " + x + " " + y + " " + z + " toward " + (int) Math.floor(gx) + " " + (int) Math.floor(gy) + " " + (int) Math.floor(gz) + ": blocks ahead " + Names.world(b).getBlock(x + sx, y - 1, z + sz) + " " + Names.world(b).getBlock(x + sx, y, z + sz) + " " + Names.world(b).getBlock(x + sx, y + 1, z + sz) + " " + Names.world(b).getBlock(x + sx, y + 2, z + sz) + ", over its head " + Names.world(b).getBlock(x, y + 2, z));
         if (gy < y - 1 && Math.abs(dx) < 0.8 && Math.abs(dz) < 0.8) { // straight below: dig down, never into lava or water
             int below = Names.world(b).getBlock(x, y - 1, z), under = Names.world(b).getBlock(x, y - 2, z);
@@ -1004,7 +1043,8 @@ public class Brain {
         if (!Model.ready()) { say(plainReply(text)); return; }
         Model.ask(persona() + " If the player wants you to do something, start your reply with ORDER: and the request in plain words"
                         + " (like ORDER: bring me 16 coal), then a newline and a short reply. Things you can do: follow, stay, come here, guard,"
-                        + " gather or mine any block, hunt for food, set up a base, go home, put things away, keep the chest stocked, give items, explore.",
+                        + " gather or mine any block, hunt for food, set up a base, go home, put things away, keep the chest stocked, give items, explore,"
+                        + " start a town, stop the town, town status, be the town builder/farmer/miner/trader/guard, get unstuck.",
                 who + " says: \"" + text + "\"\nYou carry: " + inventoryLine() + "\nYou're doing: " + statusLine(),
                 a -> {
                     String reply = a;
@@ -1047,7 +1087,7 @@ public class Brain {
             case FARM: s = "tending the farm"; break;
             default: s = mode == Mode.FOLLOW ? "following you" : mode == Mode.STAY ? "waiting here" : mode == Mode.GUARD ? "on guard" : mode == Mode.AUTO ? "getting on with things myself" : "keeping house";
         }
-        return "I'm " + s + ", health " + b.health + "/20" + (chores.isEmpty() ? "" : ", " + chores.size() + " chore" + (chores.size() > 1 ? "s" : "")) + ".";
+        return "I'm " + s + (town != null && BotConfig.towns ? " (town " + town.job.name().toLowerCase(Locale.ROOT) + ")" : "") + ", health " + b.health + "/20" + (chores.isEmpty() ? "" : ", " + chores.size() + " chore" + (chores.size() > 1 ? "s" : "")) + ".";
     }
 
     String inventoryLine() {
@@ -1204,7 +1244,12 @@ public class Brain {
     /** A closed wooden door it walks up to gets opened, and closed again once it's 3 blocks past. */
     private void doors() {
         if (openDoor != null && Math.abs(b.x - openDoor[0] - 0.5) + Math.abs(b.z - openDoor[2] - 0.5) > 3) { door(openDoor, false); openDoor = null; }
-        if (!b.walkedLast || b.ticks % 5 != 0) return;
+        if (!b.walkedLast || b.ticks % 3 != 0) return;
+        openNearbyDoor();
+    }
+
+    /** Opens any closed wooden door within 1 block of the bot's body right away. */
+    void openNearbyDoor() {
         int fx = MathHelper.floor(b.x), fy = MathHelper.floor(b.shape.minY + 0.01), fz = MathHelper.floor(b.z);
         for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) for (int dy = 0; dy <= 1; dy++) {
             if (Names.world(b).getBlock(fx + dx, fy + dy, fz + dz) != 64) continue;

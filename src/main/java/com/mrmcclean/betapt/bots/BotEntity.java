@@ -29,9 +29,12 @@ public class BotEntity extends MobEntity {
     public int homeX, homeY, homeZ;
     public boolean hasHome;
     public final Brain brain = new Brain(this);
-    private int stuckTicks;
+    private int stuckTicks, noMoveTicks, backOffTicks, consecutiveStucks;
+    private float backStrafe;
     private double lastX, lastZ, bestDist = Double.MAX_VALUE;
+    private double progX, progY, progZ, stuckOrigX, stuckOrigZ;
     private int lastGoalX = Integer.MIN_VALUE, lastGoalZ;
+    private final java.util.Map<Long, Integer> avoidCells = new java.util.HashMap<>();
     public int swingTicks, wallTicks, errors;
     /** The stack in hand (one of inv). */
     public ItemStack heldStack;
@@ -70,6 +73,11 @@ public class BotEntity extends MobEntity {
         try { brain.tick(); } catch (Throwable t) { if (errors++ < 3) { StringBuilder sb = new StringBuilder(); for (StackTraceElement e : t.getStackTrace()) { if (sb.length() > 400) break; sb.append(" at ").append(e); } Bots.log("brain error for " + botName() + ": " + t + sb); } }
         walkedLast = forwardSpeed > 0;
         if (this.isSubmergedIn(net.minecraft.block.material.Material.WATER) || this.isInLava()) this.jumping = true;
+        int fxw = MathHelper.floor(x), fyw = MathHelper.floor(shape.minY + 0.01), fzw = MathHelper.floor(z);
+        if ((this.isSubmergedIn(net.minecraft.block.material.Material.WATER) || Nav.water(world.getBlock(fxw, fyw, fzw))) && this.collidingHorizontally && this.velocityY < 0.25) {
+            this.jumping = true;
+            this.velocityY = 0.30; // climb cleanly out of water onto 1-block banks
+        }
         watchMovement();
         if (DEBUG && ticks % 40 == 0) Bots.log(String.format("debug %s at %.1f %.1f %.1f fwd %.2f yaw %.0f ground %s mode %s job %s path %s jobTicks %d enemy %s owner %s",
                 botName(), x, y, z, forwardSpeed, yaw, onGround, brain.mode, brain.job, route != null, brain.jobTicks, brain.enemy == null ? "-" : brain.enemy.getClass().getSimpleName() + " d" + Math.round(distanceTo(brain.enemy)),
@@ -139,15 +147,62 @@ public class BotEntity extends MobEntity {
     private int spliceAt = -1; // >= 0: the search running repairs the route up to this point
     private boolean viaWaypoint; // the search running goes to a region route's waypoint, not the goal
 
-    /** Walk toward a spot; true once within reach. Plans with Nav (dig through, pillar, doors, ladders, water). */
+    /** Adds a cell to the short-term avoidance set (15 seconds) so A* routes around stuck spots. */
+    void avoidCell(int ax, int ay, int az) {
+        avoidCells.put(Nav.key(ax, ay, az), ticks + 300);
+        if (avoidCells.size() > 64) avoidCells.values().removeIf(exp -> exp <= ticks);
+    }
+
+    /** Immediate recovery when wedged on terrain, fences, or corners: nudges to nearest dry passable neighbor within 2..4 blocks. */
+    public boolean unstickNow() {
+        route = null; search = null; spliceAt = -1; routeKeys = null;
+        stuckTicks = 0; noMoveTicks = 0; backOffTicks = 0; consecutiveStucks = 0;
+        int fx = MathHelper.floor(x), fy = MathHelper.floor(shape.minY + 0.01), fz = MathHelper.floor(z);
+        brain.openNearbyDoor();
+        Nav n = planner();
+        int[] best = null;
+        double bestScore = Double.MAX_VALUE;
+        for (int r = 1; r <= 4; r++) {
+            for (int dy = -2; dy <= 3; dy++) {
+                for (int dx = -r; dx <= r; dx++) for (int dz = -r; dz <= r; dz++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;
+                    int px = fx + dx, py = fy + dy, pz = fz + dz;
+                    if (py < 2 || py > 125) continue;
+                    if (!n.passable(px, py, pz) || !n.passable(px, py + 1, pz) || !n.floor(px, py - 1, pz)) continue;
+                    if (Nav.water(world.getBlock(px, py, pz)) || Nav.dangerous(world.getBlock(px, py - 1, pz))) continue;
+                    double sc = dx * dx + dz * dz + Math.abs(dy) * 1.5 - (py >= fy ? 1.0 : 0.0);
+                    if (sc < bestScore) { bestScore = sc; best = new int[]{px, py, pz}; }
+                }
+            }
+            if (best != null) break;
+        }
+        if (best != null) {
+            setPositionAndAngles(best[0] + 0.5, best[1] + 0.01, best[2] + 0.5, yaw, pitch);
+            progX = x; progY = y; progZ = z;
+            Nav.lifts++;
+            return true;
+        }
+        return false;
+    }
+
+    /** Walk toward a spot; true once within reach. Plans with Nav (dig through, pillar, bridge, doors, ladders, water). */
     public boolean walkTo(double tx, double ty, double tz, double reach) {
         double dx = tx - x, dz = tz - z, dy = ty - y;
         // there: near enough across, and level with it (by the eyes, for a player or mob, or by the feet, for a block)
-        if (dx * dx + dz * dz < reach * reach && (Math.abs(dy) < 2.5 || Math.abs(ty - shape.minY) < 1.5)) { route = null; search = null; return true; }
+        if (dx * dx + dz * dz < reach * reach && (Math.abs(dy) < 2.5 || Math.abs(ty - shape.minY) < 1.5)) { route = null; search = null; backOffTicks = 0; return true; }
+        if (backOffTicks > 0) {
+            backOffTicks--;
+            forwardSpeed = -walkSpeed * 0.5F;
+            sidewaysSpeed = backStrafe;
+            if (collidingHorizontally && onGround) jumping = true;
+            return false;
+        }
         int bx = MathHelper.floor(tx), by = MathHelper.floor(ty), bz = MathHelper.floor(tz);
         int fx = MathHelper.floor(x), fy = MathHelper.floor(shape.minY + 0.01), fz = MathHelper.floor(z);
         boolean moved = Math.abs(bx - routeTx) + Math.abs(by - routeTy) + Math.abs(bz - routeTz) > 2;
         routeAge++;
+        avoidCells.values().removeIf(exp -> exp <= ticks);
+        Set<Long> avoidSnap = avoidCells.isEmpty() ? null : new HashSet<>(avoidCells.keySet());
         // plan again when the goal moved, the route ran out or something on it changed (not on a timer)
         int bad = -1;
         if (search == null && (route == null || moved || route.done() || routeAge % 20 == 0 && (bad = planner().firstBad(route)) >= 0)) {
@@ -162,14 +217,15 @@ public class BotEntity extends MobEntity {
             if (badAt != null && DEBUG) Bots.log("debug path " + botName() + ": route point " + badAt[0] + " " + badAt[1] + " " + badAt[2] + " (" + Nav.Move.values()[badAt[3]] + ") no longer works: blocks " + world.getBlock(badAt[0], badAt[1] - 1, badAt[2]) + " " + world.getBlock(badAt[0], badAt[1], badAt[2]) + " " + world.getBlock(badAt[0], badAt[1] + 1, badAt[2]));
             boolean again = badAt != null && lastBad != null && badAt[0] == lastBad[0] && badAt[1] == lastBad[1] && badAt[2] == lastBad[2];
             lastBad = badAt;
+            Set<Long> fav = moved || avoidSnap != null ? null : routeKeys;
             if (bad >= 0 && !moved && route != null && !route.done() && !again) { // the same point twice: plan afresh instead
                 // a block on the route changed: plan only round it, to a few points past it, and keep the rest
                 spliceAt = Math.min(route.points.size() - 1, bad + 3);
                 int[] r = route.points.get(spliceAt);
-                search = new Nav(world, fx, sy, fz, r[0], r[1], r[2], 0.8, brain::digTicks, blocks, 1500, routeKeys, mobs);
+                search = new Nav(world, fx, sy, fz, r[0], r[1], r[2], 0.8, brain::digTicks, blocks, 1500, fav, mobs, avoidSnap);
             } else {
-                Nav full = new Nav(world, fx, sy, fz, bx, by, bz, Math.max(0.8, reach - 0.3), brain::digTicks, blocks, 6000, moved ? null : routeKeys, mobs);
-                Nav.Path hit = full.cached(fx, sy, fz);
+                Nav full = new Nav(world, fx, sy, fz, bx, by, bz, Math.max(0.8, reach - 0.3), brain::digTicks, blocks, 6000, fav, mobs, avoidSnap);
+                Nav.Path hit = avoidSnap != null ? null : full.cached(fx, sy, fz);
                 int[] way = hit == null ? full.waypoint(fx, sy, fz) : null;
                 if (hit != null) {
                     routeKeys = new HashSet<>();
@@ -178,7 +234,7 @@ public class BotEntity extends MobEntity {
                     if (DEBUG) Bots.log("debug path " + botName() + " to " + bx + " " + by + " " + bz + ": " + hit.points.size() + " steps from the path cache");
                 } else if (way != null) {
                     viaWaypoint = true;
-                    search = new Nav(world, fx, sy, fz, way[0], way[1], way[2], 2.5, brain::digTicks, blocks, 6000, moved ? null : routeKeys, mobs);
+                    search = new Nav(world, fx, sy, fz, way[0], way[1], way[2], 2.5, brain::digTicks, blocks, 6000, fav, mobs, avoidSnap);
                 } else search = full;
             }
             routeTx = bx; routeTy = by; routeTz = bz;
@@ -188,6 +244,7 @@ public class BotEntity extends MobEntity {
             if (spliceAt >= 0) {
                 if (p != null && p.complete && route != null && spliceAt < route.points.size()) {
                     Nav.repairs++;
+                    if (routeKeys == null) routeKeys = new HashSet<>();
                     for (int[] q : p.points) routeKeys.add(Nav.key(q[0], q[1], q[2]));
                     route = Nav.join(search.shorten(p), new ArrayList<>(route.points.subList(spliceAt + 1, route.points.size())));
                 } else route = null; // no way round close by: a whole new plan next tick
@@ -205,7 +262,7 @@ public class BotEntity extends MobEntity {
             spliceAt = -1;
         }
         int[] q = route == null ? null : route.next();
-        while (q != null && Math.abs(q[1] - fy) <= 1 && (Math.abs(q[0] + 0.5 - x) < 0.35 && Math.abs(q[2] + 0.5 - z) < 0.35 || passed(q))) { route.index++; q = route.next(); stuckTicks = 0; bestDist = Double.MAX_VALUE; } // a point reached is progress (on a winding route, e.g. up a hillside, the goal may get no closer for a while)
+        while (q != null && Math.abs(q[1] - fy) <= 1 && (Math.abs(q[0] + 0.5 - x) < 0.35 && Math.abs(q[2] + 0.5 - z) < 0.35 || passed(q))) { route.index++; q = route.next(); stuckTicks = 0; noMoveTicks = 0; bestDist = Double.MAX_VALUE; } // a point reached is progress (on a winding route, e.g. up a hillside, the goal may get no closer for a while)
         if (q != null && work(q, fx, fy, fz)) return false; // digging or building on the way
         double gx = q != null ? q[0] + 0.5 : tx, gz = q != null ? q[2] + 0.5 : tz, gy = q != null ? q[1] : ty;
         double h2 = dx * dx + dz * dz;
@@ -216,13 +273,31 @@ public class BotEntity extends MobEntity {
             return false;
         }
         steer(gx, gy, gz);
-        // stuck: not getting closer for 3 seconds (walking in circles counts too)
+        // real displacement check alongside distance-to-goal check
+        double moved2 = (x - progX) * (x - progX) + (y - progY) * (y - progY) + (z - progZ) * (z - progZ);
+        if (moved2 > 0.35 * 0.35) { progX = x; progY = y; progZ = z; noMoveTicks = 0; } else noMoveTicks++;
+        if ((x - stuckOrigX) * (x - stuckOrigX) + (z - stuckOrigZ) * (z - stuckOrigZ) > 2.5 * 2.5) consecutiveStucks = 0;
+        // stuck: not getting closer or not moving
         double d = Math.sqrt(h2) + Math.abs(dy);
         if (d < bestDist - 0.5) { bestDist = d; stuckTicks = 0; brain.progress(); } else stuckTicks++;
-        if (bx != lastGoalX || bz != lastGoalZ) { lastGoalX = bx; lastGoalZ = bz; bestDist = d; stuckTicks = 0; }
-        if (stuckTicks > 60) { // stuck: clear the way toward the route's next point (it may go round), else the goal
-            stuckTicks = 0; bestDist = d; route = null; search = null; spliceAt = -1; Nav.forget(world, bx, by, bz); // not that way again
+        if (bx != lastGoalX || bz != lastGoalZ) { lastGoalX = bx; lastGoalZ = bz; bestDist = d; stuckTicks = 0; noMoveTicks = 0; progX = x; progY = y; progZ = z; }
+        int stall = Math.max(stuckTicks, noMoveTicks);
+        if (stall >= 20 && stall < 44) {
+            // stage 1: open any closed door nearby, hop, and sidestep gently off corners or fences
+            brain.openNearbyDoor();
+            if (stall % 8 == 0) jumping = true;
+            sidewaysSpeed = ((consecutiveStucks + (stall / 12)) % 2 == 0 ? 0.45F : -0.45F) * walkSpeed;
+        } else if (stall >= 44) {
+            // stage 2: blacklist the failing waypoint, drop favored old route, back off sideways, and clear or replan
+            stuckTicks = 0; noMoveTicks = 0; bestDist = d; progX = x; progY = y; progZ = z;
+            if (q != null) avoidCell(q[0], q[1], q[2]);
+            if (consecutiveStucks == 0) { stuckOrigX = x; stuckOrigZ = z; }
+            consecutiveStucks++;
+            route = null; search = null; spliceAt = -1; routeKeys = null; Nav.forget(world, bx, by, bz);
             if (DEBUG && q != null) Bots.log(String.format("debug stuck detail %s: at %.2f %.2f %.2f ground %s yaw %.0f, next point %d %d %d (%s), its column %d %d %d %d, mine %d %d %d %d", botName(), x, shape.minY, z, onGround, yaw, q[0], q[1], q[2], Nav.Move.values()[q[3]], world.getBlock(q[0], q[1] - 1, q[2]), world.getBlock(q[0], q[1], q[2]), world.getBlock(q[0], q[1] + 1, q[2]), world.getBlock(q[0], q[1] + 2, q[2]), world.getBlock(fx, fy - 1, fz), world.getBlock(fx, fy, fz), world.getBlock(fx, fy + 1, fz), world.getBlock(fx, fy + 2, fz)));
+            if (consecutiveStucks >= 3 && unstickNow()) return false; // stage 3: safe local nudge out of persistent traps
+            backOffTicks = 6 + Math.min(consecutiveStucks, 3) * 2;
+            backStrafe = (consecutiveStucks % 2 == 0 ? 1 : -1) * walkSpeed * 0.75F;
             if (q != null) brain.stuck(q[0] + 0.5, q[1], q[2] + 0.5); else brain.stuck(tx, ty, tz);
         }
         return false;
@@ -241,9 +316,25 @@ public class BotEntity extends MobEntity {
 
     private Nav planner() { return new Nav(world, 0, 0, 0, 0, 0, 0, 1, null, 0, 0, null, null); }
 
-    /** The route's next step needs work first: blocks to break in the way, or a block to pillar on. True while busy. */
+    /** The route's next step needs work first: blocks to break in the way, a pillar, or a bridge block. True while busy. */
     private boolean work(int[] q, int fx, int fy, int fz) {
         Nav.Move m = Nav.Move.values()[q[3]];
+        if (m == Nav.Move.BRIDGE && Math.abs(q[0] - fx) + Math.abs(q[2] - fz) == 1 && Math.abs(q[1] - fy) <= 1) {
+            int under = world.getBlock(q[0], q[1] - 1, q[2]);
+            if (under == 0 || Nav.water(under)) {
+                int block = count(3) > 0 ? 3 : count(4) > 0 ? 4 : 0;
+                if (block != 0) {
+                    forwardSpeed = 0;
+                    face(q[0] + 0.5, q[1] - 0.5, q[2] + 0.5);
+                    world.setBlock(q[0], q[1] - 1, q[2], block);
+                    take(block, 1);
+                    swing();
+                    stuckTicks = 0; noMoveTicks = 0;
+                    return true;
+                }
+            }
+            return false;
+        }
         if (m == Nav.Move.PILLAR && q[0] == fx && q[2] == fz && q[1] > fy) {
             int head = world.getBlock(fx, fy + 2, fz);
             if (head != 0 && Bots.block(head) != null && Bots.block(head).material.blocksMovement()) { forwardSpeed = 0; face(fx + 0.5, fy + 2.5, fz + 0.5); brain.dig(fx, fy + 2, fz); stuckTicks = 0; return true; } // room over its head first (planned)

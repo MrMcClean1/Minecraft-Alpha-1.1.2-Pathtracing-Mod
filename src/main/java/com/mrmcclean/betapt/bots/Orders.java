@@ -8,7 +8,7 @@ import java.util.regex.Pattern;
 public final class Orders {
     private Orders() {}
 
-    public enum Kind { AUTO, NEXT, GUIDE_HELP, FOLLOW, STAY, COME, GUARD, GATHER, HOME_SET, HOME_GO, CHORE, CHORES_CLEAR, GIVE, GIVE_ALL, INVENTORY, DEPOSIT, EXPLORE, STATUS, HUNT, CRAFT_TOOLS, BUILD, FARM, FARM_STOP, NONE }
+    public enum Kind { AUTO, NEXT, GUIDE_HELP, FOLLOW, STAY, COME, GUARD, GATHER, HOME_SET, HOME_GO, CHORE, CHORES_CLEAR, GIVE, GIVE_ALL, INVENTORY, DEPOSIT, EXPLORE, STATUS, HUNT, CRAFT_TOOLS, BUILD, FARM, FARM_STOP, TOWN_START, TOWN_STOP, TOWN_STATUS, TOWN_JOB, UNSTUCK, NONE }
 
     public static final class Order {
         public final Kind kind; public final String what; public final int count;
@@ -32,6 +32,14 @@ public final class Orders {
             return new Order(Kind.CHORE, w, n > 0 ? n : 32);
         }
         if (has(t, "stop chores", "forget chores", "no more chores", "clear chores", "stop stocking")) return new Order(Kind.CHORES_CLEAR, null, 0);
+        if (has(t, "get unstuck", "you re stuck", "youre stuck", "you are stuck", "unstuck", "are you stuck")) return new Order(Kind.UNSTUCK, null, 0);
+        if (has(t, "town status", "how is the town", "how s the town", "hows the town", "check the town", "what s the town doing")) return new Order(Kind.TOWN_STATUS, null, 0);
+        if (has(t, "start a town", "found a town", "build a town", "make a town", "start the town", "start a village", "found a village", "build a village")) return new Order(Kind.TOWN_START, null, 0);
+        if (has(t, "stop the town", "stop town", "end the town", "disband the town", "leave the town", "stop the village")) return new Order(Kind.TOWN_STOP, null, 0);
+        if (t.contains(" town ") || has(t, "be the builder", "be the farmer", "be the miner", "be the trader", "be the guard", "switch to builder", "switch to farmer", "switch to miner", "switch to trader", "switch to guard")) {
+            for (String role : new String[]{"builder", "farmer", "miner", "trader", "guard"})
+                if (t.contains(" " + role + " ")) return new Order(Kind.TOWN_JOB, role, 0);
+        }
         if (has(t, "build", "construct", "put up", "make a", "make us", "make me")) {
             for (String plan : new String[]{"castle", "fort", "tower", "wall", "house", "cabin", "hut", "shelter"})
                 if (t.contains(" " + plan)) return new Order(Kind.BUILD, plan, n);
@@ -53,6 +61,10 @@ public final class Orders {
         if (has(t, "explore", "look around", "scout", "wander")) return new Order(Kind.EXPLORE, null, 0);
         if (has(t, "how are you", "status", "what are you doing", "whats up", "what s up", "you ok")) return new Order(Kind.STATUS, null, 0);
         if (has(t, "make tools", "craft tools", "make a pickaxe", "craft a pickaxe", "get tools", "make yourself")) return new Order(Kind.CRAFT_TOOLS, null, 0);
+        if (has(t, "craft", "make", "make me", "make us", "craft me")) { // any recipe in the game, modded too
+            String w = thing(t, "craft me", "make me", "make us", "craft", "make");
+            if (w != null && !w.isEmpty()) return new Order(Kind.GATHER, w, n > 0 ? n : 1);
+        }
         if (has(t, "hunt", "get food", "find food", "get meat", "kill animals", "bring food", "get some food")) return new Order(Kind.HUNT, "food", n > 0 ? n : 8);
         if (has(t, "give me", "hand me", "toss me", "pass me", "drop me")) {
             String w = thing(t, "give me", "hand me", "toss me", "pass me", "drop me");

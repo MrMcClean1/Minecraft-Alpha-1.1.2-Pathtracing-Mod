@@ -29,7 +29,7 @@ final class Nav {
         while (n < FALL.length) { v = (v - 0.08) * 0.98; d -= v; t++; while (n < FALL.length && d >= n) FALL[n++] = t; }
     }
 
-    enum Move { WALK, DIAG, UP, DOWN, SWIM, CLIMB, DIG, DIG_DOWN, PILLAR }
+    enum Move { WALK, DIAG, UP, DOWN, SWIM, CLIMB, DIG, DIG_DOWN, PILLAR, BRIDGE }
 
     /** How long breaking a block takes (ticks), negative if it may not be broken. */
     interface Breaker { double ticks(int x, int y, int z, int id); }
@@ -55,6 +55,7 @@ final class Nav {
     private final int blocks;
     private final int maxNodes;
     private final Set<Long> favored;
+    private final Set<Long> avoid;
     private final List<double[]> mobs;
     private final PriorityQueue<Node> open = new PriorityQueue<>(Comparator.comparingDouble((Node n) -> n.f));
     private final Map<Long, Node> seen = new HashMap<>();
@@ -63,12 +64,16 @@ final class Nav {
     private Path result;
 
     /**
-     * @param breaker null: no digging. @param blocks how many blocks it may place for pillars.
+     * @param breaker null: no digging. @param blocks how many blocks it may place for pillars and bridges.
      * @param favored the path it is on now (its nodes cost half), or null. @param mobs hostile mob positions.
      */
     Nav(World w, int sx, int sy, int sz, int tx, int ty, int tz, double reach, Breaker breaker, int blocks, int maxNodes, Set<Long> favored, List<double[]> mobs) {
+        this(w, sx, sy, sz, tx, ty, tz, reach, breaker, blocks, maxNodes, favored, mobs, null);
+    }
+
+    Nav(World w, int sx, int sy, int sz, int tx, int ty, int tz, double reach, Breaker breaker, int blocks, int maxNodes, Set<Long> favored, List<double[]> mobs, Set<Long> avoid) {
         this.w = w; this.tx = tx; this.ty = ty; this.tz = tz; this.reach2 = reach * reach;
-        this.breaker = breaker; this.blocks = blocks; this.maxNodes = maxNodes; this.favored = favored; this.mobs = mobs;
+        this.breaker = breaker; this.blocks = blocks; this.maxNodes = maxNodes; this.favored = favored; this.mobs = mobs; this.avoid = avoid;
         Node s = new Node(sx, sy, sz);
         s.h = h(sx, sy, sz); s.f = s.h;
         open.add(s);
@@ -95,7 +100,7 @@ final class Nav {
 
     static void remember(World w, int tx, int ty, int tz, Path raw) {
         if (raw == null || !raw.complete || raw.points.size() < 4) return;
-        for (int[] q : raw.points) if (q[3] == Move.PILLAR.ordinal() || q[3] == Move.DIG_DOWN.ordinal()) return; // they change the ground under them
+        for (int[] q : raw.points) if (q[3] == Move.PILLAR.ordinal() || q[3] == Move.DIG_DOWN.ordinal() || q[3] == Move.BRIDGE.ordinal()) return; // they change the ground under them
         LinkedHashMap<Long, List<int[]>> m = CACHE.computeIfAbsent(w, k -> new LinkedHashMap<Long, List<int[]>>(16, 0.75f, true) {
             @Override protected boolean removeEldestEntry(Map.Entry<Long, List<int[]>> e) { return size() > 32; }
         });
@@ -248,6 +253,7 @@ final class Nav {
         if (cost < 0 || y < 1 || y > 126) return;
         long k = key(x, y, z);
         if (favored != null && favored.contains(k)) cost *= FAVOR;
+        if (avoid != null && avoid.contains(k)) cost += 250.0;
         if (mobs != null) for (double[] mob : mobs) { double ex = mob[0] - x, ey = mob[1] - y, ez = mob[2] - z; if (ex * ex + ey * ey + ez * ez < 64) { cost *= MOB; break; } }
         if (nearLava(x, y, z)) cost += 40;
         Node n = seen.get(k);
@@ -266,19 +272,19 @@ final class Nav {
     static boolean door(int id) { return id == 64; } // wooden: it opens them on the way
     static boolean dangerous(int id) { return lava(id) || id == 51 || id == 81; } // lava, fire, cactus
 
-    /** A body can be in it: air, plants, torches, water, an open or wooden door. */
+    /** A body can be in it: air, plants, torches, snow layers, water, an open or wooden door. */
     boolean passable(int x, int y, int z) {
         int id = id(x, y, z);
-        if (id == 0 || water(id) || door(id)) return true;
-        if (lava(id) || id == 51) return false;
+        if (id == 0 || id == 78 || water(id) || door(id)) return true;
+        if (lava(id) || id == 51 || id == 81 || id == 85) return false;
         Block b = Bots.block(id);
         return b == null || !b.material.blocksMovement();
     }
 
-    /** Something to stand on (not a fence: it's too tall to step onto). */
+    /** Something to stand on (not a fence or thin snow layer). */
     boolean floor(int x, int y, int z) {
         int id = id(x, y, z);
-        if (id == 0 || water(id) || lava(id) || id == 85 || door(id)) return false;
+        if (id == 0 || id == 78 || water(id) || lava(id) || id == 85 || door(id)) return false;
         Block b = Bots.block(id);
         return b != null && b.material.blocksMovement();
     }
@@ -329,6 +335,9 @@ final class Nav {
                     int land = wet ? fy : fy + 1;
                     if (d >= 1 && (d <= 3 || wet) && (wet || floor(nx, land - 1, nz)) && !dangerous(id(nx, land - 1, nz)))
                         add(c, nx, land, nz, WALK * 0.8 + FALL[Math.min(d, 256)], Move.DOWN);
+                    // or bridge a gap (1-block pit, cliff edge, or water) when carrying blocks
+                    if (blocks > 0 && breaker != null && !inWater && floor(x, y - 1, z) && d >= 1 && !lava(id(nx, y - 1, nz)))
+                        add(c, nx, y, nz, WALK + PLACE, Move.BRIDGE);
                 }
             } else if (breaker != null && floor(nx, y - 1, nz)) {
                 double t = clear(new int[]{nx, y, nz}, new int[]{nx, y + 1, nz});
@@ -428,7 +437,7 @@ final class Nav {
     /** strict: dug spots must be open still (a remembered path); otherwise what it digs or builds itself is skipped. */
     private boolean good(int[] q, boolean strict) {
         Move m = Move.values()[q[3]];
-        if (m == Move.DIG_DOWN || m == Move.PILLAR || (m == Move.DIG || m == Move.UP) && !strict) return true; // it changes those itself (a step up may need leaves dug)
+        if (m == Move.DIG_DOWN || m == Move.PILLAR || m == Move.BRIDGE || (m == Move.DIG || m == Move.UP) && !strict) return true; // it changes those itself (a step up may need leaves dug)
         if (!passable(q[0], q[1], q[2]) || !passable(q[0], q[1] + 1, q[2])) return false;
         if ((m == Move.WALK || m == Move.DIAG || m == Move.UP || m == Move.DIG) && !floor(q[0], q[1] - 1, q[2]) && !water(id(q[0], q[1], q[2])) && !ladder(q[0], q[1], q[2])) return false;
         return true;

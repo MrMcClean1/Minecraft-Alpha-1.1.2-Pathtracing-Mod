@@ -31,6 +31,7 @@ public final class Town {
      */
     static final class Data {
         int x, y, z; long day0;
+        int quarryX = Integer.MIN_VALUE, quarryZ;
         final List<int[]> plots = new ArrayList<>();
     }
     static final Map<String, Data> ALL = new HashMap<>();
@@ -86,11 +87,22 @@ public final class Town {
     static int plots(World w, Member m) {
         Data d = m.d;
         int want = (int) Math.min(12, 1 + (day(w) - d.day0) / Math.max(1, BotConfig.townDaysPerHouse));
+        if (d.plots.size() >= want) return d.plots.size();
         int slot = d.plots.isEmpty() ? 0 : d.plots.get(d.plots.size() - 1)[6] + 1;
         while (d.plots.size() < want && slot < 24) {
             // the next slot up the street with flat, dry ground under the whole building (else the one after)
             int[] p = slotAt(w, d, slot++, d.plots.isEmpty());
-            if (flat(w, p, d.plots.isEmpty())) d.plots.add(p);
+            if (flat(w, p, d.plots.isEmpty(), 1)) d.plots.add(p);
+        }
+        // hilly terrain fallback: if strict flatness found too few plots, allow up to 3-block elevation steps (still dry)
+        if (d.plots.size() < want) {
+            Set<Integer> used = new HashSet<>();
+            for (int[] ex : d.plots) used.add(ex[6]);
+            for (int s = 0; s < 24 && d.plots.size() < want; s++) {
+                if (used.contains(s)) continue;
+                int[] p = slotAt(w, d, s, d.plots.isEmpty());
+                if (flat(w, p, d.plots.isEmpty(), 3)) { d.plots.add(p); used.add(s); }
+            }
         }
         return d.plots.size();
     }
@@ -105,13 +117,13 @@ public final class Town {
         return east ? new int[]{doorX, y, rowZ - half, 3, doorX, rowZ, i} : new int[]{doorX, y, rowZ + half, 1, doorX, rowZ, i};
     }
 
-    /** Flat enough: the ground under every block of the plan within one block of the door's, and no water or lava. */
-    static boolean flat(World w, int[] o, boolean hut) {
+    /** Flat enough: the ground under every block of the plan within maxDiff of the door's, and no water or lava. */
+    static boolean flat(World w, int[] o, boolean hut, int maxDiff) {
         for (int[] pb : Blueprint.of(hut ? "hut" : "house", 0).blocks) {
             if (pb[1] != 0) continue;
             int[] q = Blueprint.place(pb, o[0], o[1], o[2], o[3]);
             int top = w.getHeight(q[0], q[2]), below = w.getBlock(q[0], top - 1, q[2]);
-            if (Math.abs(top - o[1]) > 1 || below >= 8 && below <= 11) return false;
+            if (Math.abs(top - o[1]) > maxDiff || below >= 8 && below <= 11) return false;
         }
         return true;
     }
@@ -179,10 +191,23 @@ public final class Town {
         return false;
     }
 
-    /** Stone for the town: at the quarry 32 blocks east of the centre, never under the town itself. */
+    /** Stone for the town: a dry solid quarry site outside the town strip (probes 8 directions so oceans or lava don't trap miners). */
     private static boolean quarry(Brain br, Member m, int n) {
         BotEntity b = br.b; World w = Names.world(b);
-        if (flat(b, m.x + 32.5, m.z + 0.5) > 6) { b.walkTo(m.x + 32.5, w.getHeight(m.x + 32, m.z), m.z + 0.5, 4); return true; }
+        if (m.d.quarryX == Integer.MIN_VALUE) {
+            int[][] dirs = {{32, 0}, {-32, 0}, {26, 20}, {-26, 20}, {26, -20}, {-26, -20}, {0, 32}, {40, 0}, {-40, 0}};
+            m.d.quarryX = m.x + 32; m.d.quarryZ = m.z;
+            for (int[] dir : dirs) {
+                int qx = m.x + dir[0], qz = m.z + dir[1];
+                int qy = w.getHeight(qx, qz);
+                int below = w.getBlock(qx, qy - 1, qz), at = w.getBlock(qx, qy, qz);
+                if (qy > 2 && !(below >= 8 && below <= 11) && !(at >= 8 && at <= 11) && below != 0) {
+                    m.d.quarryX = qx; m.d.quarryZ = qz; break;
+                }
+            }
+        }
+        int qx = m.d.quarryX, qz = m.d.quarryZ;
+        if (flat(b, qx + 0.5, qz + 0.5) > 6) { b.walkTo(qx + 0.5, w.getHeight(qx, qz), qz + 0.5, 4); return true; }
         br.want = Want.of("cobblestone"); br.wantCount = b.count(4) + n; br.deliverToHome = market(br, m);
         if (!br.deliverToHome) br.after = Brain.Job.GO_HOME; // no market yet: back to the town with it (not off to the player)
         br.startJob(Brain.Job.GATHER);
@@ -204,9 +229,16 @@ public final class Town {
                 if (b.count(54) == 0) { br.want = Want.of("wood"); br.wantCount = b.count(17) + 3; br.deliverToHome = false; br.after = Brain.Job.GO_HOME; br.startJob(Brain.Job.GATHER); return true; } // the wood comes back to the town, not to the player
             }
             if (flat(b, m.x + 0.5, m.z + 0.5) > 4) { b.walkTo(m.x + 0.5, m.y, m.z + 2.5, 1.5); return true; }
-            int cy = w.getHeight(m.x, m.z);
-            w.setBlock(m.x, cy, m.z, 54);
-            if (w.getBlock(m.x, cy, m.z) == 54) { b.take(54, 1); br.say("The market chest is down."); }
+            int[][] spots = {{0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+            for (int[] sp : spots) {
+                int cx = m.x + sp[0], cz = m.z + sp[1], cy = w.getHeight(cx, cz);
+                int at = w.getBlock(cx, cy, cz), below = w.getBlock(cx, cy - 1, cz);
+                if (below >= 8 && below <= 11) continue;
+                if (at == 0 || at == 31 || at == 32 || at == 37 || at == 38 || at == 78) {
+                    w.setBlock(cx, cy, cz, 54);
+                    if (w.getBlock(cx, cy, cz) == 54) { b.take(54, 1); br.say("The market chest is down."); return true; }
+                }
+            }
             return true;
         }
         int n = plots(w, m);
@@ -304,8 +336,12 @@ public final class Town {
         }
         if (best < 0) { idle(br, m); return; }
         int half = best == 0 ? 2 : 3;
-        int[] mid = Blueprint.place(new int[]{half, 0, half, 0}, plot(w, m, best)[0], plot(w, m, best)[1], plot(w, m, best)[2], plot(w, m, best)[3]);
-        if (flat(b, mid[0] + 0.5, mid[2] + 0.5) > 1.5) b.walkTo(mid[0] + 0.5, mid[1], mid[2] + 0.5, 1);
+        int[] o = plot(w, m, best);
+        int[] mid = Blueprint.place(new int[]{half, 0, half, 0}, o[0], o[1], o[2], o[3]);
+        // walk to the doorway first when far so closed doors open cleanly before heading to the middle
+        if (flat(b, o[4] + 0.5, o[5] + 0.5) > 3.0 && flat(b, mid[0] + 0.5, mid[2] + 0.5) > flat(b, o[4] + 0.5, o[5] + 0.5)) {
+            b.walkTo(o[4] + 0.5, o[1], o[5] + 0.5, 1.2);
+        } else if (flat(b, mid[0] + 0.5, mid[2] + 0.5) > 1.5) b.walkTo(mid[0] + 0.5, mid[1], mid[2] + 0.5, 1);
         else b.stopMoving();
     }
 
