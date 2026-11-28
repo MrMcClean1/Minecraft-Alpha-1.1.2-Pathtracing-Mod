@@ -111,16 +111,21 @@ public class Brain {
             case HOME:
                 goHomeQuietly();
                 break;
-            case AUTO: // on its own: a home where it first stands, then the guide and routines (above) from there
-                if (!b.hasHome && b.onGround && b.ticks > 100) setHome(null); else goHomeQuietly();
+            case AUTO: // on its own: a home where it first stands (on dry land), then the guide and routines (above) from there
+                if (!b.hasHome && b.onGround && !b.inWaterNow() && b.ticks > 100) setHome(null); else goHomeQuietly();
                 break;
         }
     }
 
     private void goHomeQuietly() {
         if (!b.hasHome) { b.stopMoving(); return; }
-        if (b.distanceTo(b.homeX + 0.5, b.homeY, b.homeZ + 0.5) > 6) b.walkTo(b.homeX + 0.5, b.homeY, b.homeZ + 0.5, 4);
-        else if (++idle % 200 == 0) b.walkTo(b.homeX + rnd.nextInt(9) - 4, b.homeY, b.homeZ + rnd.nextInt(9) - 4, 1.5);
+        if (b.inWaterNow() || b.distanceTo(b.homeX + 0.5, b.homeY, b.homeZ + 0.5) > 6) {
+            b.walkTo(b.homeX + 0.5, b.homeY, b.homeZ + 0.5, b.inWaterNow() ? 1.5 : 4);
+        } else if (++idle % 200 == 0) {
+            int wx = b.homeX + rnd.nextInt(9) - 4, wz = b.homeZ + rnd.nextInt(9) - 4;
+            int wy = Town.groundYNear(Names.world(b), wx, b.homeY, wz);
+            if (Town.solidGround(Names.world(b), wx, wy - 1, wz)) b.walkTo(wx + 0.5, wy, wz + 0.5, 1.5);
+        }
     }
 
     // ------------------------------------------------------------------ staying alive
@@ -381,7 +386,10 @@ public class Brain {
 
     private void setHome(PlayerEntity from) {
         b.hasHome = true;
-        b.homeX = MathHelper.floor(b.x); b.homeY = MathHelper.floor(b.shape.minY); b.homeZ = MathHelper.floor(b.z);
+        int hx = MathHelper.floor(b.x), hy = MathHelper.floor(b.shape.minY + 0.01), hz = MathHelper.floor(b.z);
+        int[] dry = Town.nearestDryGround(Names.world(b), hx, hy, hz, 8);
+        if (dry != null) { b.homeX = dry[0]; b.homeY = dry[1]; b.homeZ = dry[2]; }
+        else { b.homeX = hx; b.homeY = hy; b.homeZ = hz; }
         if (mode != Mode.AUTO) mode = Mode.HOME; // a bot on its own keeps house as part of that
         int[] c = findNear(new int[]{54}, b.homeX, b.homeY, b.homeZ, 6, false);
         if (c == null) {
@@ -993,7 +1001,7 @@ public class Brain {
                 for (int dx = -r; dx <= r; dx++) for (int dz = -r; dz <= r; dz++) {
                     if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;
                     int px = x + dx, py = y + dy, pz = z + dz;
-                    if (Names.world(b).getBlock(px, py, pz) != 0 || !solid(px, py - 1, pz) || liquidNext(px, py, pz)) continue;
+                    if (Names.world(b).getBlock(px, py, pz) != 0 || !Town.solidGround(Names.world(b), px, py - 1, pz) || liquidNext(px, py, pz)) continue;
                     // not where its own body is (it stands across block edges): a block there puts it inside the block
                     if (px + 1 > b.shape.minX && px < b.shape.maxX && pz + 1 > b.shape.minZ && pz < b.shape.maxZ && py + 1 > b.shape.minY && py < b.shape.maxY) continue;
                     return new int[]{px, py, pz};

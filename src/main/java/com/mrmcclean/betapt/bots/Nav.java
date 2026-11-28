@@ -326,7 +326,10 @@ final class Nav {
             if (feet && head) {
                 int nid = id(nx, y, nz);
                 if (floor(nx, y - 1, nz) || water(nid) || ladder(nx, y, nz)) {
-                    if (!dangerous(id(nx, y - 1, nz))) add(c, nx, y, nz, (water(nid) ? SWIM : WALK) + (door(nid) || door(id(nx, y + 1, nz)) ? DOOR : 0), Move.WALK);
+                    if (!dangerous(id(nx, y - 1, nz))) {
+                        double stepCost = water(nid) ? (inWater ? SWIM * 1.4 : SWIM * 3.0) : WALK;
+                        add(c, nx, y, nz, stepCost + (door(nid) || door(id(nx, y + 1, nz)) ? DOOR : 0), Move.WALK);
+                    }
                 } else {
                     // a drop: the first floor below, up to 3 (any depth into water)
                     int d = 0, fy = y - 1;
@@ -367,9 +370,13 @@ final class Nav {
                 add(c, nx, y, nz, DIAG, Move.DIAG);
         }
         // up and down in water and on ladders
-        if (inWater || onLadder) {
-            if (passable(x, y + 1, z) && passable(x, y + 2, z)) add(c, x, y + 1, z, inWater ? SWIM : LADDER_UP, inWater ? Move.SWIM : Move.CLIMB);
-            if (passable(x, y - 1, z) && (water(id(x, y - 1, z)) || ladder(x, y - 1, z))) add(c, x, y - 1, z, inWater ? SWIM : LADDER_DOWN, inWater ? Move.SWIM : Move.CLIMB);
+        if (inWater) {
+            // only swim straight up into another water block (never mid-air above the surface; climbing onto a bank uses UP)
+            if (water(id(x, y + 1, z)) && passable(x, y + 2, z)) add(c, x, y + 1, z, SWIM, Move.SWIM);
+            if (passable(x, y - 1, z) && water(id(x, y - 1, z))) add(c, x, y - 1, z, SWIM, Move.SWIM);
+        } else if (onLadder) {
+            if (passable(x, y + 1, z) && passable(x, y + 2, z)) add(c, x, y + 1, z, LADDER_UP, Move.CLIMB);
+            if (passable(x, y - 1, z) && ladder(x, y - 1, z)) add(c, x, y - 1, z, LADDER_DOWN, Move.CLIMB);
         }
         if (breaker == null) return;
         // dig straight down (never into lava, water or a long drop)

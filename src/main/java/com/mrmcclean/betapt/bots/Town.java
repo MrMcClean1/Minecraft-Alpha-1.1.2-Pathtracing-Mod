@@ -90,9 +90,31 @@ public final class Town {
         return found(Names.world(p), (int) Math.floor(p.x), (int) Math.floor(p.y - p.eyeHeight + 0.01), (int) Math.floor(p.z), bots);
     }
 
+    /** Nearest dry solid-ground column within radius maxR of (x, hintY, z), or null. */
+    static int[] nearestDryGround(World w, int x, int hintY, int z, int maxR) {
+        int cy0 = groundYNear(w, x, hintY, z);
+        if (clearSpot(w, x, cy0, z) && solidGround(w, x, cy0 - 1, z)) return new int[]{x, cy0, z};
+        for (int r = 1; r <= maxR; r++) {
+            int[] best = null;
+            int bestD = Integer.MAX_VALUE;
+            for (int dx = -r; dx <= r; dx++) for (int dz = -r; dz <= r; dz++) {
+                if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;
+                int px = x + dx, pz = z + dz;
+                int py = groundYNear(w, px, hintY, pz);
+                if (!clearSpot(w, px, py, pz) || !solidGround(w, px, py - 1, pz)) continue;
+                int d = dx * dx + dz * dz + Math.abs(py - hintY) * 2;
+                if (d < bestD) { bestD = d; best = new int[]{px, py, pz}; }
+            }
+            if (best != null) return best;
+        }
+        return null;
+    }
+
     /** Founds a town at x y z with these bots (their own, when three or more are on their own: Bots.autoTown). */
     static String found(World w, int x, int y, int z, List<BotEntity> bots) {
-        y = groundYNear(w, x, y, z);
+        int[] dry = nearestDryGround(w, x, y, z, 12);
+        if (dry != null) { x = dry[0]; y = dry[1]; z = dry[2]; }
+        else y = groundYNear(w, x, y, z);
         Job[] order = Job.values();
         int i = 0;
         StringBuilder s = new StringBuilder("Town founded at " + x + " " + y + " " + z + ":");
@@ -211,6 +233,7 @@ public final class Town {
         if (m == null || !BotConfig.towns) return false;
         BotEntity b = br.b;
         World w = Names.world(b);
+        m.y = m.d.y;
         b.hasHome = true; b.homeX = m.x; b.homeY = m.y; b.homeZ = m.z;
         if (night(w) && m.job != Job.GUARD) { indoors(br, m); return true; }
         switch (m.job) {
@@ -251,24 +274,24 @@ public final class Town {
     }
 
     /** The market chest is down (else "put it away" would only say there's no chest at home, over and over). */
-    static boolean market(Brain br, Member m) { return br.findNear(new int[]{54}, m.x, m.y, m.z, 2, false) != null; }
+    static boolean market(Brain br, Member m) { return br.findNear(new int[]{54}, m.x, m.d.y, m.z, 4, false) != null; }
 
     static int trades;
     private static final Random RND = new Random();
 
     private static boolean builder(Brain br, Member m) {
         BotEntity b = br.b; World w = Names.world(b);
-        if (br.findNear(new int[]{54}, m.x, m.y, m.z, 2, false) == null) {
+        if (br.findNear(new int[]{54}, m.x, m.d.y, m.z, 4, false) == null) {
             if (b.count(54) == 0) {
                 if (b.count(5) < 8 && b.count(17) >= 2) br.craft(5, 4, new int[]{17, 1});
                 if (b.count(5) >= 8) br.craft(54, 1, new int[]{5, 8});
                 if (b.count(54) == 0) { br.want = Want.of("wood"); br.wantCount = b.count(17) + 3; br.deliverToHome = false; br.after = Brain.Job.GO_HOME; br.startJob(Brain.Job.GATHER); return true; } // the wood comes back to the town, not to the player
             }
             if (flat(b, m.x + 0.5, m.z + 0.5) > 4) { b.walkTo(m.x + 0.5, m.y, m.z + 2.5, 1.5); return true; }
-            int[][] spots = {{0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}};
-            for (int[] sp : spots) {
-                int cx = m.x + sp[0], cz = m.z + sp[1], cy = groundYNear(w, cx, m.y, cz);
-                if (clearSpot(w, cx, cy, cz) && solidGround(w, cx, cy - 1, cz)) {
+            int[] spot = nearestDryGround(w, m.x, m.y, m.z, 3);
+            if (spot != null) {
+                int cx = spot[0], cy = spot[1], cz = spot[2];
+                if (clearSpot(w, cx, cy, cz) && solidGround(w, cx, cy - 1, cz) && w.getBlock(cx, cy - 1, cz) != 54) {
                     w.setBlock(cx, cy, cz, 54);
                     if (w.getBlock(cx, cy, cz) == 54) { b.take(54, 1); m.y = cy; m.d.y = cy; br.say("The market chest is down."); return true; }
                 }
@@ -337,7 +360,7 @@ public final class Town {
         }
         PlayerEntity p = Bots.player(w, b.owner);
         if (p != null && b.distanceTo(p) < 12 && b.ticks % 2400 == 0) {
-            int[] c = br.findNear(new int[]{54}, m.x, m.y, m.z, 2, false);
+            int[] c = br.findNear(new int[]{54}, m.x, m.d.y, m.z, 4, false);
             br.say("The market has " + marketCount(w, c, 4) + " cobblestone and " + marketCount(w, c, 296) + " wheat to spare. Ask and I'll bring you some.");
         }
         idle(br, m);
@@ -349,7 +372,12 @@ public final class Town {
         if (!night(w)) { idle(br, m); return true; }
         if (m.walk <= 0 || flat(b, br.tx + 0.5, br.tz + 0.5) < 2) {
             int rows = Math.max(1, (plots(w, m) + 1) / 2);
-            br.tx = m.x + RND.nextInt(7) - 3; br.tz = m.z + 8 - RND.nextInt(rows * 10 + 12); m.walk = 400;
+            for (int k = 0; k < 8; k++) {
+                int gx = m.x + RND.nextInt(7) - 3, gz = m.z + 8 - RND.nextInt(rows * 10 + 12);
+                int gy = groundY(w, gx, gz);
+                if (solidGround(w, gx, gy - 1, gz)) { br.tx = gx; br.tz = gz; break; }
+            }
+            m.walk = 400;
         }
         m.walk--;
         b.walkTo(br.tx + 0.5, groundY(w, br.tx, br.tz), br.tz + 0.5, 1.5);
@@ -393,6 +421,7 @@ public final class Town {
 
     private static void idle(Brain br, Member m) {
         BotEntity b = br.b;
+        if (b.inWaterNow()) { b.walkTo(m.x + 0.5, m.y, m.z + 0.5, 1.5); return; }
         if (flat(b, m.x + 0.5, m.z + 0.5) > 6) b.walkTo(m.x + 0.5, m.y, m.z - 1.5, 4);
         else b.stopMoving();
     }
@@ -414,7 +443,7 @@ public final class Town {
     /** Takes up to n of these from the market chest when the bot stands by it (walks there first). How many it took. */
     private static int takeFromMarket(Brain br, Member m, int[] ids, int n) {
         BotEntity b = br.b; World w = Names.world(b);
-        int[] c = br.findNear(new int[]{54}, m.x, m.y, m.z, 2, false);
+        int[] c = br.findNear(new int[]{54}, m.x, m.d.y, m.z, 4, false);
         if (c == null) return 0;
         int there = 0;
         for (int id : ids) there += marketCount(w, c, id);

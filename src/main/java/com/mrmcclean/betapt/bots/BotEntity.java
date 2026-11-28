@@ -29,7 +29,8 @@ public class BotEntity extends MobEntity {
     public int homeX, homeY, homeZ;
     public boolean hasHome;
     public final Brain brain = new Brain(this);
-    private int stuckTicks, noMoveTicks, backOffTicks, consecutiveStucks;
+    private int stuckTicks, noMoveTicks, backOffTicks, consecutiveStucks, waterTicks;
+    private int workX = Integer.MIN_VALUE, workY, workZ, workTicks;
     private float backStrafe;
     private double lastX, lastZ, bestDist = Double.MAX_VALUE;
     private double progX, progY, progZ, stuckOrigX, stuckOrigZ;
@@ -72,12 +73,35 @@ public class BotEntity extends MobEntity {
         this.jumping = false;
         try { brain.tick(); } catch (Throwable t) { if (errors++ < 3) { StringBuilder sb = new StringBuilder(); for (StackTraceElement e : t.getStackTrace()) { if (sb.length() > 400) break; sb.append(" at ").append(e); } Bots.log("brain error for " + botName() + ": " + t + sb); } }
         walkedLast = forwardSpeed > 0;
-        if (this.isSubmergedIn(net.minecraft.block.material.Material.WATER) || this.isInLava()) this.jumping = true;
-        int fxw = MathHelper.floor(x), fyw = MathHelper.floor(shape.minY + 0.01), fzw = MathHelper.floor(z);
-        if ((this.isSubmergedIn(net.minecraft.block.material.Material.WATER) || Nav.water(world.getBlock(fxw, fyw, fzw))) && this.collidingHorizontally && this.velocityY < 0.25) {
+        if (this.isInLava()) this.jumping = true;
+        if (inWaterNow()) {
+            waterTicks++;
             this.jumping = true;
-            this.velocityY = 0.30; // climb cleanly out of water onto 1-block banks
-        }
+            // never idle motionless in water: swim straight for the nearest dry shore
+            if (forwardSpeed == 0 && brain.enemy == null && brain.mode != Brain.Mode.STAY) {
+                int fxw = MathHelper.floor(x), fyw = MathHelper.floor(shape.minY + 0.01), fzw = MathHelper.floor(z);
+                int[] dry = Town.nearestDryGround(world, fxw, fyw, fzw, 20);
+                if (dry != null) steer(dry[0] + 0.5, dry[1], dry[2] + 0.5);
+            }
+            if (this.collidingHorizontally && this.velocityY < 0.30) {
+                this.velocityY = 0.36; // hop cleanly out of water onto 1-block banks
+                double rad = Math.toRadians(this.yaw);
+                this.velocityX += -Math.sin(rad) * 0.05;
+                this.velocityZ += Math.cos(rad) * 0.05;
+            } else if (this.forwardSpeed > 0) {
+                // counter heavy water drag so bots actually cross shallow bays instead of stalling
+                double rad = Math.toRadians(this.yaw);
+                double hsp = Math.sqrt(this.velocityX * this.velocityX + this.velocityZ * this.velocityZ);
+                if (hsp < 0.16) {
+                    this.velocityX += -Math.sin(rad) * 0.025;
+                    this.velocityZ += Math.cos(rad) * 0.025;
+                }
+            }
+            if (waterTicks > 240) { // trapped in water > 12 s: pull onto nearest dry shore
+                waterTicks = 0;
+                unstickNow();
+            }
+        } else waterTicks = 0;
         watchMovement();
         if (DEBUG && ticks % 40 == 0) Bots.log(String.format("debug %s at %.1f %.1f %.1f fwd %.2f yaw %.0f ground %s mode %s job %s path %s jobTicks %d enemy %s owner %s",
                 botName(), x, y, z, forwardSpeed, yaw, onGround, brain.mode, brain.job, route != null, brain.jobTicks, brain.enemy == null ? "-" : brain.enemy.getClass().getSimpleName() + " d" + Math.round(distanceTo(brain.enemy)),
@@ -153,23 +177,31 @@ public class BotEntity extends MobEntity {
         if (avoidCells.size() > 64) avoidCells.values().removeIf(exp -> exp <= ticks);
     }
 
-    /** Immediate recovery when wedged on terrain, fences, or corners: nudges to nearest dry passable neighbor within 2..4 blocks. */
+    boolean inWaterNow() {
+        int fx = MathHelper.floor(x), fy = MathHelper.floor(shape.minY + 0.01), fz = MathHelper.floor(z);
+        return this.isSubmergedIn(net.minecraft.block.material.Material.WATER) || Nav.water(world.getBlock(fx, fy, fz));
+    }
+
+    /** Immediate recovery when wedged on terrain, water, fences, or corners: nudges to nearest dry passable neighbor. */
     public boolean unstickNow() {
         route = null; search = null; spliceAt = -1; routeKeys = null;
-        stuckTicks = 0; noMoveTicks = 0; backOffTicks = 0; consecutiveStucks = 0;
+        stuckTicks = 0; noMoveTicks = 0; backOffTicks = 0; consecutiveStucks = 0; waterTicks = 0;
         int fx = MathHelper.floor(x), fy = MathHelper.floor(shape.minY + 0.01), fz = MathHelper.floor(z);
         brain.openNearbyDoor();
         Nav n = planner();
+        boolean wet = inWaterNow();
+        int maxR = wet ? 16 : 5;
         int[] best = null;
         double bestScore = Double.MAX_VALUE;
-        for (int r = 1; r <= 4; r++) {
-            for (int dy = -2; dy <= 3; dy++) {
+        for (int r = 1; r <= maxR; r++) {
+            for (int dy = -2; dy <= 4; dy++) {
                 for (int dx = -r; dx <= r; dx++) for (int dz = -r; dz <= r; dz++) {
                     if (Math.max(Math.abs(dx), Math.abs(dz)) != r) continue;
                     int px = fx + dx, py = fy + dy, pz = fz + dz;
                     if (py < 2 || py > 125) continue;
-                    if (!n.passable(px, py, pz) || !n.passable(px, py + 1, pz) || !n.floor(px, py - 1, pz)) continue;
-                    if (Nav.water(world.getBlock(px, py, pz)) || Nav.dangerous(world.getBlock(px, py - 1, pz))) continue;
+                    if (!n.passable(px, py, pz) || !n.passable(px, py + 1, pz)) continue;
+                    if (wet ? !Town.solidGround(world, px, py - 1, pz) : !n.floor(px, py - 1, pz)) continue;
+                    if (Nav.water(world.getBlock(px, py, pz)) || Nav.water(world.getBlock(px, py + 1, pz)) || Nav.dangerous(world.getBlock(px, py - 1, pz))) continue;
                     double sc = dx * dx + dz * dz + Math.abs(dy) * 1.5 - (py >= fy ? 1.0 : 0.0);
                     if (sc < bestScore) { bestScore = sc; best = new int[]{px, py, pz}; }
                 }
@@ -177,7 +209,7 @@ public class BotEntity extends MobEntity {
             if (best != null) break;
         }
         if (best != null) {
-            setPositionAndAngles(best[0] + 0.5, best[1] + 0.01, best[2] + 0.5, yaw, pitch);
+            setPositionAndAngles(best[0] + 0.5, best[1] + 0.01, best[2] + 0.5, yaw, 0);
             progX = x; progY = y; progZ = z;
             Nav.lifts++;
             return true;
@@ -267,9 +299,11 @@ public class BotEntity extends MobEntity {
         double gx = q != null ? q[0] + 0.5 : tx, gz = q != null ? q[2] + 0.5 : tz, gy = q != null ? q[1] : ty;
         double h2 = dx * dx + dz * dz;
         if (q == null && h2 < 0.8 * 0.8) {
-            // right above or below the spot with no route: dig down or climb up
+            // right above or below the spot with no route: dig down, climb up, or unstick if trapped (e.g. in water)
             forwardSpeed = 0;
+            stuckTicks++; noMoveTicks++;
             if (Math.abs(dy) >= 2.5) brain.stuck(tx, ty, tz);
+            if (stuckTicks >= 30) { stuckTicks = 0; noMoveTicks = 0; if (!unstickNow()) brain.stuck(tx, ty, tz); }
             return false;
         }
         steer(gx, gy, gz);
@@ -350,12 +384,17 @@ public class BotEntity extends MobEntity {
             int id = world.getBlock(c[0], c[1], c[2]);
             if (id == 0 || Nav.water(id) || Nav.door(id) || Bots.block(id) == null || !Bots.block(id).material.blocksMovement()) continue;
             if (m == Nav.Move.UP && c[1] == q[1] + 2) continue;
+            if (!brain.mayBreak(c[0], c[1], c[2], id)) { avoidCell(q[0], q[1], q[2]); route = null; workTicks = 0; return false; }
+            if (c[0] == workX && c[1] == workY && c[2] == workZ) {
+                if (++workTicks > 160) { avoidCell(q[0], q[1], q[2]); route = null; workTicks = 0; return false; }
+            } else { workX = c[0]; workY = c[1]; workZ = c[2]; workTicks = 0; }
             forwardSpeed = 0;
             face(c[0] + 0.5, c[1] + 0.5, c[2] + 0.5);
             brain.dig(c[0], c[1], c[2]);
             stuckTicks = 0;
             return true;
         }
+        workTicks = 0;
         return false;
     }
 
@@ -366,6 +405,8 @@ public class BotEntity extends MobEntity {
         while (turn >= 180) turn -= 360;
         double hd = Math.sqrt((gx - x) * (gx - x) + (gz - z) * (gz - z));
         if (hd > 0.3) yaw += Math.max(-40, Math.min(40, turn)); // right on the point: no turning (the way to it swings round as it jitters)
+        pitch *= 0.8F;
+        if (Math.abs(pitch) < 1.0F) pitch = 0.0F;
         forwardSpeed = hd <= 0.3 ? walkSpeed * 0.3F : walkSpeed;
         if (gy > shape.minY + 0.5 || collidingHorizontally) jumping = true;
     }
